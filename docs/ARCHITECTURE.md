@@ -1,5 +1,16 @@
 # Arquitectura del MVP RevisaTuCuenta
 
+## Motor de reglas de fragmentación / unbundling
+
+El análisis no trata todo cobro separado como improcedente. `lib/rules/unbundling.ts` mantiene un catálogo versionable de reglas, su fuente, ámbito de aplicación y evidencia mínima. Cada evaluación devuelve uno de cuatro estados:
+
+- `candidate`: existe una coincidencia que requiere explicación o antecedentes adicionales;
+- `cleared`: la evidencia disponible no activa la regla;
+- `not_evaluable`: faltan datos indispensables;
+- `informational`: existe un antecedente del pagador que debe conservarse, pero no resuelve por sí solo el caso.
+
+Las reglas FONASA MLE sirven como regla decisoria solo cuando ese régimen resulta aplicable. En cuentas de Isapre convencional se usan para detectar coincidencias y formular preguntas; la conclusión exige acreditar el contrato, convenio o arancel que rige la cuenta. Cada línea analizada conserva archivo, página, contexto y monto.
+
 ## Objetivo de esta versión
 
 El MVP cubre el recorrido del paciente desde la portada hasta el dashboard de un caso. Permite crear el expediente, cargar documentos juntos o separados, confirmar su clasificación, validar si existe la documentación mínima, ejecutar un procesamiento preliminar y revisar resultados trazables.
