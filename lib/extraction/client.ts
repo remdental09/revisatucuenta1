@@ -1,6 +1,7 @@
 import { structureDocument, type TextPage } from "./parsers";
 import type { DocumentExtraction } from "./types";
-import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+
+const pdfWorkerUrl = "/pdf.worker.min.mjs";
 
 type ExpectedKind = "account" | "pam" | "mixed" | "unknown";
 
