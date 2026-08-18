@@ -11,6 +11,30 @@ El análisis no trata todo cobro separado como improcedente. `lib/rules/unbundli
 
 Las reglas FONASA MLE sirven como regla decisoria solo cuando ese régimen resulta aplicable. En cuentas de Isapre convencional se usan para detectar coincidencias y formular preguntas; la conclusión exige acreditar el contrato, convenio o arancel que rige la cuenta. Cada línea analizada conserva archivo, página, contexto y monto.
 
+### Clasificación probabilística de cuentas chilenas
+
+`lib/rules/chilean-account.ts` ejecuta la primera fase sin PAM. Normaliza el lenguaje usado por prestadores chilenos (`hospitalización transitoria`, `pabellón transitorio`, `materiales clínicos`, `farmacia`, `ajustes`) y devuelve probabilidades de pertenencia a una prestación principal. La probabilidad no equivale a improcedencia: expresa qué tan plausible es que una línea deba contrastarse con pabellón, estancia u otro paquete.
+
+El conocimiento es versionable y declara autoridad, estado, alcance y fuente. Las listas técnicas no se tratan como exhaustivas. Un material desconocido permanece incierto hasta que un contrato, convenio, revisión clínica o resolución regulatoria permita elevar o reducir la confianza. Las resoluciones futuras se incorporan mediante `knowledgeFromAdjudication`, conservando su alcance contractual en vez de convertirlas en reglas universales.
+
+La fase de cuenta clínica también detecta:
+
+- duplicados exactos candidatos, sin confundir cantidades, profesionales o factores arancelarios;
+- líneas de valor cero como marcadores de posible inclusión;
+- glosas opacas como `ajustes` o `varios`;
+- procedimientos simultáneos y factores porcentuales;
+- un mismo episodio facturado por varias razones sociales.
+
+El PAM se reserva para una segunda fase: conciliación, cobertura, rechazo y traslado del costo al paciente.
+
+La ruta `POST /api/analysis` recibe los renglones previamente extraídos del PDF y ejecuta este motor conservando la página y el identificador documental. La extracción OCR/PDF continúa siendo una etapa separada y pendiente de conectar al cargador de archivos.
+
+### Corpus observado y equivalencia de insumos
+
+`data/learning/observed-item-patterns.json` incorpora de forma desidentificada siete cuentas revisadas: 571 observaciones y 353 patrones de glosa. Cada caso declara si su extracción concilia con el total fuente o si corresponde a un subconjunto verificado. El corpus no contiene nombres, RUT, domicilios, teléfonos, fechas de atención ni números de cuenta.
+
+`lib/rules/observed-corpus.ts` calcula una probabilidad separada de equivalencia usando descripción normalizada, código interno, código FONASA y similitud de palabras. Esta familiaridad permite reconocer el mismo producto o familia cuando cambia la glosa o el código del prestador. No eleva por sí sola la probabilidad de fragmentación: la inclusión económica sigue dependiendo del paquete clínico y de evidencia contractual o regulatoria.
+
 ## Objetivo de esta versión
 
 El MVP cubre el recorrido del paciente desde la portada hasta el dashboard de un caso. Permite crear el expediente, cargar documentos juntos o separados, confirmar su clasificación, validar si existe la documentación mínima, ejecutar un procesamiento preliminar y revisar resultados trazables.
@@ -20,6 +44,7 @@ El MVP cubre el recorrido del paciente desde la portada hasta el dashboard de un
 - `app/page.tsx`: experiencia completa del paciente como flujo guiado.
 - `app/api/cases`: creación y persistencia del expediente.
 - `app/api/documents`: almacenamiento privado del archivo original y de sus metadatos.
+- `app/api/analysis`: análisis probabilístico de líneas ya extraídas de una cuenta clínica.
 - `db/schema.ts`: modelo relacional extensible.
 - `worker/index.ts`: entrada de la aplicación y bindings de infraestructura.
 

@@ -5,6 +5,8 @@ import {
   evaluateEmblematicCase,
   type RuleEvaluation,
 } from "../lib/rules/unbundling";
+import { extractHealthcareDocument } from "../lib/extraction/client";
+import type { DocumentExtraction } from "../lib/extraction/types";
 
 type DocKind =
   | "Cuenta clínica"
@@ -19,6 +21,10 @@ type UploadedDoc = {
   kind: DocKind;
   confidence: number;
   segments?: { kind: string; pages: string; confidence: number }[];
+  extraction?: DocumentExtraction;
+  extractionStatus?: "pending" | "extracting" | "complete" | "error";
+  extractionProgress?: number;
+  extractionError?: string;
 };
 
 const steps = [
@@ -86,6 +92,8 @@ function classifyFile(file: File): UploadedDoc {
       : `${(file.size / 1024 / 1024).toFixed(1)} MB`,
     kind,
     confidence,
+    extractionStatus: "pending",
+    extractionProgress: 0,
     segments: isEmblematicIndisa
       ? [
           {
@@ -161,19 +169,82 @@ export default function Home() {
     if (!files?.length) return;
     const next = Array.from(files).map(classifyFile);
     setDocs((current) => [...current, ...next]);
-    if (caseId) {
-      for (let i = 0; i < files.length; i += 1) {
+    await Promise.all(
+      Array.from(files).map(async (file, i) => {
+        const doc = next[i];
+        setDocs((current) =>
+          current.map((item) =>
+            item.id === doc.id
+              ? { ...item, extractionStatus: "extracting" }
+              : item,
+          ),
+        );
+        let upload: Promise<Response> | undefined;
+        if (caseId) {
         const body = new FormData();
         body.append("caseId", caseId);
-        body.append("documentId", next[i].id);
-        body.append("classification", next[i].kind);
-        body.append("confidence", String(next[i].confidence));
-        body.append("file", files[i]);
-        fetch("/api/documents", { method: "POST", body }).catch(
-          () => undefined,
-        );
-      }
-    }
+          body.append("documentId", doc.id);
+          body.append("classification", doc.kind);
+          body.append("confidence", String(doc.confidence));
+          body.append("file", file);
+          upload = fetch("/api/documents", { method: "POST", body });
+        }
+        try {
+          const expected =
+            doc.kind === "Cuenta clínica"
+              ? "account"
+              : doc.kind === "PAM / liquidación"
+                ? "pam"
+                : doc.kind === "Documento mixto"
+                  ? "mixed"
+                  : "unknown";
+          const extraction = await extractHealthcareDocument(
+            file,
+            expected,
+            (extractionProgress) =>
+              setDocs((current) =>
+                current.map((item) =>
+                  item.id === doc.id ? { ...item, extractionProgress } : item,
+                ),
+              ),
+          );
+          if (upload) {
+            const uploadResponse = await upload;
+            if (!uploadResponse.ok) throw new Error("No fue posible guardar el documento");
+            await fetch("/api/extractions", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ documentId: doc.id, extraction }),
+            });
+          }
+          setDocs((current) =>
+            current.map((item) =>
+              item.id === doc.id
+                ? {
+                    ...item,
+                    extraction,
+                    extractionStatus: "complete",
+                    extractionProgress: 100,
+                  }
+                : item,
+            ),
+          );
+        } catch (error) {
+          setDocs((current) =>
+            current.map((item) =>
+              item.id === doc.id
+                ? {
+                    ...item,
+                    extractionStatus: "error",
+                    extractionError:
+                      error instanceof Error ? error.message : "No se pudo extraer el documento",
+                  }
+                : item,
+            ),
+          );
+        }
+      }),
+    );
   }
 
   function loadDemo() {
@@ -639,6 +710,7 @@ function ClassificationStep({
                   </select>
                 </label>
               )}
+              <ExtractionSummary doc={doc} />
             </div>
           </article>
         ))}
@@ -661,6 +733,70 @@ function ClassificationStep({
           Confirmar clasificación →
         </button>
       </div>
+    </div>
+  );
+}
+
+function ExtractionSummary({ doc }: { doc: UploadedDoc }) {
+  if (doc.extractionStatus === "pending") {
+    return <div className="extractionStatus">Preparando extracción…</div>;
+  }
+  if (doc.extractionStatus === "extracting") {
+    return (
+      <div className="extractionStatus active">
+        <span style={{ width: `${doc.extractionProgress ?? 0}%` }} />
+        Extrayendo texto y datos · {doc.extractionProgress ?? 0}%
+      </div>
+    );
+  }
+  if (doc.extractionStatus === "error") {
+    return (
+      <div className="extractionStatus error">
+        No pudimos extraer este archivo: {doc.extractionError}. Puedes confirmar
+        su clasificación y continuar.
+      </div>
+    );
+  }
+  if (!doc.extraction) return null;
+  const groups = [doc.extraction.account, doc.extraction.pam].filter(Boolean);
+  return (
+    <div className="extractionGroups">
+      <div className="extractionHeading">
+        <b>Datos extraídos por documento</b>
+        <small>
+          {doc.extraction.pageCount} página{doc.extraction.pageCount === 1 ? "" : "s"}
+          {doc.extraction.usedOcr ? " · reconocimiento OCR" : " · texto digital"}
+        </small>
+      </div>
+      {groups.map((group) => (
+        <section className={`extractionGroup ${group?.type}`} key={group?.type}>
+          <header>
+            <b>{group?.label}</b>
+            <span>Páginas {group?.pages.join(", ")}</span>
+          </header>
+          {group?.fields.length ? (
+            <div className="extractedFields">
+              {group.fields.map((field) => (
+                <div key={`${field.key}-${field.page}`}>
+                  <span>{field.label}</span>
+                  <b>{field.value}</b>
+                  <small>Pág. {field.page} · {field.confidence}%</small>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="noFields">
+              Se identificó la sección, pero sus campos necesitan revisión manual.
+            </p>
+          )}
+          {!!group?.lines.length && (
+            <small className="lineCount">
+              {group.lines.length} línea{group.lines.length === 1 ? "" : "s"} monetaria
+              {group.lines.length === 1 ? " detectada" : "s detectadas"}
+            </small>
+          )}
+        </section>
+      ))}
     </div>
   );
 }
