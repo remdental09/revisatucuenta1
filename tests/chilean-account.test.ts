@@ -11,6 +11,17 @@ import {
   findObservedEquivalents,
   OBSERVED_CHILEAN_ACCOUNT_CORPUS,
 } from "../lib/rules/observed-corpus.ts";
+import {
+  analyzeInstitutionalConduct,
+  APPENDICITIS_CONDUCT_EVIDENCE,
+} from "../lib/rules/institutional-conduct.ts";
+
+test("separa conducta observable de intención no demostrada", () => {
+  const findings = analyzeInstitutionalConduct(APPENDICITIS_CONDUCT_EVIDENCE);
+  assert.ok(findings.some((item) => item.pattern === "question_avoidance" && item.confidence === "high"));
+  assert.ok(findings.some((item) => item.pattern === "position_reversal"));
+  assert.ok(findings.every((item) => !/fraude|mala fe como hecho/i.test(item.explanation)));
+});
 
 const base = {
   date: "2026-03-06",
@@ -115,9 +126,9 @@ test("expone el motor para las próximas cuentas con trazabilidad de página", a
 });
 
 test("carga el corpus desidentificado de todas las cuentas revisadas", () => {
-  assert.equal(OBSERVED_CHILEAN_ACCOUNT_CORPUS.caseCount, 7);
-  assert.equal(OBSERVED_CHILEAN_ACCOUNT_CORPUS.observationCount, 571);
-  assert.equal(OBSERVED_CHILEAN_ACCOUNT_CORPUS.patternCount, 353);
+  assert.equal(OBSERVED_CHILEAN_ACCOUNT_CORPUS.caseCount, 13);
+  assert.equal(OBSERVED_CHILEAN_ACCOUNT_CORPUS.observationCount, 1468);
+  assert.equal(OBSERVED_CHILEAN_ACCOUNT_CORPUS.patternCount, 664);
   assert.match(OBSERVED_CHILEAN_ACCOUNT_CORPUS.privacy, /no contiene nombres/i);
 });
 

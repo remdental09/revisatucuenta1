@@ -31,7 +31,7 @@ La ruta `POST /api/analysis` recibe los renglones previamente extraídos del PDF
 
 ### Corpus observado y equivalencia de insumos
 
-`data/learning/observed-item-patterns.json` incorpora de forma desidentificada siete cuentas revisadas: 571 observaciones y 353 patrones de glosa. Cada caso declara si su extracción concilia con el total fuente o si corresponde a un subconjunto verificado. El corpus no contiene nombres, RUT, domicilios, teléfonos, fechas de atención ni números de cuenta.
+`data/learning/observed-item-patterns.json` incorpora de forma desidentificada trece cuentas revisadas: 1.468 observaciones y 664 patrones de glosa. Cada caso declara si su extracción concilia con el total fuente o si corresponde a un subconjunto verificado. El corpus no contiene nombres, RUT, domicilios, teléfonos, fechas de atención ni números de cuenta.
 
 `lib/rules/observed-corpus.ts` calcula una probabilidad separada de equivalencia usando descripción normalizada, código interno, código FONASA y similitud de palabras. Esta familiaridad permite reconocer el mismo producto o familia cuando cambia la glosa o el código del prestador. No eleva por sí sola la probabilidad de fragmentación: la inclusión económica sigue dependiendo del paquete clínico y de evidencia contractual o regulatoria.
 
@@ -67,6 +67,12 @@ El MVP cubre el recorrido del paciente desde la portada hasta el dashboard de un
 8. Aplicación de reglas del contrato y sus topes.
 9. Hallazgos con evidencia y nivel de certeza.
 10. Reclamos versionados y seguimiento de respuestas.
+
+### Conducta institucional y dimensión humana
+
+`lib/rules/institutional-conduct.ts` compara la pregunta formulada, la respuesta institucional y las correcciones posteriores. Detecta evasión de preguntas concretas, traslado de la carga de aclaración al paciente, brechas entre lenguaje tranquilizador y decisión material, y cambios de posición después de un escalamiento.
+
+Esta capa separa siempre tres niveles: hecho documental, inferencia conductual e intención no demostrada. Puede señalar que una secuencia es compatible con opacidad estratégica o con fricción institucional que favorece el abandono del reclamo, pero no etiqueta fraude, engaño, mala fe ni rasgos psicológicos como hechos sin evidencia adicional.
 
 ## Caso emblemático
 

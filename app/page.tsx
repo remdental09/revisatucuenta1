@@ -7,6 +7,7 @@ import {
 } from "../lib/rules/unbundling";
 import { extractHealthcareDocument } from "../lib/extraction/client";
 import type { DocumentExtraction } from "../lib/extraction/types";
+import { APPENDICITIS_CONDUCT_FINDINGS } from "../lib/rules/institutional-conduct";
 
 type DocKind =
   | "Cuenta clínica"
@@ -1510,7 +1511,38 @@ function PreliminaryReport({
               </div>
             </section>
             <section>
-              <h3>5. Qué falta para una conclusión de cobertura</h3>
+              <h3>5. Conducta institucional y efecto humano</h3>
+              <p>
+                Esta capa compara lo preguntado, lo contestado y lo que finalmente
+                se corrigió. Describe patrones observables; no presume fraude,
+                mala fe ni diagnostica intenciones personales.
+              </p>
+              <div className="reportFindings">
+                {APPENDICITIS_CONDUCT_FINDINGS.map((finding, index) => (
+                  <article key={finding.pattern}>
+                    <span>{String(index + 1).padStart(2, "0")}</span>
+                    <div>
+                      <b>{finding.title}</b>
+                      <p>{finding.explanation}</p>
+                      <small>
+                        Efecto humano · {finding.humanEffect} · Confianza {finding.confidence === "high" ? "alta" : "moderada"}
+                      </small>
+                    </div>
+                  </article>
+                ))}
+              </div>
+              <div className="nextQuestions">
+                <b>Hipótesis responsable sobre intencionalidad</b>
+                <p>
+                  La secuencia es compatible con opacidad estratégica o con un
+                  sistema que tolera respuestas incompletas porque la mayoría de
+                  los usuarios no perseverará. Eso justifica investigar la
+                  intención, pero no basta por sí solo para afirmarla como hecho.
+                </p>
+              </div>
+            </section>
+            <section>
+              <h3>6. Qué falta para una conclusión de cobertura</h3>
               <p>
                 El contrato no es necesario para conocer los montos ni detectar
                 diferencias. Sí se necesita para evaluar si cada copago,
