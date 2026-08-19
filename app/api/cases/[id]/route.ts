@@ -1,5 +1,5 @@
-import { env } from "cloudflare:workers";
 import { ensureCaseSchema, jsonOrNull } from "../../../../lib/server/case-schema.ts";
+import { getCloudflareEnv, localGetCase } from "../../../../lib/server/runtime-store.ts";
 import type { DocumentExtraction } from "../../../../lib/extraction/types";
 import type { ClinicalAccountAnalysis } from "../../../../lib/rules/chilean-account";
 
@@ -8,6 +8,11 @@ export async function GET(
   context: { params: Promise<{ id: string }> },
 ) {
   const { id } = await context.params;
+  const env = await getCloudflareEnv();
+  if (!env?.DB) {
+    const snapshot = localGetCase(id);
+    return snapshot ? Response.json(snapshot) : Response.json({ error: "Caso no encontrado" }, { status: 404 });
+  }
   await ensureCaseSchema(env.DB);
   const caseResult = await env.DB.prepare(`SELECT * FROM cases WHERE id = ?`).bind(id).first();
   if (!caseResult) return Response.json({ error: "Caso no encontrado" }, { status: 404 });

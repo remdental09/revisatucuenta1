@@ -1,5 +1,5 @@
-import { env } from "cloudflare:workers";
 import { ensureCaseSchema } from "../../../../../lib/server/case-schema.ts";
+import { getCloudflareEnv, localAuthorize, localGetCase } from "../../../../../lib/server/runtime-store.ts";
 
 const DEFAULT_SCOPE = "Preparar y presentar solicitudes de aclaración y reclamos ante el prestador de salud; sin aceptar acuerdos ni recibir fondos en nombre del paciente.";
 
@@ -8,8 +8,16 @@ export async function POST(
   context: { params: Promise<{ id: string }> },
 ) {
   const { id } = await context.params;
-  await ensureCaseSchema(env.DB);
   const body = await request.json().catch(() => ({})) as { scope?: string };
+  const env = await getCloudflareEnv();
+  if (!env?.DB) {
+    if (!localGetCase(id)) return Response.json({ error: "Caso no encontrado" }, { status: 404 });
+    const scope = body.scope || DEFAULT_SCOPE;
+    const at = new Date().toISOString();
+    localAuthorize(id, scope, at);
+    return Response.json({ authorized: true, scope, at });
+  }
+  await ensureCaseSchema(env.DB);
   const exists = await env.DB.prepare(`SELECT id FROM cases WHERE id = ?`).bind(id).first();
   if (!exists) return Response.json({ error: "Caso no encontrado" }, { status: 404 });
   const scope = body.scope || DEFAULT_SCOPE;

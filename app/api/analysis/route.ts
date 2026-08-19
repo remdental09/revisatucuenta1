@@ -3,6 +3,7 @@ import {
   type ChileanBillingLine,
 } from "../../../lib/rules/chilean-account.ts";
 import { ensureCaseSchema } from "../../../lib/server/case-schema.ts";
+import { getCloudflareEnv, localSaveAnalysis } from "../../../lib/server/runtime-store.ts";
 
 type AnalysisRequest = { caseId?: string; lines?: unknown };
 
@@ -50,7 +51,11 @@ export async function POST(request: Request) {
 
   const analysis = analyzeClinicalAccount(body.lines);
   if (body.caseId) {
-    const { env } = await import("cloudflare:workers");
+    const env = await getCloudflareEnv();
+    if (!env?.DB) {
+      localSaveAnalysis(body.caseId, analysis);
+      return Response.json(analysis);
+    }
     await ensureCaseSchema(env.DB);
     await env.DB.prepare(`INSERT INTO case_analyses (id, case_id, analysis_json, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(case_id) DO UPDATE SET analysis_json = excluded.analysis_json, updated_at = CURRENT_TIMESTAMP`)
       .bind(crypto.randomUUID(), body.caseId, JSON.stringify(analysis)).run();

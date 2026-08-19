@@ -1,6 +1,6 @@
-import { env } from "cloudflare:workers";
 import type { DocumentExtraction, ExtractionField } from "../../../lib/extraction/types";
 import { ensureCaseSchema } from "../../../lib/server/case-schema.ts";
+import { getCloudflareEnv, localSaveExtraction } from "../../../lib/server/runtime-store.ts";
 
 type ExtractionRequest = { documentId?: string; extraction?: DocumentExtraction };
 
@@ -19,8 +19,13 @@ export async function POST(request: Request) {
   if (!body.documentId || !body.extraction) {
     return Response.json({ error: "Extracción o documento ausente" }, { status: 400 });
   }
-  await ensureCaseSchema(env.DB);
   const fields = rows(body.extraction);
+  const env = await getCloudflareEnv();
+  if (!env?.DB) {
+    localSaveExtraction(body.documentId, body.extraction, fields.length);
+    return Response.json({ savedFields: fields.length }, { status: 201 });
+  }
+  await ensureCaseSchema(env.DB);
   if (fields.length) {
     await env.DB.batch(
       fields.map((field) =>
