@@ -54,6 +54,52 @@ test("asigna alta probabilidad provisional a anestésicos de pabellón", () => {
   assert.ok(candidate?.knowledgeIds.includes("CL-PAB-ANEST-001"));
 });
 
+test("usa la prestación quirúrgica principal como ancla y no como posible fragmento", () => {
+  const result = analyzeClinicalAccount([
+    { ...base, id: "main", code: "311013", description: "COLECISTECTOMIA V/LAP. P", section: "PABELLON CIRUGIA 4TO PISO", amount: 1864729 },
+    { ...base, id: "propofol-anchor", description: "Propofol kit 1% 100 ml inyectable", section: "PABELLON CIRUGIA 4TO PISO", amount: 43350 },
+  ]);
+  const procedure = result.lineAssessments.find(({ line }) => line.id === "main");
+  const propofol = result.lineAssessments.find(({ line }) => line.id === "propofol-anchor");
+  assert.equal(procedure?.candidates.length, 0);
+  assert.ok((propofol?.candidates[0]?.probability ?? 0) >= 0.82);
+});
+
+test("incorpora sistemas perioperatorios observados en la cuenta de turbinectomía", () => {
+  const observed: ChileanBillingLine[] = [
+    ["kit", "KIT ANESTESIA AD 1.8M + EXT 1.2M", 37701],
+    ["electrode-extension", "ALARGADOR ELECTROD.ELECTROBIST E1502", 63137],
+    ["colorado", "MICROPUNTA COLORADO E1651", 21600],
+    ["cleaner", "LIMPIA ELECTRODO E_2401 VALLEYLAB", 1172],
+    ["plate", "PLACA VALLEYLAB E7508", 2408],
+    ["pencil", "LAPIZ ELECTROBISTURI", 4552],
+    ["hme", "ALARGADOR DE TUBO HME 1341011S", 5288],
+    ["underbody", "COBERTOR UNDERBODY PED. BHAC 550", 22140],
+    ["sleeve", "MANGA PIERNERA ANTIENB. S", 29835],
+    ["stockings", "MEDIAS ANTIEMBOLISMO L", 8752],
+    ["ocular", "DURATEARS UNGÜENTO OFTÁLMICO", 38803],
+    ["sedline", "RD MASAC4248 SENSOR SEDLINE", 28505],
+  ].map(([id, description, amount]) => ({
+    ...base,
+    id: String(id),
+    description: String(description),
+    amount: Number(amount),
+    section: "Materiales clínicos",
+  }));
+  const result = analyzeClinicalAccount([
+    { ...base, id: "anchor-pab", description: "Pabellón transitorio", section: "Pabellón transitorio", amount: 1522346 },
+    ...observed,
+  ]);
+  const candidates = result.lineAssessments.filter((item) =>
+    item.line.id !== "anchor-pab" && item.candidates.some((candidate) => candidate.probability >= 0.45),
+  );
+  assert.equal(candidates.length, 12);
+  assert.equal(candidates.reduce((sum, item) => sum + item.line.amount, 0), 263893);
+  assert.equal(result.lineAssessments.find((item) => item.line.id === "anchor-pab")?.candidates.length, 0);
+  assert.ok(result.lineAssessments.find((item) => item.line.id === "plate")?.candidates.some((candidate) => candidate.knowledgeIds.includes("CL-PAB-ELECTROSURG-001")));
+  assert.ok(result.lineAssessments.find((item) => item.line.id === "sedline")?.candidates.some((candidate) => candidate.knowledgeIds.includes("CL-PAB-MONITOR-001")));
+});
+
 test("aprende patrones observados en la cuenta de apendicitis sin volverlos certeza", () => {
   const result = analyzeClinicalAccount([
     { ...base, id: "pab-ap", description: "Derecho de pabellón", section: "Pabellón", amount: 955000 },

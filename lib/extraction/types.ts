@@ -10,6 +10,11 @@ export type ExtractedLine = {
   description: string;
   amount: number;
   page: number;
+  code?: string;
+  fonasaCode?: string;
+  section?: string;
+  quantity?: number;
+  unitAmount?: number;
 };
 
 export type StructuredExtraction = {
@@ -26,4 +31,3 @@ export type DocumentExtraction = {
   account?: StructuredExtraction;
   pam?: StructuredExtraction;
 };
-

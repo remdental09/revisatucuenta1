@@ -181,6 +181,69 @@ export const DEFAULT_CHILEAN_INCLUSION_KNOWLEDGE: InclusionKnowledge[] = [
       "Su uso es coherente con anestesia o pabellón; la inclusión económica depende del instrumento contractual aplicable.",
   },
   {
+    id: "CL-PAB-ANEST-EQUIP-001",
+    label: "Consumibles funcionales de anestesia y control perioperatorio",
+    terms: [
+      "kit anestesia",
+      "cobertor underbody",
+      "alargador de tubo hme",
+    ],
+    bundle: "operating_room",
+    probability: 0.62,
+    authority: "clinical_review",
+    status: "provisional",
+    scope: "provider_observation",
+    sourceReference: "Cuenta D1482290 de turbinectomía y rinoplastia; revisión funcional perioperatoria",
+    rationale:
+      "Es un consumible funcionalmente unido a anestesia o al control perioperatorio. Puede ser separable, pero requiere registro de uso y la regla del convenio que autoriza cobrarlo fuera del derecho de pabellón u honorario anestésico.",
+  },
+  {
+    id: "CL-PAB-ELECTROSURG-001",
+    label: "Componentes del sistema de electrocirugía",
+    terms: [
+      "alargador electrodo electrobist",
+      "alargador electrod electrobist",
+      "micropunta colorado",
+      "limpia electrodo",
+      "placa valleylab",
+      "lapiz electrobisturi",
+    ],
+    bundle: "operating_room",
+    probability: 0.7,
+    authority: "technical_standard",
+    status: "provisional",
+    scope: "fonasa_mle",
+    sourceReference: "Normativa MLE sobre derecho de pabellón y cuenta D1482290",
+    rationale:
+      "Los componentes forman un sistema funcional de electrocirugía usado en pabellón. Debe distinguirse el uso del equipo, los consumibles generales y los insumos especiales que el convenio permita cobrar separadamente.",
+  },
+  {
+    id: "CL-PAB-OCULAR-001",
+    label: "Protección ocular asociada a anestesia",
+    terms: ["duratears", "unguento oftalmico"],
+    bundle: "operating_room",
+    probability: 0.5,
+    authority: "clinical_review",
+    status: "provisional",
+    scope: "provider_observation",
+    sourceReference: "Cuenta D1482290 de turbinectomía y rinoplastia",
+    rationale:
+      "El producto es compatible con protección ocular perioperatoria. Debe acreditarse su administración y aclararse si integra la anestesia o si el convenio permite su cobro separado.",
+  },
+  {
+    id: "CL-PAB-MONITOR-001",
+    label: "Sensor de monitorización anestésica",
+    terms: ["sensor sedline", "masac4248 sensor", "rd masac4248"],
+    bundle: "operating_room",
+    probability: 0.46,
+    authority: "clinical_review",
+    status: "provisional",
+    scope: "provider_observation",
+    sourceReference: "Cuenta D1482290 de turbinectomía y rinoplastia",
+    rationale:
+      "Está vinculado a monitorización anestésica, pero puede ser un sensor especial separable. Requiere registro anestésico, identificación del monitor y regla contractual de cobro.",
+  },
+  {
     id: "CL-PAB-SPECIAL-001",
     label: "Material quirúrgico específico o implantable",
     terms: [
@@ -225,6 +288,19 @@ export const DEFAULT_CHILEAN_INCLUSION_KNOWLEDGE: InclusionKnowledge[] = [
       "Son compatibles con cuidados habituales de enfermería, pero la conclusión económica exige identificar el tipo de estancia y el contrato.",
   },
   {
+    id: "CL-PERI-THROMBO-001",
+    label: "Elementos de prevención tromboembólica perioperatoria",
+    terms: ["medias antiembol", "manga piernera antienb", "manga piernera antiemb"],
+    bundle: "hospital_stay",
+    probability: 0.46,
+    authority: "clinical_review",
+    status: "provisional",
+    scope: "provider_observation",
+    sourceReference: "Cuenta D1482290 de turbinectomía y rinoplastia",
+    rationale:
+      "Se vincula a prevención tromboembólica perioperatoria. Debe acreditarse el uso de cada dispositivo, distinguir sus funciones y aclarar si corresponde a pabellón, hospitalización o cobro separado.",
+  },
+  {
     id: "CL-STAY-AMENITY-001",
     label: "Artículos de hospitalización o comodidad de inclusión incierta",
     terms: [
@@ -237,6 +313,8 @@ export const DEFAULT_CHILEAN_INCLUSION_KNOWLEDGE: InclusionKnowledge[] = [
       "medias antiembol",
       "lubricante ocular",
       "removedor de adhesivo",
+      "manga piernera antienb",
+      "manga piernera antiemb",
     ],
     bundle: "hospital_stay",
     probability: 0.38,
@@ -286,10 +364,11 @@ function scoreLine(
       )
       .filter((family) => family !== "unassigned"),
   );
-  const bundles = unique([
-    ...evidence.map((entry) => entry.bundle),
-    ...(sectionFamily === "unassigned" ? [] : [sectionFamily]),
-  ]);
+  // La sección entrega contexto, pero no convierte por sí sola una prestación
+  // principal (p. ej. una colecistectomía o un derecho de pabellón) en un
+  // componente posiblemente incluido. Solo el conocimiento específico sobre
+  // la glosa abre una hipótesis de inclusión.
+  const bundles = unique(evidence.map((entry) => entry.bundle));
 
   return bundles.map((bundle) => {
     const matched = evidence.filter((entry) => entry.bundle === bundle);

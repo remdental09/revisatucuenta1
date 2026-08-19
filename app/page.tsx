@@ -8,6 +8,8 @@ import {
 import { extractHealthcareDocument } from "../lib/extraction/client";
 import type { DocumentExtraction } from "../lib/extraction/types";
 import { APPENDICITIS_CONDUCT_FINDINGS } from "../lib/rules/institutional-conduct";
+import type { ClinicalAccountAnalysis } from "../lib/rules/chilean-account";
+import { DeveloperPortal, PatientPortal, PortalEntry } from "./portal";
 
 type DocKind =
   | "Cuenta clínica"
@@ -27,6 +29,36 @@ type UploadedDoc = {
   extractionProgress?: number;
   extractionError?: string;
 };
+
+const normalizeForDocumentMatch = (value = "") => value
+  .normalize("NFD")
+  .replace(/[\u0300-\u036f]/g, "")
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, " ")
+  .trim();
+
+function findLinesWithoutPamExplanation(
+  analysis: ClinicalAccountAnalysis | undefined,
+  docs: UploadedDoc[],
+) {
+  const pamLines = docs.flatMap((doc) => doc.extraction?.pam?.lines ?? []);
+  if (!pamLines.length) return [];
+  return analysis?.lineAssessments.filter((assessment) => {
+    if (assessment.line.amount === 0) return false;
+    const accountCode = normalizeForDocumentMatch(assessment.line.fonasaCode || assessment.line.code);
+    const accountDescription = normalizeForDocumentMatch(assessment.line.description);
+    const explained = pamLines.some((pamLine) => {
+      const pamCode = normalizeForDocumentMatch(pamLine.fonasaCode || pamLine.code);
+      const pamDescription = normalizeForDocumentMatch(pamLine.description);
+      if (accountCode && pamCode && accountCode === pamCode) return true;
+      if (!accountDescription || !pamDescription) return false;
+      return accountDescription === pamDescription ||
+        (accountDescription.length >= 12 && pamDescription.length >= 12 &&
+          (accountDescription.includes(pamDescription) || pamDescription.includes(accountDescription)));
+    });
+    return !explained;
+  }) ?? [];
+}
 
 const steps = [
   "Crear caso",
@@ -69,6 +101,8 @@ function classifyFile(file: File): UploadedDoc {
     confidence = 92;
   } else if (
     n.includes("pam") ||
+    n.includes("bono") ||
+    n.includes("bonos") ||
     n.includes("liquidacion") ||
     n.includes("bonificacion")
   ) {
@@ -112,7 +146,7 @@ function classifyFile(file: File): UploadedDoc {
   };
 }
 
-export default function Home() {
+function Workbench() {
   const [started, setStarted] = useState(false);
   const [step, setStep] = useState(0);
   const [caseId, setCaseId] = useState("");
@@ -120,6 +154,9 @@ export default function Home() {
   const [episode, setEpisode] = useState("Hospitalización por apendicitis");
   const [docs, setDocs] = useState<UploadedDoc[]>([]);
   const [processing, setProcessing] = useState(0);
+  const [analysis, setAnalysis] = useState<ClinicalAccountAnalysis>();
+  const [analysisError, setAnalysisError] = useState<string>();
+  const analysisSignature = useRef("");
   const inputRef = useRef<HTMLInputElement>(null);
 
   const availability = useMemo(
@@ -146,6 +183,44 @@ export default function Home() {
       clearTimeout(done);
     };
   }, [step]);
+
+  useEffect(() => {
+    const accountLines = docs.flatMap((doc) =>
+      (doc.extraction?.account?.lines ?? []).map((line, index) => ({
+        id: `${doc.id}-${index}`,
+        documentId: doc.id,
+        description: line.description,
+        amount: line.amount,
+        page: line.page,
+        code: line.code,
+        fonasaCode: line.fonasaCode,
+        section: line.section,
+        quantity: line.quantity,
+        unitAmount: line.unitAmount,
+      })),
+    );
+    if (!accountLines.length || docs.some((doc) => doc.extractionStatus === "extracting")) return;
+    const signature = accountLines
+      .map((line) => `${line.id}:${line.amount}:${line.description}`)
+      .join("|");
+    if (signature === analysisSignature.current) return;
+    analysisSignature.current = signature;
+    setAnalysisError(undefined);
+    void fetch("/api/analysis", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ lines: accountLines }),
+    })
+      .then(async (response) => {
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || "No se pudo analizar la cuenta");
+        setAnalysis(payload as ClinicalAccountAnalysis);
+      })
+      .catch((error) => {
+        setAnalysis(undefined);
+        setAnalysisError(error instanceof Error ? error.message : "No se pudo analizar la cuenta");
+      });
+  }, [docs]);
 
   async function createCase() {
     const id = crypto.randomUUID();
@@ -459,6 +534,8 @@ export default function Home() {
             <ResultStep
               docs={docs}
               availability={availability}
+              analysis={analysis}
+              analysisError={analysisError}
               onContinue={() => setStep(6)}
             />
           )}
@@ -467,6 +544,7 @@ export default function Home() {
               docs={docs}
               caseId={caseId}
               availability={availability}
+              analysis={analysis}
             />
           )}
         </section>
@@ -738,6 +816,22 @@ function ClassificationStep({
   );
 }
 
+export default function Home() {
+  const [surface, setSurface] = useState<"entry" | "patient" | "developer" | "workbench">("entry");
+
+  useEffect(() => {
+    const view = new URLSearchParams(window.location.search).get("view");
+    if (view === "patient" || view === "developer" || view === "workbench") {
+      setSurface(view);
+    }
+  }, []);
+
+  if (surface === "patient") return <PatientPortal />;
+  if (surface === "developer") return <DeveloperPortal />;
+  if (surface === "workbench") return <Workbench />;
+  return <PortalEntry />;
+}
+
 function ExtractionSummary({ doc }: { doc: UploadedDoc }) {
   if (doc.extractionStatus === "pending") {
     return <div className="extractionStatus">Preparando extracción…</div>;
@@ -933,12 +1027,17 @@ function ProcessingStep({ progress }: { progress: number }) {
 function ResultStep({
   docs,
   availability,
+  analysis,
+  analysisError,
   onContinue,
 }: {
   docs: UploadedDoc[];
   availability: { cuenta: boolean; pam: boolean; contrato: boolean };
+  analysis?: ClinicalAccountAnalysis;
+  analysisError?: string;
   onContinue: () => void;
 }) {
+  const [liveDetail, setLiveDetail] = useState<"candidates" | "anomalies" | null>(null);
   const isEmblematic = docs.some((d) =>
     d.segments?.some((s) => s.pages === "Páginas 1–8"),
   );
@@ -958,6 +1057,20 @@ function ResultStep({
   );
   const candidateAmount =
     (unbundlingCandidate?.amount ?? 0) + (anesthesiaCandidate?.amount ?? 0);
+  const liveCandidates = analysis?.lineAssessments.filter((assessment) =>
+    assessment.candidates.some((candidate) => candidate.probability >= 0.45),
+  ) ?? [];
+  const liveCandidateAmount = liveCandidates.reduce(
+    (sum, assessment) => sum + assessment.line.amount,
+    0,
+  );
+  const analyzedAmount = analysis?.lineAssessments.reduce(
+    (sum, assessment) => sum + assessment.line.amount,
+    0,
+  ) ?? 0;
+  const hasLiveAnalysis = !isEmblematic && Boolean(analysis?.lineAssessments.length);
+  const unexplainedLines = findLinesWithoutPamExplanation(analysis, docs);
+  const unexplainedAmount = unexplainedLines.reduce((sum, item) => sum + item.line.amount, 0);
   return (
     <div className="stageInner">
       <StageTitle
@@ -971,11 +1084,15 @@ function ResultStep({
           <h2>
             {isEmblematic
               ? "$6.912.876 revisados con reglas de inclusión"
+              : hasLiveAnalysis
+                ? `${analysis?.lineAssessments.length} líneas analizadas con trazabilidad`
               : "La cuenta ya puede comenzar a revisarse"}
           </h2>
           <p>
             {isEmblematic
               ? "Además de conciliar la cuenta, el motor comparó las líneas de pabellón con reglas normativas y separó coincidencias de conclusiones."
+              : hasLiveAnalysis
+                ? "El motor comparó cada línea con prestaciones principales y con el corpus observado; los resultados siguen siendo hipótesis de revisión."
               : availability.pam
                 ? "También encontramos PAM para preparar el cruce de cobros y bonificaciones."
                 : "Puedes agregar el PAM más adelante para contrastar las bonificaciones."}
@@ -989,36 +1106,42 @@ function ResultStep({
       </div>
       <div className="metricGrid">
         <article>
-          <span>{isEmblematic ? "$6,91 M" : docs.length}</span>
+          <span>{isEmblematic ? "$6,91 M" : hasLiveAnalysis ? `$${analyzedAmount.toLocaleString("es-CL")}` : docs.length}</span>
           <b>
-            {isEmblematic ? "Total cuenta clínica" : "Documentos procesados"}
+            {isEmblematic ? "Total cuenta clínica" : hasLiveAnalysis ? "Monto de líneas analizadas" : "Documentos procesados"}
           </b>
           <small>
             {isEmblematic
               ? "Fuente: página 8"
-              : `${docs.length} archivo${docs.length === 1 ? "" : "s"}`}
+              : hasLiveAnalysis
+                ? `${analysis?.lineAssessments.length} renglones con página de origen`
+                : `${docs.length} archivo${docs.length === 1 ? "" : "s"}`}
           </small>
         </article>
         <article>
           <span>
             {isEmblematic
               ? `$${candidateAmount.toLocaleString("es-CL")}`
-              : typeCount}
+              : hasLiveAnalysis
+                ? `$${liveCandidateAmount.toLocaleString("es-CL")}`
+                : typeCount}
           </span>
           <b>
-            {isEmblematic ? "Bajo reglas de inclusión" : "Tipos identificados"}
+            {isEmblematic || hasLiveAnalysis ? "Bajo hipótesis de inclusión" : "Tipos identificados"}
           </b>
           <small>
             {isEmblematic
               ? "Indicio, aún no devolución"
+              : hasLiveAnalysis
+                ? `${liveCandidates.length} líneas para contrastar`
               : availability.pam
                 ? "Cuenta + PAM"
                 : "Cuenta clínica"}
           </small>
         </article>
         <article>
-          <span>{isEmblematic ? "5" : availability.pam ? 4 : 2}</span>
-          <b>{isEmblematic ? "Reglas ejecutadas" : "Puntos a revisar"}</b>
+          <span>{isEmblematic ? "5" : hasLiveAnalysis ? analysis?.anomalies.length ?? 0 : availability.pam ? 4 : 2}</span>
+          <b>{isEmblematic ? "Reglas ejecutadas" : hasLiveAnalysis ? "Anomalías adicionales" : "Puntos a revisar"}</b>
           <small>
             {isEmblematic
               ? "Con fuente y ámbito"
@@ -1041,6 +1164,95 @@ function ResultStep({
           </div>
         </div>
       )}
+      {hasLiveAnalysis && (
+        <>
+          {!!unexplainedLines.length && (
+            <div className="unexplainedCallout">
+              <span>!</span>
+              <div>
+                <b>{unexplainedLines.length} líneas no están explicadas directamente por el PAM</b>
+                <p><strong>${unexplainedAmount.toLocaleString("es-CL")}</strong> contenidos en el total de la cuenta requieren desglose o correspondencia documental. Este monto no se suma nuevamente.</p>
+              </div>
+            </div>
+          )}
+          <div className="ruleAlert">
+            <span>R</span>
+            <div>
+              <b>El motor analizó esta cuenta real</b>
+              <p>
+                <strong>{analysis?.lineAssessments.length} líneas</strong> llegaron al motor y {" "}
+                <strong>{liveCandidates.length}</strong> requieren contrastar su pertenencia a día cama,
+                pabellón u otra prestación principal.
+              </p>
+            </div>
+          </div>
+          <div className="liveAnalysisActions">
+            <button className="button secondary" onClick={() => setLiveDetail("candidates")}>
+              Ver las {liveCandidates.length} líneas →
+            </button>
+            <button className="button secondary" onClick={() => setLiveDetail("anomalies")}>
+              Ver las {analysis?.anomalies.length ?? 0} anomalías →
+            </button>
+          </div>
+          {liveDetail === "candidates" && (
+            <section className="liveAnalysisPanel" aria-label="Líneas bajo hipótesis de inclusión">
+              <header>
+                <div>
+                  <b>{liveCandidates.length} líneas bajo hipótesis de inclusión</b>
+                  <small>Ordenadas desde la mayor probabilidad</small>
+                </div>
+                <button onClick={() => setLiveDetail(null)}>Cerrar</button>
+              </header>
+              <div className="liveLineList">
+                {[...liveCandidates]
+                  .sort((left, right) => (right.candidates[0]?.probability ?? 0) - (left.candidates[0]?.probability ?? 0))
+                  .map((assessment) => {
+                    const candidate = assessment.candidates[0];
+                    return (
+                      <article key={assessment.line.id}>
+                        <div>
+                          <b>{assessment.line.description}</b>
+                          <small>{assessment.line.section || "Sección no identificada"} · Pág. {assessment.line.page}</small>
+                        </div>
+                        <strong>${assessment.line.amount.toLocaleString("es-CL")}</strong>
+                        <span>{Math.round((candidate?.probability ?? 0) * 100)}%</span>
+                        <p>{candidate?.reasons[0] || "Coincidencia contextual con una prestación principal."}</p>
+                        {!!candidate?.missingEvidence.length && <em>Falta: {candidate.missingEvidence.join("; ")}</em>}
+                      </article>
+                    );
+                  })}
+              </div>
+            </section>
+          )}
+          {liveDetail === "anomalies" && (
+            <section className="liveAnalysisPanel" aria-label="Anomalías detectadas">
+              <header>
+                <div>
+                  <b>{analysis?.anomalies.length ?? 0} anomalías para revisión</b>
+                  <small>Señales técnicas; todavía no son conclusiones de improcedencia</small>
+                </div>
+                <button onClick={() => setLiveDetail(null)}>Cerrar</button>
+              </header>
+              <div className="anomalyList">
+                {analysis?.anomalies.map((anomaly, index) => {
+                  const related = analysis.lineAssessments.filter((item) => anomaly.lineIds.includes(item.line.id));
+                  return (
+                    <article key={`${anomaly.type}-${index}`}>
+                      <span>{anomaly.severity === "high" ? "Alta" : anomaly.severity === "review" ? "Revisar" : "Informativa"}</span>
+                      <div>
+                        <b>{anomaly.type.replaceAll("_", " ")}</b>
+                        <p>{anomaly.explanation}</p>
+                        <small>{related.map((item) => `${item.line.description} · pág. ${item.line.page}`).join(" | ")}</small>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+        </>
+      )}
+      {analysisError && <div className="extractionStatus error">Análisis incompleto: {analysisError}</div>}
       <div className="findings">
         <h3>Qué dice este primer informe</h3>
         <div>
@@ -1049,15 +1261,19 @@ function ResultStep({
             <b>
               {isEmblematic
                 ? "Coincidencia normativa, no veredicto"
-                : "Puntos que requieren revisión"}
+                : hasLiveAnalysis
+                  ? `${liveCandidates.length} líneas con hipótesis probabilística`
+                  : "Puntos que requieren revisión"}
             </b>
             <small>
               {isEmblematic
                 ? "14 líneas de insumos y 8 líneas farmacológicas activaron reglas de pabellón con trazabilidad a páginas 1–2."
-                : "El informe separa hechos documentales de hipótesis."}
+                : hasLiveAnalysis
+                  ? "Cada coincidencia conserva glosa, monto, página, probabilidad y evidencia faltante."
+                  : "El informe separa hechos documentales de hipótesis."}
             </small>
           </p>
-          <button>Reglas</button>
+          <button onClick={() => hasLiveAnalysis && setLiveDetail("candidates")}>Reglas</button>
         </div>
         <div>
           <span className="findingIcon blue">↔</span>
@@ -1102,15 +1318,23 @@ function Dashboard({
   docs,
   caseId,
   availability,
+  analysis,
 }: {
   docs: UploadedDoc[];
   caseId: string;
   availability: { cuenta: boolean; pam: boolean; contrato: boolean };
+  analysis?: ClinicalAccountAnalysis;
 }) {
   const [reportOpen, setReportOpen] = useState(false);
   const isEmblematic = docs.some((d) =>
     d.segments?.some((s) => s.pages === "Páginas 1–8"),
   );
+  const liveCandidates = analysis?.lineAssessments.filter((assessment) =>
+    assessment.candidates.some((candidate) => candidate.probability >= 0.45),
+  ) ?? [];
+  const liveCandidateAmount = liveCandidates.reduce((sum, assessment) => sum + assessment.line.amount, 0);
+  const unexplainedLines = findLinesWithoutPamExplanation(analysis, docs);
+  const unexplainedAmount = unexplainedLines.reduce((sum, item) => sum + item.line.amount, 0);
   return (
     <div className="dashboard">
       <div className="dashboardHead">
@@ -1160,12 +1384,16 @@ function Dashboard({
           <h2>
             {isEmblematic
               ? "$722.602 bajo reglas de inclusión"
-              : "Revisa tu primer informe"}
+              : analysis
+                ? `$${liveCandidateAmount.toLocaleString("es-CL")} bajo hipótesis de inclusión`
+                : "Revisa tu primer informe"}
           </h2>
           <span>
             {isEmblematic
               ? "El motor detectó coincidencias de posible fragmentación en pabellón. Son indicios trazables, todavía no una devolución confirmada."
-              : "No necesitas contrato para abrirlo. El contrato se usará después para calcular coberturas y topes."}
+              : analysis
+                ? `${liveCandidates.length} líneas de la cuenta fueron vinculadas probabilísticamente con una prestación principal.`
+                : "No necesitas contrato para abrirlo. El contrato se usará después para calcular coberturas y topes."}
           </span>
           <button
             className="button primary"
@@ -1205,7 +1433,7 @@ function Dashboard({
           ].map((x, i) => (
             <div key={x}>
               <span>
-                {i < 3 && isEmblematic
+                {i < 3 && (isEmblematic || Boolean(analysis))
                   ? "✓"
                   : i === 0
                     ? "✓"
@@ -1215,7 +1443,7 @@ function Dashboard({
               </span>
               <b>{x}</b>
               <small>
-                {i < 3 && isEmblematic
+                {i < 3 && (isEmblematic || Boolean(analysis))
                   ? "Completado preliminar"
                   : i === 0
                     ? "Completado"
@@ -1227,6 +1455,16 @@ function Dashboard({
           ))}
         </section>
       </div>
+      {!!unexplainedLines.length && (
+        <div className="unexplainedCallout dashboardUnexplained">
+          <span>!</span>
+          <div>
+            <b>{unexplainedLines.length} líneas sin explicación directa en el PAM · ${unexplainedAmount.toLocaleString("es-CL")}</b>
+            <p>Brecha documental pendiente de respuesta de la clínica o Isapre. El monto ya está contenido en el total de la cuenta y no se suma nuevamente.</p>
+          </div>
+          <button className="button ghost" onClick={() => setReportOpen(true)}>Ver detalle →</button>
+        </div>
+      )}
       <div className="disclaimer">
         <b>Importante:</b> RevisaTuCuenta organiza información y genera
         hipótesis de revisión. No reemplaza una auditoría médica, asesoría legal
@@ -1236,6 +1474,8 @@ function Dashboard({
         <PreliminaryReport
           isEmblematic={isEmblematic}
           availability={availability}
+          analysis={analysis}
+          docs={docs}
           onClose={() => setReportOpen(false)}
         />
       )}
@@ -1322,15 +1562,41 @@ function RuleEngineReport({ evaluations }: { evaluations: RuleEvaluation[] }) {
 function PreliminaryReport({
   isEmblematic,
   availability,
+  analysis,
+  docs,
   onClose,
 }: {
   isEmblematic: boolean;
   availability: { cuenta: boolean; pam: boolean; contrato: boolean };
+  analysis?: ClinicalAccountAnalysis;
+  docs: UploadedDoc[];
   onClose: () => void;
 }) {
   const ruleEvaluations = isEmblematic
     ? evaluateEmblematicCase(availability.contrato)
     : [];
+  const candidateAssessments = analysis?.lineAssessments.filter((assessment) =>
+    assessment.candidates.some((candidate) => candidate.probability >= 0.45),
+  ) ?? [];
+  const accountTotal = analysis?.lineAssessments.reduce(
+    (sum, assessment) => sum + assessment.line.amount,
+    0,
+  ) ?? 0;
+  const candidateTotal = candidateAssessments.reduce(
+    (sum, assessment) => sum + assessment.line.amount,
+    0,
+  );
+  const nonCandidateTotal = accountTotal - candidateTotal;
+  const pamTotal = docs.reduce(
+    (sum, doc) => sum + (doc.extraction?.pam?.lines.reduce((subtotal, line) => subtotal + line.amount, 0) ?? 0),
+    0,
+  );
+  const pamLines = docs.flatMap((doc) => doc.extraction?.pam?.lines ?? []);
+  const unexplainedAssessments = findLinesWithoutPamExplanation(analysis, docs);
+  const unexplainedTotal = unexplainedAssessments.reduce(
+    (sum, assessment) => sum + assessment.line.amount,
+    0,
+  );
   return (
     <div
       className="reportOverlay"
@@ -1600,13 +1866,134 @@ function PreliminaryReport({
               </div>
             </section>
             <section>
-              <h3>2. Alcance actual</h3>
-              <p>
-                La cuenta ya permite ordenar prestaciones, rubros y montos.
-                Cuando agregues el PAM podremos cuantificar bonificación y
-                copago; el contrato quedará reservado para evaluar las reglas de
-                cobertura.
-              </p>
+              <h3>2. Resultado del motor probabilístico</h3>
+              {analysis ? (
+                <>
+                  <div className="reportMetrics">
+                    <article>
+                      <span>Líneas analizadas</span>
+                      <strong>{analysis.lineAssessments.length}</strong>
+                      <small>Con documento y página</small>
+                    </article>
+                    <article>
+                      <span>Con candidato de inclusión</span>
+                      <strong>{candidateAssessments.length}</strong>
+                      <small>${candidateTotal.toLocaleString("es-CL")} para contrastar</small>
+                    </article>
+                    <article>
+                      <span>Anomalías</span>
+                      <strong>{analysis.anomalies.length}</strong>
+                      <small>Duplicidad, ajustes u otras señales</small>
+                    </article>
+                  </div>
+                  <div className="totalsReconciliation">
+                    <div>
+                      <span>Total de las líneas de la cuenta</span>
+                      <b>${accountTotal.toLocaleString("es-CL")}</b>
+                    </div>
+                    <i>=</i>
+                    <div>
+                      <span>Sin hipótesis de inclusión</span>
+                      <b>${nonCandidateTotal.toLocaleString("es-CL")}</b>
+                    </div>
+                    <i>+</i>
+                    <div>
+                      <span>Bajo hipótesis de inclusión</span>
+                      <b>${candidateTotal.toLocaleString("es-CL")}</b>
+                    </div>
+                  </div>
+                  {pamTotal > 0 && (
+                    <div className="pamComparison">
+                      <div><span>Total documental de la cuenta</span><b>${accountTotal.toLocaleString("es-CL")}</b></div>
+                      <div><span>Total de prestaciones informadas en PAM/bonos</span><b>${pamTotal.toLocaleString("es-CL")}</b></div>
+                      <div><span>Diferencia documental</span><b>${Math.abs(accountTotal - pamTotal).toLocaleString("es-CL")}</b></div>
+                      <p>Estos universos pueden no ser equivalentes. La diferencia se informa para conciliación y no se interpreta automáticamente como cobro excesivo.</p>
+                    </div>
+                  )}
+                  <h3 className="reportSubheading">Detalle de líneas candidatas</h3>
+                  <div className="financialTable">
+                    <div className="tableHead">
+                      <span>Glosa observada</span>
+                      <span>Probabilidad</span>
+                      <span>Origen</span>
+                    </div>
+                    {candidateAssessments
+                      .sort((left, right) => (right.candidates[0]?.probability ?? 0) - (left.candidates[0]?.probability ?? 0))
+                      .map((item) => (
+                        <div key={item.line.id}>
+                          <div>
+                            <b>{item.line.description}</b>
+                            <small>{item.candidates[0]?.reasons[0] || "Coincidencia con conocimiento específico del corpus."}</small>
+                          </div>
+                          <span>{Math.round((item.candidates[0]?.probability ?? 0) * 100)}% · ${item.line.amount.toLocaleString("es-CL")}</span>
+                          <em>Pág. {item.line.page}</em>
+                        </div>
+                      ))}
+                  </div>
+                  <p className="reportExplanation">
+                    La suma candidata está contenida en el total de la cuenta: no se agrega encima de él.
+                    Las prestaciones principales se usan como anclas y no se marcan como fragmentos solo por aparecer en una sección de pabellón.
+                    Las probabilidades no prueban por sí solas que el cobro separado sea improcedente.
+                  </p>
+                  <h3>3. Anomalías para revisión</h3>
+                  {analysis.anomalies.length ? (
+                    <div className="anomalyList reportAnomalies">
+                      {analysis.anomalies.map((anomaly, index) => {
+                        const related = analysis.lineAssessments.filter((item) => anomaly.lineIds.includes(item.line.id));
+                        return (
+                          <article key={`${anomaly.type}-${index}`}>
+                            <span>{anomaly.severity === "high" ? "Alta" : anomaly.severity === "review" ? "Revisar" : "Informativa"}</span>
+                            <div>
+                              <b>{anomaly.type.replaceAll("_", " ")}</b>
+                              <p>{anomaly.explanation}</p>
+                              <small>{related.map((item) => `${item.line.description} · pág. ${item.line.page}`).join(" | ")}</small>
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p>No se detectaron anomalías adicionales.</p>
+                  )}
+                  <h3 className="reportSubheading">4. Líneas sin explicación suficiente en el PAM</h3>
+                  {pamLines.length ? (
+                    <>
+                      <div className="unexplainedSummary">
+                        <div><span>Líneas sin correspondencia directa</span><b>{unexplainedAssessments.length}</b></div>
+                        <div><span>Monto contenido en la cuenta</span><b>${unexplainedTotal.toLocaleString("es-CL")}</b></div>
+                        <p>Este monto ya forma parte de los ${accountTotal.toLocaleString("es-CL")} de la cuenta y no debe volver a sumarse. La ausencia en el PAM es una brecha documental que exige explicación, no una prueba automática de improcedencia.</p>
+                      </div>
+                      <div className="unexplainedList">
+                        {unexplainedAssessments.map((assessment) => {
+                          const isCandidate = assessment.candidates.some((candidate) => candidate.probability >= 0.45);
+                          const relatedAnomalies = analysis.anomalies.filter((anomaly) => anomaly.lineIds.includes(assessment.line.id));
+                          return (
+                            <article key={`unexplained-${assessment.line.id}`}>
+                              <div>
+                                <b>{assessment.line.description}</b>
+                                <small>{assessment.line.section || "Sección no identificada"} · Pág. {assessment.line.page}</small>
+                              </div>
+                              <strong>${assessment.line.amount.toLocaleString("es-CL")}</strong>
+                              <p>No se encontró código o glosa equivalente en las prestaciones extraídas del PAM.</p>
+                              <footer>
+                                {isCandidate && <em>También candidato de inclusión</em>}
+                                {relatedAnomalies.map((anomaly) => <em key={anomaly.type}>Anomalía: {anomaly.type.replaceAll("_", " ")}</em>)}
+                              </footer>
+                            </article>
+                          );
+                        })}
+                      </div>
+                    </>
+                  ) : (
+                    <p>No hay líneas PAM suficientes para ejecutar este cruce. Debe solicitarse el PAM o liquidación detallada.</p>
+                  )}
+                </>
+              ) : (
+                <p>
+                  La cuenta fue identificada, pero todavía no produjo líneas suficientes para el motor.
+                  Revisa la extracción antes de continuar.
+                </p>
+              )}
             </section>
           </>
         )}

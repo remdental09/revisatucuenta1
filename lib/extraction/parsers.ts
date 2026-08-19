@@ -36,13 +36,98 @@ function findField(
   }
 }
 
-function monetaryLines(pages: TextPage[]): ExtractedLine[] {
+function parseNumber(value: string) {
+  return amount(value.replace(/^\$/, ""));
+}
+
+function accountTableLine(line: string, page: number, section?: string): ExtractedLine | undefined {
+  const dateMatch = line.match(/\b\d{2}[/-]\d{2}[/-]\d{4}\b/);
+  const prefix = line.match(/^(\d{6,9})\s*(.+)$/i);
+  if (!dateMatch || !prefix || dateMatch.index === undefined) return;
+  const code = prefix[1];
+  if (!/\d/.test(code)) return;
+  const description = normalize(line.slice(code.length, dateMatch.index));
+  if (description.length < 3 || /^(total|bonif)/i.test(description)) return;
+  const tail = line.slice(dateMatch.index + dateMatch[0].length).trim();
+  const tokens = tail.split(/\s+/);
+  const quantityIndex = tokens.findIndex((token) => /^\d{1,3},\d{3}$/.test(token));
+  if (quantityIndex < 0) return;
+  const unitAmountToken = tokens.slice(quantityIndex + 1).find((token) => /^\$?[\d.]+(?:,\d+)?$/.test(token));
+  if (!unitAmountToken) return;
+  const unitAmount = parseNumber(unitAmountToken);
+  const quantity = Number(tokens[quantityIndex].replace(".", "").replace(",", "."));
+  if (!Number.isFinite(unitAmount) || unitAmount < 0 || !Number.isFinite(quantity)) return;
+  const fonasaCode = tokens.slice(0, quantityIndex).find((token) => /^\d{7}$/.test(token));
+  return {
+    code,
+    description,
+    amount: Math.round(unitAmount * quantity),
+    unitAmount,
+    quantity,
+    fonasaCode,
+    section,
+    page,
+  };
+}
+
+function pamTableLine(line: string, page: number, neighborDescription = ""): ExtractedLine | undefined {
+  const match = line.match(
+    /^([0-9]{6,8})(?:\s+(.+?))?\s+(\d+(?:[.,]\d+)?)\s+\$\s*([0-9.]+)\s+\$\s*([0-9.]+)\s+\$\s*([0-9.]+)\s*$/,
+  );
+  if (!match) return;
+  const quantity = Number(match[3].replace(",", "."));
+  const value = parseNumber(match[4]);
+  if (!Number.isFinite(quantity) || !Number.isFinite(value)) return;
+  return {
+    code: match[1],
+    description: normalize(match[2] || neighborDescription || `Prestación ${match[1]}`),
+    quantity,
+    unitAmount: quantity ? value / quantity : value,
+    amount: value,
+    page,
+  };
+}
+
+function sectionFromLine(line: string, current?: string) {
+  const upper = line.toUpperCase();
+  if (/DIA CAMA|HOSPITALIZ/.test(upper)) return "Hospitalización";
+  if (/PABELLON|PABELLÓN/.test(upper)) return "Pabellón";
+  if (/HONORARIO/.test(upper)) return "Honorarios";
+  if (/MATERIALES|INSUMOS/.test(upper)) return "Materiales clínicos";
+  if (/F[ÁA]RMACOS|FARMACIA|MEDICAMENTOS/.test(upper)) return "Medicamentos";
+  if (/ANATOMIA PATOLOGICA|RAYOS X|BANCO DE SANGRE/.test(upper)) return normalize(line);
+  return current;
+}
+
+function monetaryLines(pages: TextPage[], kind: "account" | "pam"): ExtractedLine[] {
   const results: ExtractedLine[] = [];
   for (const page of pages) {
-    for (const rawLine of page.text.split(/\r?\n/)) {
+    let section: string | undefined;
+    const rawLines = page.text.split(/\r?\n/).map(normalize).filter(Boolean);
+    for (let index = 0; index < rawLines.length; index += 1) {
+      const rawLine = rawLines[index];
       const line = normalize(rawLine);
+      section = sectionFromLine(line, section);
+      const previous = rawLines[index - 1] ?? "";
+      const next = rawLines[index + 1] ?? "";
+      const neighborDescription = [previous, next]
+        .filter((candidate) =>
+          candidate &&
+          !/^\d{6,8}\b/.test(candidate) &&
+          !/^(?:total|c[oó]digo|prestaci[oó]n|otras coberturas|forma de pago)/i.test(candidate),
+        )
+        .join(" ");
+      const structured = kind === "account"
+        ? accountTableLine(line, page.page, section)
+        : pamTableLine(line, page.page, neighborDescription);
+      if (structured) {
+        results.push(structured);
+        continue;
+      }
       const match = line.match(/^(.{3,}?)\s+\$?\s*([0-9]{1,3}(?:\.[0-9]{3})+|[0-9]{4,})(?:,\d{1,2})?\s*$/);
       if (!match) continue;
+      if (kind === "pam") continue;
+      if (/^(?:total|subtotal|bonif|valor|[\d.$])/i.test(match[1].trim())) continue;
       const parsed = amount(match[2]);
       if (!Number.isFinite(parsed)) continue;
       results.push({ description: normalize(match[1]), amount: parsed, page: page.page });
@@ -69,7 +154,7 @@ export function parseClinicalAccount(pages: TextPage[]): StructuredExtraction {
     label: "Cuenta clínica",
     pages: pages.map((page) => page.page),
     fields,
-    lines: monetaryLines(pages),
+    lines: monetaryLines(pages, "account"),
   };
 }
 
@@ -78,22 +163,22 @@ export function parsePam(pages: TextPage[]): StructuredExtraction {
     findField(pages, "payer", "Isapre / financiador", [/(?:isapre|instituci[oó]n|asegurador)\s*[:\-]?\s*([^\n]{3,60})/i], 86),
     findField(pages, "folio", "Folio PAM", [/(?:folio|n[°ºo]\s*(?:pam|liquidaci[oó]n))\s*[:\-]?\s*([A-Z0-9.-]{3,})/i]),
     findField(pages, "beneficiary", "Beneficiario", [/(?:beneficiario|paciente)\s*[:\-]\s*([^\n]{3,80})/i]),
-    findField(pages, "billed_total", "Total facturado", [/(?:total\s+(?:facturado|prestaciones|cuenta))\s*[:\-]?\s*\$?\s*([0-9.]+(?:,\d{1,2})?)/i], 92),
-    findField(pages, "bonus", "Bonificación", [/(?:total\s+)?bonificaci[oó]n\s*[:\-]?\s*\$?\s*([0-9.]+(?:,\d{1,2})?)/i], 94),
-    findField(pages, "copay", "Copago", [/(?:total\s+)?copago\s*[:\-]?\s*\$?\s*([0-9.]+(?:,\d{1,2})?)/i], 94),
+    findField(pages, "billed_total", "Total facturado", [/(?:total\s+(?:facturado|prestaciones|cuenta))\s*[:\-]?\s*\$?\s*([0-9.]+(?:,\d{1,2})?)/i, /Total\s+\$\s*([0-9.]+)/i], 92),
+    findField(pages, "bonus", "Bonificación", [/(?:total\s+)?bonificaci[oó]n(?:\s+isapre)?\s*[:\-]?\s*\$?\s*([0-9.]+(?:,\d{1,2})?)/i, /Total\s+\$\s*[0-9.]+\s+\$\s*([0-9.]+)/i], 94),
+    findField(pages, "copay", "Copago", [/(?:total\s+)?copago(?:\s+afiliado)?\s*[:\-]?\s*\$?\s*([0-9.]+(?:,\d{1,2})?)/i, /Total\s+\$\s*[0-9.]+\s+\$\s*[0-9.]+\s+\$\s*([0-9.]+)/i], 94),
   ]);
   return {
     type: "pam",
     label: "PAM / liquidación",
     pages: pages.map((page) => page.page),
     fields,
-    lines: monetaryLines(pages),
+    lines: monetaryLines(pages, "pam"),
   };
 }
 
 function pageKind(text: string): "account" | "pam" | "unknown" {
   const normalized = text.toLowerCase();
-  const pamScore = ["pam", "bonificación", "bonificacion", "copago", "isapre", "liquidación", "liquidacion"].filter((term) => normalized.includes(term)).length;
+  const pamScore = ["pam", "bono hospitalario", "bonificación", "bonificacion", "copago", "isapre", "liquidación", "liquidacion"].filter((term) => normalized.includes(term)).length;
   const accountScore = ["cuenta clínica", "cuenta clinica", "día cama", "dia cama", "pabellón", "pabellon", "insumos", "farmacia"].filter((term) => normalized.includes(term)).length;
   if (pamScore > accountScore && pamScore > 0) return "pam";
   if (accountScore > 0) return "account";
@@ -127,4 +212,3 @@ export function structureDocument(
     pam: pamPages.length ? parsePam(pamPages) : undefined,
   };
 }
-

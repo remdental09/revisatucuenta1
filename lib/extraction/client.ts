@@ -1,9 +1,43 @@
-import { structureDocument, type TextPage } from "./parsers";
-import type { DocumentExtraction } from "./types";
+import { structureDocument, type TextPage } from "./parsers.ts";
+import type { DocumentExtraction } from "./types.ts";
 
 const pdfWorkerUrl = "/pdf.worker.min.mjs";
 
 type ExpectedKind = "account" | "pam" | "mixed" | "unknown";
+
+type PositionedTextItem = {
+  str?: string;
+  transform?: number[];
+};
+
+export function textItemsToLines(items: PositionedTextItem[]) {
+  const rows: Array<{ y: number; cells: Array<{ x: number; text: string }> }> = [];
+  for (const item of items) {
+    const text = item.str?.trim();
+    const transform = item.transform;
+    if (!text || !transform || transform.length < 6) continue;
+    const x = transform[4];
+    const y = transform[5];
+    let row = rows.find((candidate) => Math.abs(candidate.y - y) <= 2.5);
+    if (!row) {
+      row = { y, cells: [] };
+      rows.push(row);
+    }
+    row.cells.push({ x, text });
+  }
+  return rows
+    .sort((left, right) => right.y - left.y)
+    .map((row) =>
+      row.cells
+        .sort((left, right) => left.x - right.x)
+        .map((cell) => cell.text)
+        .join(" ")
+        .replace(/\s{2,}/g, " ")
+        .trim(),
+    )
+    .filter(Boolean)
+    .join("\n");
+}
 
 async function recognizeImage(image: File | HTMLCanvasElement) {
   const { recognize } = await import("tesseract.js");
@@ -26,10 +60,11 @@ async function extractPdf(file: File, onProgress?: (progress: number) => void) {
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
     const page = await pdf.getPage(pageNumber);
     const content = await page.getTextContent();
-    let text = content.items
-      .map((item) => ("str" in item ? item.str : ""))
-      .join(" ")
-      .replace(/\s{2,}/g, " ");
+    let text = textItemsToLines(
+      content.items.map((item) =>
+        "str" in item ? { str: item.str, transform: item.transform } : {},
+      ),
+    );
     if (text.replace(/\s/g, "").length < 60) {
       usedOcr = true;
       const viewport = page.getViewport({ scale: 1.6 });
