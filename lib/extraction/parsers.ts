@@ -41,29 +41,35 @@ function parseNumber(value: string) {
 }
 
 function accountTableLine(line: string, page: number, section?: string): ExtractedLine | undefined {
-  const dateMatch = line.match(/\b\d{2}[/-]\d{2}[/-]\d{4}\b/);
-  const prefix = line.match(/^(\d{6,9})\s*(.+)$/i);
-  if (!dateMatch || !prefix || dateMatch.index === undefined) return;
+  const dateMatch = line.match(/\d{2}[/-]\d{2}[/-]\d{4}\b/);
+  if (!dateMatch || dateMatch.index === undefined) return;
+  const prefix = line.slice(0, dateMatch.index).trim().match(/^([0-9][0-9A-Z.-]{5,20})\s+(.+)$/i);
+  if (!prefix) return;
   const code = prefix[1];
-  if (!/\d/.test(code)) return;
-  const description = normalize(line.slice(code.length, dateMatch.index));
+  const description = normalize(prefix[2]);
   if (description.length < 3 || /^(total|bonif)/i.test(description)) return;
   const tail = line.slice(dateMatch.index + dateMatch[0].length).trim();
+  const values = tail.match(/^(-?[\d.]+(?:,\d+)?)\s+(\d+(?:[.,]\d+)?)\s+\(?(-?[\d.]+(?:,\d+)?)\)?(?:\s+\*)?$/);
   const tokens = tail.split(/\s+/);
   const quantityIndex = tokens.findIndex((token) => /^\d{1,3},\d{3}$/.test(token));
-  if (quantityIndex < 0) return;
-  const unitAmountToken = tokens.slice(quantityIndex + 1).find((token) => /^\$?[\d.]+(?:,\d+)?$/.test(token));
-  if (!unitAmountToken) return;
-  const unitAmount = parseNumber(unitAmountToken);
-  const quantity = Number(tokens[quantityIndex].replace(".", "").replace(",", "."));
-  if (!Number.isFinite(unitAmount) || unitAmount < 0 || !Number.isFinite(quantity)) return;
-  const fonasaCode = tokens.slice(0, quantityIndex).find((token) => /^\d{7}$/.test(token));
+  const unitAmountToken = quantityIndex >= 0
+    ? tokens.slice(quantityIndex + 1).find((token) => /^\$?[\d.]+(?:,\d+)?$/.test(token))
+    : undefined;
+  if (!values && (!unitAmountToken || quantityIndex < 0)) return;
+  const unitAmount = values ? parseNumber(values[1]) : parseNumber(unitAmountToken!);
+  const quantity = values
+    ? Number(values[2].replace(/\.(?=\d{3}\b)/g, "").replace(",", "."))
+    : Number(tokens[quantityIndex].replace(".", "").replace(",", "."));
+  const total = values ? parseNumber(values[3]) : Math.round(unitAmount * quantity);
+  if (!Number.isFinite(unitAmount) || !Number.isFinite(quantity) || !Number.isFinite(total)) return;
+  const fonasaCode = values ? undefined : tokens.slice(0, quantityIndex).find((token) => /^\d{7}$/.test(token));
   return {
     code,
     description,
-    amount: Math.round(unitAmount * quantity),
+    amount: total,
     unitAmount,
     quantity,
+    date: dateMatch[0],
     fonasaCode,
     section,
     page,
@@ -127,7 +133,7 @@ function monetaryLines(pages: TextPage[], kind: "account" | "pam"): ExtractedLin
       const match = line.match(/^(.{3,}?)\s+\$?\s*([0-9]{1,3}(?:\.[0-9]{3})+|[0-9]{4,})(?:,\d{1,2})?\s*$/);
       if (!match) continue;
       if (kind === "pam") continue;
-      if (/^(?:total|subtotal|bonif|valor|[\d.$])/i.test(match[1].trim())) continue;
+      if (/^(?:total|subtotal|bonif|valor|cl[ií]nica\b|servicios\s+m[eé]dicos\b|asociaci[oó]n\s+m[eé]dica\b|[\d.$])/i.test(match[1].trim())) continue;
       const parsed = amount(match[2]);
       if (!Number.isFinite(parsed)) continue;
       results.push({ description: normalize(match[1]), amount: parsed, page: page.page });
@@ -142,11 +148,11 @@ function compact<T>(values: Array<T | undefined>): T[] {
 
 export function parseClinicalAccount(pages: TextPage[]): StructuredExtraction {
   const fields = compact([
-    findField(pages, "provider", "Prestador", [/(?:cl[ií]nica|hospital|prestador)\s*[:\-]?\s*([^\n]{3,70})/i], 82),
-    findField(pages, "patient", "Paciente", [/(?:paciente|nombre)\s*[:\-]\s*([^\n]{3,80})/i]),
-    findField(pages, "account_number", "Número de cuenta", [/(?:n[°ºo]\s*)?(?:cuenta|folio)\s*[:\-]?\s*([A-Z0-9.-]{4,})/i]),
+    findField(pages, "provider", "Prestador", [/Empresa\s+Emisora\s*:\s*([^\n]{3,70})/i, /(?:cl[ií]nica|hospital|prestador)\s*[:\-]?\s*([^\n]{3,70})/i], 82),
+    findField(pages, "patient", "Paciente", [/Paciente\s*:\s*(.+?)\s+Rut\s+Paciente/i, /(?:paciente|nombre)\s*[:\-]\s*([^\n]{3,80})/i]),
+    findField(pages, "account_number", "Número de cuenta", [/Id\.?\s*Ingreso\s*:\s*([0-9.\s-]+)/i, /(?:n[°ºo]\s*)?(?:cuenta|folio)\s*[:\-]?\s*([A-Z0-9.-]{4,})/i]),
     findField(pages, "admission_date", "Fecha de ingreso", [/(?:fecha\s+de\s+)?ingreso\s*[:\-]?\s*(\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4})/i]),
-    findField(pages, "discharge_date", "Fecha de alta", [/(?:fecha\s+de\s+)?alta\s*[:\-]?\s*(\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4})/i]),
+    findField(pages, "discharge_date", "Fecha de alta", [/(?:fecha\s+(?:de\s+)?(?:alta|egreso))\s*[:\-]?\s*(\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4})/i]),
     findField(pages, "total", "Total cuenta clínica", [/(?:total\s+(?:cuenta|general)|total\s+a\s+pagar)\s*[:\-]?\s*\$?\s*([0-9.]+(?:,\d{1,2})?)/i], 94),
   ]);
   return {

@@ -154,8 +154,8 @@ function PatientStart({ onCreated }: { onCreated: (caseId: string) => void }) {
   return <main className="patient-login"><form className="patient-login-card" onSubmit={submit}><div className="portal-brand"><span>R</span> RevisaTuCuenta</div><div className="login-seal">⌁</div><p className="portal-kicker">Nuevo expediente</p><h1>Comienza tu revisión.</h1><p>Ingresa tus datos y, si ya la tienes, carga la cuenta clínica del prestador.</p><input aria-label="Nombre" placeholder="Nombre para identificar el caso" value={name} onChange={(event) => setName(event.target.value)} /><input aria-label="Episodio" placeholder="Episodio o atención" value={episode} onChange={(event) => setEpisode(event.target.value)} /><label className="portal-button portal-button-secondary"><input type="file" accept="application/pdf,image/jpeg,image/png" hidden onChange={(event) => setFile(event.target.files?.[0])} />{file ? file.name : "Cargar cuenta clínica"}</label>{error && <p className="patient-analysis-notice">{error}</p>}<button className="portal-button portal-button-primary" disabled={busy}>{busy ? "Creando expediente…" : "Crear expediente"}</button><a className="back-link" href="/">← Volver</a></form></main>;
 }
 
-export function PatientPortal() {
-  const [caseId, setCaseId] = useState(() => typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("case") || "");
+export function PatientPortal({ initialCaseId = "" }: { initialCaseId?: string }) {
+  const [caseId, setCaseId] = useState(initialCaseId);
   const [snapshot, setSnapshot] = useState<Snapshot>();
   const [tab, setTab] = useState<"Resumen" | "Documentos" | "Actividad">("Resumen");
   const [status, setStatus] = useState<"idle" | "running" | "complete" | "error">("idle");
@@ -270,9 +270,9 @@ function DeveloperEmpty({ error, onCreated }: { error?: string; onCreated: (case
   return <main className="developer-portal"><section className="developer-main"><header className="developer-header"><div><p className="portal-kicker">CONSOLA DE DESARROLLO</p><h1>Crear expediente operativo</h1><p>{error || "Crea o identifica el caso antes de cargar sus documentos."}</p></div><span className="surface-pill developer-pill">Vista desarrollador</span></header><form className="patient-login-card" onSubmit={submit}><h2>Nuevo expediente</h2><input aria-label="Nombre del paciente" placeholder="Nombre del paciente" value={patientName} onChange={(event) => setPatientName(event.target.value)} /><input aria-label="Episodio" placeholder="Episodio o atención" value={episodeLabel} onChange={(event) => setEpisodeLabel(event.target.value)} />{notice && <p className="patient-analysis-notice">{notice}</p>}<button className="portal-button portal-button-primary" disabled={busy}>{busy ? "Creando expediente…" : "Crear y cargar documentos"}</button><a className="portal-button portal-button-secondary" href="/?view=patient">Crear desde vista paciente</a></form></section></main>;
 }
 
-export function DeveloperPortal() {
+export function DeveloperPortal({ initialCaseId = "" }: { initialCaseId?: string }) {
   const { cases, error: casesError, refresh: refreshCases } = useCases();
-  const [selectedId, setSelectedId] = useState(() => typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("case") || "");
+  const [selectedId, setSelectedId] = useState(initialCaseId);
   const [snapshot, setSnapshot] = useState<Snapshot>(); const [tab, setTab] = useState<"overview" | "traceability" | "documents">("documents"); const [query, setQuery] = useState(""); const [busy, setBusy] = useState(false); const [notice, setNotice] = useState("");
   const selected = selectedId || cases[0]?.id || "";
   useEffect(() => { if (!selectedId && cases[0]?.id) setSelectedId(cases[0].id); }, [cases, selectedId]);

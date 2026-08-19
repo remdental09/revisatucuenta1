@@ -62,3 +62,30 @@ test("extracts Clínica Alemana rows and Vida Tres bonos", () => {
   assert.equal(pam.pam?.lines[0]?.amount, 286744);
   assert.equal(pam.pam?.fields.find((field) => field.key === "bonus")?.value, "200.721");
 });
+
+test("extracts Clínica Santa María rows, glued dates, and returns", () => {
+  const result = structureDocument(
+    [{
+      page: 1,
+      text: [
+        "Paciente : RODRIGUEZ MUÑOZ RAFAELLA DAKOTA Rut Paciente : 24.904.223-4",
+        "Fecha_Ingreso : 18/02/2025 09:21:00 Fecha Egreso : 24/02/2025 13:00:00",
+        "Id. Ingreso : 1.353.849 - 2",
+        "Empresa Emisora : CLINICA SANTA MARIA",
+        "04-04-003-00 ECOTOMOGRAFIA ABDOMINAL 18/02/2025 95.600 1 95.600",
+        "60450076 GLUCOSA 5% 4G NACL+2G KCL (30MEQ/XC23/02/2025 -10.077 1 (-10.077)",
+        "CLINICA SANTA MARIA 5.204.520",
+        "Total Cuenta : 5.788.320",
+      ].join("\n"),
+    }],
+    "account",
+    false,
+  );
+
+  assert.equal(result.account?.fields.find((field) => field.key === "provider")?.value, "CLINICA SANTA MARIA");
+  assert.equal(result.account?.fields.find((field) => field.key === "patient")?.value, "RODRIGUEZ MUÑOZ RAFAELLA DAKOTA");
+  assert.equal(result.account?.fields.find((field) => field.key === "account_number")?.value, "1.353.849 - 2");
+  assert.equal(result.account?.fields.find((field) => field.key === "discharge_date")?.value, "24/02/2025");
+  assert.deepEqual(result.account?.lines.map((line) => line.amount), [95600, -10077]);
+  assert.deepEqual(result.account?.lines.map((line) => line.date), ["18/02/2025", "23/02/2025"]);
+});

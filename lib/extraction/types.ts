@@ -10,6 +10,7 @@ export type ExtractedLine = {
   description: string;
   amount: number;
   page: number;
+  date?: string;
   code?: string;
   fonasaCode?: string;
   section?: string;
