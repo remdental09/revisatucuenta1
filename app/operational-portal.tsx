@@ -244,7 +244,7 @@ function useCases() {
 export function DeveloperPortal() {
   const { cases, error: casesError, refresh: refreshCases } = useCases();
   const [selectedId, setSelectedId] = useState(() => typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("case") || "");
-  const [snapshot, setSnapshot] = useState<Snapshot>(); const [tab, setTab] = useState<"overview" | "traceability" | "documents">("overview"); const [query, setQuery] = useState(""); const [busy, setBusy] = useState(false); const [notice, setNotice] = useState("");
+  const [snapshot, setSnapshot] = useState<Snapshot>(); const [tab, setTab] = useState<"overview" | "traceability" | "documents">("documents"); const [query, setQuery] = useState(""); const [busy, setBusy] = useState(false); const [notice, setNotice] = useState("");
   const selected = selectedId || cases[0]?.id || "";
   useEffect(() => { if (!selectedId && cases[0]?.id) setSelectedId(cases[0].id); }, [cases, selectedId]);
   async function refresh() { if (!selected) return; try { setSnapshot(await getSnapshot(selected)); } catch (reason) { setNotice(errorMessage(reason, "No se pudo cargar el expediente")); } }
