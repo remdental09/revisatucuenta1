@@ -37,20 +37,24 @@ La ruta `POST /api/analysis` recibe los renglones previamente extraídos del PDF
 
 ## Objetivo de esta versión
 
-El MVP cubre el recorrido del paciente desde la portada hasta el dashboard de un caso. Permite crear el expediente, cargar documentos juntos o separados, confirmar su clasificación, validar si existe la documentación mínima, ejecutar un procesamiento preliminar y revisar resultados trazables.
+Las vistas paciente y desarrollador operan sobre el mismo expediente persistido. El paciente puede crear un caso y cargar la cuenta clínica y el PAM; el desarrollador puede seleccionar casos, incorporar o reemplazar fuentes, ejecutar el análisis, revisar la matriz técnica y exportar el estado del expediente.
 
 ## Superficies
 
-- `app/page.tsx`: experiencia completa del paciente como flujo guiado.
+- `app/page.tsx`: enrutamiento de las superficies públicas, paciente y desarrollador.
+- `app/operational-portal.tsx`: vistas operativas que leen y escriben el expediente mediante las rutas de la aplicación.
 - `app/api/cases`: creación y persistencia del expediente.
+- `app/api/cases/[id]`: lectura consolidada de caso, documentos, análisis, autorización y actividad.
+- `app/api/cases/[id]/authorization`: registro persistente de autorización para gestión de reclamos.
 - `app/api/documents`: almacenamiento privado del archivo original y de sus metadatos.
+- `app/api/extractions`: persistencia del JSON estructurado además de los campos trazables.
 - `app/api/analysis`: análisis probabilístico de líneas ya extraídas de una cuenta clínica.
 - `db/schema.ts`: modelo relacional extensible.
 - `worker/index.ts`: entrada de la aplicación y bindings de infraestructura.
 
 ## Persistencia y trazabilidad
 
-- D1 guarda casos, metadatos de documentos y campos extraídos.
+- D1 guarda casos, metadatos de documentos, extracciones completas, análisis, autorizaciones y actividad.
 - R2 guarda los bytes de cada documento original.
 - Cada documento conserva nombre original, tipo MIME, tamaño, clasificación, confianza y clave de almacenamiento.
 - Cada campo extraído se vincula a `document_id`, página, zona de origen y confianza. Las correcciones futuras deben crear una revisión; nunca sobrescribir silenciosamente la evidencia.
@@ -82,5 +86,5 @@ Esta capa separa siempre tres niveles: hecho documental, inferencia conductual e
 
 - La clasificación de archivos nuevos usa señales del nombre y permite confirmación humana.
 - El caso emblemático utiliza su segmentación ya verificada visualmente.
-- El OCR clínico, la reconstrucción financiera y el motor contractual son las siguientes capas; el dashboard ya reserva su estado y sus contratos de datos.
+- El OCR clínico y la reconstrucción financiera básica están conectados al cargador. El motor contractual y los reclamos enviados siguen siendo capas posteriores.
 - El resultado se presenta como preliminar y no afirma por sí solo un cobro indebido.

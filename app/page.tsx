@@ -9,7 +9,7 @@ import { extractHealthcareDocument } from "../lib/extraction/client";
 import type { DocumentExtraction } from "../lib/extraction/types";
 import { APPENDICITIS_CONDUCT_FINDINGS } from "../lib/rules/institutional-conduct";
 import type { ClinicalAccountAnalysis } from "../lib/rules/chilean-account";
-import { DeveloperPortal, PatientPortal, PortalEntry } from "./portal";
+import { DeveloperPortal, PatientPortal, PortalEntry } from "./operational-portal";
 
 type DocKind =
   | "Cuenta clínica"
@@ -817,18 +817,17 @@ function ClassificationStep({
 }
 
 export default function Home() {
-  const [surface, setSurface] = useState<"entry" | "patient" | "developer" | "workbench">("entry");
+  const [surface, setSurface] = useState<"entry" | "patient" | "developer">("entry");
 
   useEffect(() => {
     const view = new URLSearchParams(window.location.search).get("view");
-    if (view === "patient" || view === "developer" || view === "workbench") {
+    if (view === "patient" || view === "developer") {
       setSurface(view);
     }
   }, []);
 
   if (surface === "patient") return <PatientPortal />;
   if (surface === "developer") return <DeveloperPortal />;
-  if (surface === "workbench") return <Workbench />;
   return <PortalEntry />;
 }
 

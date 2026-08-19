@@ -265,3 +265,15 @@ button { cursor:pointer; }
   .patient-recovery-card { align-items:flex-start; flex-direction:column; gap:13px; }
   .patient-authorization-scope { max-width:none; }
 }
+
+.developer-scope-card { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; margin-top:12px; padding:15px; border:1px solid #dbe8ed; border-left:3px solid #4c8aa1; border-radius:8px; background:#f7fbfc; }
+.developer-scope-card h3 { margin:6px 0 4px; color:#31596b; font:500 17px Georgia,serif; }
+.developer-scope-card p { max-width:620px; margin:0; color:#78909a; font-size:9px; line-height:1.5; }
+.developer-scope-card>span { padding:5px 7px; border-radius:4px; background:#e5f1f5; color:#4c7f93; font-size:8px; font-weight:850; white-space:nowrap; }
+.developer-context-detail { margin-top:13px; padding:12px; border:1px dashed #d9e1e4; border-radius:8px; background:#fbfcfd; }
+.developer-context-detail>b { color:#647b84; font-size:9px; }
+.developer-context-detail>p { margin:5px 0 8px; color:#85959b; font-size:8px; line-height:1.5; }
+.developer-context-detail>span { display:block; margin-top:4px; color:#82939a; font-size:8px; }
+@media (max-width: 700px) {
+  .developer-scope-card { flex-direction:column; gap:10px; }
+}

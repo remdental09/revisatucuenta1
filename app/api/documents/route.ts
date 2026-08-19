@@ -1,6 +1,16 @@
 import { env } from "cloudflare:workers";
+import { ensureCaseSchema } from "../../../lib/server/case-schema.ts";
+
+export async function GET(request: Request) {
+  const caseId = new URL(request.url).searchParams.get("caseId");
+  if (!caseId) return Response.json({ error: "Caso ausente" }, { status: 400 });
+  await ensureCaseSchema(env.DB);
+  const result = await env.DB.prepare(`SELECT id, original_name, mime_type, byte_size, classification, classification_confidence, page_from, page_to, created_at FROM documents WHERE case_id = ? ORDER BY created_at ASC`).bind(caseId).all();
+  return Response.json({ documents: result.results });
+}
 
 export async function POST(request: Request) {
+  await ensureCaseSchema(env.DB);
   const form = await request.formData();
   const file = form.get("file");
   const caseId = String(form.get("caseId") || "");
@@ -11,5 +21,7 @@ export async function POST(request: Request) {
   await env.DOCUMENTS.put(key, file.stream(), { httpMetadata: { contentType: file.type || "application/octet-stream" }, customMetadata: { caseId, documentId, originalName: file.name } });
   await env.DB.prepare(`INSERT OR REPLACE INTO documents (id, case_id, original_name, storage_key, mime_type, byte_size, classification, classification_confidence) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
     .bind(documentId, caseId, file.name, key, file.type || "application/octet-stream", file.size, String(form.get("classification") || "Por confirmar"), Number(form.get("confidence") || 0)).run();
+  await env.DB.prepare(`INSERT INTO case_activities (id, case_id, title, detail) VALUES (?, ?, ?, ?)`)
+    .bind(crypto.randomUUID(), caseId, "Documento incorporado", `${file.name} quedó disponible para revisión.`).run();
   return Response.json({ documentId, storageKey: key }, { status: 201 });
 }

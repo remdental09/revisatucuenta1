@@ -2,8 +2,9 @@ import {
   analyzeClinicalAccount,
   type ChileanBillingLine,
 } from "../../../lib/rules/chilean-account.ts";
+import { ensureCaseSchema } from "../../../lib/server/case-schema.ts";
 
-type AnalysisRequest = { lines?: unknown };
+type AnalysisRequest = { caseId?: string; lines?: unknown };
 
 function isBillingLine(value: unknown): value is ChileanBillingLine {
   if (!value || typeof value !== "object") return false;
@@ -47,5 +48,15 @@ export async function POST(request: Request) {
     );
   }
 
-  return Response.json(analyzeClinicalAccount(body.lines));
+  const analysis = analyzeClinicalAccount(body.lines);
+  if (body.caseId) {
+    const { env } = await import("cloudflare:workers");
+    await ensureCaseSchema(env.DB);
+    await env.DB.prepare(`INSERT INTO case_analyses (id, case_id, analysis_json, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(case_id) DO UPDATE SET analysis_json = excluded.analysis_json, updated_at = CURRENT_TIMESTAMP`)
+      .bind(crypto.randomUUID(), body.caseId, JSON.stringify(analysis)).run();
+    await env.DB.prepare(`UPDATE cases SET status = 'analysis_ready', updated_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(body.caseId).run();
+    await env.DB.prepare(`INSERT INTO case_activities (id, case_id, title, detail) VALUES (?, ?, ?, ?)`)
+      .bind(crypto.randomUUID(), body.caseId, "Análisis completado", "La cuenta clínica quedó clasificada y trazable por línea.").run();
+  }
+  return Response.json(analysis);
 }
