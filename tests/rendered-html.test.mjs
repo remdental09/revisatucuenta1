@@ -38,7 +38,9 @@ test("keeps the production surface free of starter artifacts", async () => {
     readFile(new URL("../package.json", import.meta.url), "utf8"),
   ]);
 
-  assert.match(page, /evaluateEmblematicCase/);
+  assert.match(page, /DeveloperPortal, PatientPortal, PortalEntry/);
+  assert.match(page, /searchParams/);
+  assert.doesNotMatch(page, /evaluateEmblematicCase|demoDocument|Workbench/);
   assert.match(layout, /RevisaTuCuenta \| Entiende y revisa tu cuenta clínica/);
   assert.doesNotMatch(page, /SkeletonPreview|codex-preview/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);

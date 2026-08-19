@@ -241,6 +241,35 @@ function useCases() {
   useEffect(() => { void refresh(); }, []); return { cases, error, refresh };
 }
 
+function DeveloperEmpty({ error, onCreated }: { error?: string; onCreated: (caseId: string) => Promise<void> }) {
+  const [patientName, setPatientName] = useState("");
+  const [episodeLabel, setEpisodeLabel] = useState("Revisión de cuenta clínica");
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState("");
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setNotice("");
+    const id = crypto.randomUUID();
+    try {
+      const response = await fetch("/api/cases", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id, patientName: patientName || "Paciente", episodeLabel }),
+      });
+      if (!response.ok) throw new Error("No se pudo crear el expediente");
+      await onCreated(id);
+    } catch (reason) {
+      setNotice(errorMessage(reason, "No se pudo crear el expediente"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <main className="developer-portal"><section className="developer-main"><header className="developer-header"><div><p className="portal-kicker">CONSOLA DE DESARROLLO</p><h1>Crear expediente operativo</h1><p>{error || "Crea o identifica el caso antes de cargar sus documentos."}</p></div><span className="surface-pill developer-pill">Vista desarrollador</span></header><form className="patient-login-card" onSubmit={submit}><h2>Nuevo expediente</h2><input aria-label="Nombre del paciente" placeholder="Nombre del paciente" value={patientName} onChange={(event) => setPatientName(event.target.value)} /><input aria-label="Episodio" placeholder="Episodio o atención" value={episodeLabel} onChange={(event) => setEpisodeLabel(event.target.value)} />{notice && <p className="patient-analysis-notice">{notice}</p>}<button className="portal-button portal-button-primary" disabled={busy}>{busy ? "Creando expediente…" : "Crear y cargar documentos"}</button><a className="portal-button portal-button-secondary" href="/?view=patient">Crear desde vista paciente</a></form></section></main>;
+}
+
 export function DeveloperPortal() {
   const { cases, error: casesError, refresh: refreshCases } = useCases();
   const [selectedId, setSelectedId] = useState(() => typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("case") || "");
@@ -252,7 +281,7 @@ export function DeveloperPortal() {
   async function onFile(file: File, classification: string) { if (!selected) return; setBusy(true); try { await uploadDocument(selected, file, classification); await refresh(); await refreshCases(); setNotice("Documento guardado y extraído"); } catch (reason) { setNotice(errorMessage(reason, "No se pudo procesar el documento")); } finally { setBusy(false); } }
   async function onAnalyze() { if (!snapshot) return; setBusy(true); try { await analyzeCase(selected, accountDoc(snapshot)); await refresh(); await refreshCases(); setTab("traceability"); setNotice("Análisis guardado"); } catch (reason) { setNotice(errorMessage(reason, "No se pudo analizar el caso")); } finally { setBusy(false); } }
   const visibleCases = useMemo(() => cases.filter((item) => `${item.patient_name} ${item.id} ${item.episode_label}`.toLowerCase().includes(query.toLowerCase())), [cases, query]);
-  if (!selected) return <main className="developer-portal"><section className="developer-main"><header className="developer-header"><div><p className="portal-kicker">CONSOLA DE DESARROLLO</p><h1>Expedientes</h1><p>{casesError || "Todavía no hay expedientes operativos."}</p></div><a className="portal-button portal-button-primary" href="/?view=patient">Crear desde vista paciente</a></header></section></main>;
+  if (!selected) return <DeveloperEmpty error={casesError} onCreated={async (id) => { setSelectedId(id); await refreshCases(); }} />;
   const account = accountDoc(snapshot); const pam = pamDoc(snapshot); const total = totalFrom(account, "account");
   return <main className="developer-portal"><aside className="developer-sidebar"><a className="portal-brand dev-brand" href="/"><span>R</span> RevisaTuCuenta</a><div className="dev-workspace-label">ESPACIO DE TRABAJO</div><nav className="dev-nav"><a className="active" href="/?view=developer"><span>▦</span> Expedientes <em>{cases.length}</em></a><a href="#rules"><span>◌</span> Reglas del motor</a><a href="#corpus"><span>⌁</span> Corpus observado</a></nav><div className="dev-sidebar-bottom"><a href={`/?view=patient&case=${encodeURIComponent(selected)}`} target="_blank" rel="noreferrer"><span>↗</span> Vista paciente</a><div className="dev-user"><span className="avatar">DEV</span><div><b>Desarrollador</b><small>Expedientes operativos</small></div></div></div></aside><section className="developer-main"><header className="developer-header"><div><p className="portal-kicker">CONSOLA DE DESARROLLO</p><h1>Expedientes</h1><p>Revisión técnica sobre los documentos persistidos del caso seleccionado.</p></div><div className="developer-header-actions"><span className="surface-pill developer-pill">Vista desarrollador</span><a className="portal-button portal-button-secondary" href={`/?view=patient&case=${encodeURIComponent(selected)}`} target="_blank" rel="noreferrer">Abrir vista paciente ↗</a></div></header><div className="developer-body"><section className="case-queue"><div className="queue-header"><div><span className="card-kicker">BANDEJA DE CASOS</span><h2>Casos recientes <em>{cases.length}</em></h2></div></div><div className="queue-search">⌕ <input placeholder="Buscar paciente, cuenta o episodio" value={query} onChange={(event) => setQuery(event.target.value)} /></div><div className="queue-list">{visibleCases.map((item) => <button key={item.id} onClick={() => setSelectedId(item.id)} className={`dev-case-row ${selected === item.id ? "active" : ""}`}><span className="avatar">{item.patient_name.slice(0, 2).toUpperCase()}</span><div><b>{item.patient_name}</b><small>{item.id} · {item.document_count} documentos</small></div><em className={item.status.includes("analysis") ? "green" : "blue"}>{item.status}</em></button>)}</div></section><section className="case-detail"><div className="case-detail-head"><div><span className="case-breadcrumb">EXPEDIENTE / {selected}</span><h2>{snapshot?.case.patientName || "Cargando…"}</h2><p>{snapshot?.case.episodeLabel || ""}</p></div><span className="case-state"><i /> {snapshot?.case.status || "Cargando"}</span></div>{snapshot && <><div className="dev-summary-metrics"><DevMetric label="Cuenta clínica" value={money(total)} detail="Documento base"/><DevMetric label="Desfragmentación" value={snapshot.analysis ? `${snapshot.analysis.lineAssessments.length} líneas` : "Pendiente"} detail="Hipótesis técnicas" pending={!snapshot.analysis}/><DevMetric label="Contexto PAM" value={pam ? "Recibido" : "Pendiente"} detail="Se conserva separado" pending={!pam}/><DevMetric label="Autorización" value={snapshot.authorization?.authorized ? "Otorgada" : "Pendiente"} detail="Gestión de reclamos" pending={!snapshot.authorization?.authorized}/><DevMetric label="Documentos" value={String(snapshot.documents.length)} detail="Fuentes del caso"/></div><div className="dev-tabs">{(["overview", "traceability", "documents"] as const).map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item === "overview" ? "Resumen" : item === "traceability" ? "Matriz de trazabilidad" : "Documentos"}</button>)}</div>{notice && <p className="patient-analysis-notice">{notice}</p>}{tab === "overview" && <DeveloperOverview snapshot={snapshot} total={total} busy={busy} onAnalyze={() => void onAnalyze()} onExport={() => downloadJson(`${selected}-preinforme.json`, snapshot)} />}{tab === "traceability" && <DeveloperTraceability snapshot={snapshot} onExport={() => downloadJson(`${selected}-matriz.json`, snapshot.analysis)} />}{tab === "documents" && <DeveloperDocuments snapshot={snapshot} busy={busy} onFile={(file, kind) => void onFile(file, kind)} />}</>}</section></div></section></main>;
 }

@@ -5,12 +5,26 @@ type LocalCase = { id: string; patient_name: string; episode_label: string; stat
 type LocalDocument = { id: string; case_id: string; original_name: string; mime_type: string; byte_size: number; classification: string; classification_confidence: number; page_from?: number; page_to?: number; created_at: string };
 type LocalActivity = { id: string; case_id: string; title: string; detail: string; event_at: string; pending: number };
 
-const cases = new Map<string, LocalCase>();
-const documents = new Map<string, LocalDocument>();
-const extractions = new Map<string, DocumentExtraction>();
-const analyses = new Map<string, { analysis: ClinicalAccountAnalysis; updatedAt: string }>();
-const authorizations = new Map<string, { authorized: number; scope: string; authorizedAt: string }>();
-const activities: LocalActivity[] = [];
+type LocalRuntimeState = {
+  cases: Map<string, LocalCase>;
+  documents: Map<string, LocalDocument>;
+  extractions: Map<string, DocumentExtraction>;
+  analyses: Map<string, { analysis: ClinicalAccountAnalysis; updatedAt: string }>;
+  authorizations: Map<string, { authorized: number; scope: string; authorizedAt: string }>;
+  activities: LocalActivity[];
+};
+
+const runtimeGlobal = globalThis as typeof globalThis & { __revisaTuCuentaLocalState?: LocalRuntimeState };
+const localState = runtimeGlobal.__revisaTuCuentaLocalState ??= {
+  cases: new Map<string, LocalCase>(),
+  documents: new Map<string, LocalDocument>(),
+  extractions: new Map<string, DocumentExtraction>(),
+  analyses: new Map<string, { analysis: ClinicalAccountAnalysis; updatedAt: string }>(),
+  authorizations: new Map<string, { authorized: number; scope: string; authorizedAt: string }>(),
+  activities: [],
+};
+
+const { cases, documents, extractions, analyses, authorizations, activities } = localState;
 
 export async function getCloudflareEnv(): Promise<any | null> {
   try {
