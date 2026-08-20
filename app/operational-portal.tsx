@@ -108,6 +108,91 @@ function downloadJson(filename: string, value: unknown) {
   URL.revokeObjectURL(url);
 }
 
+function markdownCell(value: unknown) {
+  return String(value ?? "—").replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+}
+
+function bundleLabel(bundle: string) {
+  return ({
+    operating_room: "Derecho de pabellón",
+    hospital_stay: "Día cama / hospitalización",
+    procedure: "Procedimiento",
+    professional_fees: "Honorarios profesionales",
+    unassigned: "Sin asignar",
+  } as Record<string, string>)[bundle] || bundle;
+}
+
+function analysisToMarkdown(analysis: ClinicalAccountAnalysis) {
+  const candidateCount = analysis.lineAssessments.reduce((sum, item) => sum + item.candidates.length, 0);
+  const rows = analysis.lineAssessments.map((assessment, index) => {
+    const hypotheses = assessment.candidates.length
+      ? assessment.candidates.map((candidate) => {
+          const evidence = candidate.missingEvidence.length
+            ? `Falta: ${candidate.missingEvidence.join("; ")}`
+            : "Sin evidencia faltante declarada";
+          return `${bundleLabel(candidate.bundle)} (${Math.round(candidate.probability * 100)}%). ${evidence}. IDs: ${candidate.knowledgeIds.join(", ") || "—"}`;
+        }).join("<br>")
+      : "Sin hipótesis de inclusión";
+    const observed = assessment.observedEquivalents.length
+      ? assessment.observedEquivalents.slice(0, 3).map((item) => `${item.description} (${Math.round(item.equivalenceProbability * 100)}%, ${item.matchBasis})`).join("<br>")
+      : "Sin equivalencia observada";
+    return `| ${index + 1} | ${markdownCell(assessment.line.date)} | ${markdownCell(assessment.line.page)} | ${markdownCell(assessment.line.code)} | ${markdownCell(assessment.line.description)} | ${money(assessment.line.amount)} | ${markdownCell(assessment.line.section || "Sin sección")} | ${markdownCell(hypotheses)} | ${markdownCell(observed)} |`;
+  }).join("\n");
+  const anomalies = analysis.anomalies.length
+    ? analysis.anomalies.map((anomaly) => `| ${markdownCell(anomaly.severity)} | ${markdownCell(anomaly.type)} | ${markdownCell(anomaly.lineIds.join(", "))} | ${markdownCell(anomaly.explanation)} |`).join("\n")
+    : "| — | — | — | No se detectaron señales adicionales. |";
+  return [
+    "# Matriz de trazabilidad de cuenta clínica",
+    "",
+    `- Versión: ${analysis.version}`,
+    `- Líneas analizadas: ${analysis.lineAssessments.length}`,
+    `- Hipótesis de inclusión: ${candidateCount}`,
+    `- Señales de cuenta: ${analysis.anomalies.length}`,
+    "",
+    "> Este archivo es una salida técnica para revisión de desarrollo. Una probabilidad expresa una hipótesis de pertenencia a una prestación principal; no acredita por sí sola un cobro improcedente ni una devolución garantizada.",
+    "",
+    "## Criterio de lectura",
+    "",
+    "- Las hipótesis deben contrastarse con contrato, convenio, arancel, PAM, registro de uso y resolución aplicable.",
+    "- Las equivalencias observadas muestran similitud con casos del corpus; no son decisiones de cobertura.",
+    "- Las señales de duplicidad requieren revisar el registro clínico, de administración o de consumo.",
+    "",
+    "## Matriz línea por línea",
+    "",
+    "| # | Fecha | Página | Código | Glosa | Monto | Sección | Hipótesis de control | Equivalencias observadas |",
+    "|---:|---|---:|---|---|---:|---|---|---|",
+    rows,
+    "",
+    "## Señales de cuenta",
+    "",
+    "| Severidad | Tipo | Líneas | Explicación |",
+    "|---|---|---|---|",
+    anomalies,
+    "",
+    "## Corpus observado",
+    "",
+    `- Casos: ${analysis.observedCorpus.caseCount}`,
+    `- Observaciones: ${analysis.observedCorpus.observationCount}`,
+    `- Patrones: ${analysis.observedCorpus.patternCount}`,
+    `- Límite de aprendizaje: ${analysis.observedCorpus.learningBoundary}`,
+    "",
+    "## Limitaciones",
+    "",
+    ...analysis.limitations.map((limitation) => `- ${limitation}`),
+    "",
+  ].join("\n");
+}
+
+function downloadMarkdown(filename: string, analysis: ClinicalAccountAnalysis) {
+  const blob = new Blob([analysisToMarkdown(analysis)], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
 export function PortalEntry() {
   return (
     <main className="portal-entry">
@@ -283,12 +368,12 @@ export function DeveloperPortal({ initialCaseId = "" }: { initialCaseId?: string
   const visibleCases = useMemo(() => cases.filter((item) => `${item.patient_name} ${item.id} ${item.episode_label}`.toLowerCase().includes(query.toLowerCase())), [cases, query]);
   if (!selected) return <DeveloperEmpty error={casesError} onCreated={async (id) => { setSelectedId(id); await refreshCases(); }} />;
   const account = accountDoc(snapshot); const pam = pamDoc(snapshot); const total = totalFrom(account, "account");
-  return <main className="developer-portal"><aside className="developer-sidebar"><a className="portal-brand dev-brand" href="/"><span>R</span> RevisaTuCuenta</a><div className="dev-workspace-label">ESPACIO DE TRABAJO</div><nav className="dev-nav"><a className="active" href="/?view=developer"><span>▦</span> Expedientes <em>{cases.length}</em></a><a href="#rules"><span>◌</span> Reglas del motor</a><a href="#corpus"><span>⌁</span> Corpus observado</a></nav><div className="dev-sidebar-bottom"><a href={`/?view=patient&case=${encodeURIComponent(selected)}`} target="_blank" rel="noreferrer"><span>↗</span> Vista paciente</a><div className="dev-user"><span className="avatar">DEV</span><div><b>Desarrollador</b><small>Expedientes operativos</small></div></div></div></aside><section className="developer-main"><header className="developer-header"><div><p className="portal-kicker">CONSOLA DE DESARROLLO</p><h1>Expedientes</h1><p>Revisión técnica sobre los documentos persistidos del caso seleccionado.</p></div><div className="developer-header-actions"><span className="surface-pill developer-pill">Vista desarrollador</span><a className="portal-button portal-button-secondary" href={`/?view=patient&case=${encodeURIComponent(selected)}`} target="_blank" rel="noreferrer">Abrir vista paciente ↗</a></div></header><div className="developer-body"><section className="case-queue"><div className="queue-header"><div><span className="card-kicker">BANDEJA DE CASOS</span><h2>Casos recientes <em>{cases.length}</em></h2></div></div><div className="queue-search">⌕ <input placeholder="Buscar paciente, cuenta o episodio" value={query} onChange={(event) => setQuery(event.target.value)} /></div><div className="queue-list">{visibleCases.map((item) => <button key={item.id} onClick={() => setSelectedId(item.id)} className={`dev-case-row ${selected === item.id ? "active" : ""}`}><span className="avatar">{item.patient_name.slice(0, 2).toUpperCase()}</span><div><b>{item.patient_name}</b><small>{item.id} · {item.document_count} documentos</small></div><em className={item.status.includes("analysis") ? "green" : "blue"}>{item.status}</em></button>)}</div></section><section className="case-detail"><div className="case-detail-head"><div><span className="case-breadcrumb">EXPEDIENTE / {selected}</span><h2>{snapshot?.case.patientName || "Cargando…"}</h2><p>{snapshot?.case.episodeLabel || ""}</p></div><span className="case-state"><i /> {snapshot?.case.status || "Cargando"}</span></div>{snapshot && <><div className="dev-summary-metrics"><DevMetric label="Cuenta clínica" value={money(total)} detail="Documento base"/><DevMetric label="Desfragmentación" value={snapshot.analysis ? `${snapshot.analysis.lineAssessments.length} líneas` : "Pendiente"} detail="Hipótesis técnicas" pending={!snapshot.analysis}/><DevMetric label="Contexto PAM" value={pam ? "Recibido" : "Pendiente"} detail="Se conserva separado" pending={!pam}/><DevMetric label="Autorización" value={snapshot.authorization?.authorized ? "Otorgada" : "Pendiente"} detail="Gestión de reclamos" pending={!snapshot.authorization?.authorized}/><DevMetric label="Documentos" value={String(snapshot.documents.length)} detail="Fuentes del caso"/></div><div className="dev-tabs">{(["overview", "traceability", "documents"] as const).map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item === "overview" ? "Resumen" : item === "traceability" ? "Matriz de trazabilidad" : "Documentos"}</button>)}</div>{notice && <p className="patient-analysis-notice">{notice}</p>}{tab === "overview" && <DeveloperOverview snapshot={snapshot} total={total} busy={busy} onAnalyze={() => void onAnalyze()} onExport={() => downloadJson(`${selected}-preinforme.json`, snapshot)} />}{tab === "traceability" && <DeveloperTraceability snapshot={snapshot} onExport={() => downloadJson(`${selected}-matriz.json`, snapshot.analysis)} />}{tab === "documents" && <DeveloperDocuments snapshot={snapshot} busy={busy} onFile={(file, kind) => void onFile(file, kind)} />}</>}</section></div></section></main>;
+  return <main className="developer-portal"><aside className="developer-sidebar"><a className="portal-brand dev-brand" href="/"><span>R</span> RevisaTuCuenta</a><div className="dev-workspace-label">ESPACIO DE TRABAJO</div><nav className="dev-nav"><a className="active" href="/?view=developer"><span>▦</span> Expedientes <em>{cases.length}</em></a><a href="#rules"><span>◌</span> Reglas del motor</a><a href="#corpus"><span>⌁</span> Corpus observado</a></nav><div className="dev-sidebar-bottom"><a href={`/?view=patient&case=${encodeURIComponent(selected)}`} target="_blank" rel="noreferrer"><span>↗</span> Vista paciente</a><div className="dev-user"><span className="avatar">DEV</span><div><b>Desarrollador</b><small>Expedientes operativos</small></div></div></div></aside><section className="developer-main"><header className="developer-header"><div><p className="portal-kicker">CONSOLA DE DESARROLLO</p><h1>Expedientes</h1><p>Revisión técnica sobre los documentos persistidos del caso seleccionado.</p></div><div className="developer-header-actions"><span className="surface-pill developer-pill">Vista desarrollador</span><a className="portal-button portal-button-secondary" href={`/?view=patient&case=${encodeURIComponent(selected)}`} target="_blank" rel="noreferrer">Abrir vista paciente ↗</a></div></header><div className="developer-body"><section className="case-queue"><div className="queue-header"><div><span className="card-kicker">BANDEJA DE CASOS</span><h2>Casos recientes <em>{cases.length}</em></h2></div></div><div className="queue-search">⌕ <input placeholder="Buscar paciente, cuenta o episodio" value={query} onChange={(event) => setQuery(event.target.value)} /></div><div className="queue-list">{visibleCases.map((item) => <button key={item.id} onClick={() => setSelectedId(item.id)} className={`dev-case-row ${selected === item.id ? "active" : ""}`}><span className="avatar">{item.patient_name.slice(0, 2).toUpperCase()}</span><div><b>{item.patient_name}</b><small>{item.id} · {item.document_count} documentos</small></div><em className={item.status.includes("analysis") ? "green" : "blue"}>{item.status}</em></button>)}</div></section><section className="case-detail"><div className="case-detail-head"><div><span className="case-breadcrumb">EXPEDIENTE / {selected}</span><h2>{snapshot?.case.patientName || "Cargando…"}</h2><p>{snapshot?.case.episodeLabel || ""}</p></div><span className="case-state"><i /> {snapshot?.case.status || "Cargando"}</span></div>{snapshot && <><div className="dev-summary-metrics"><DevMetric label="Cuenta clínica" value={money(total)} detail="Documento base"/><DevMetric label="Desfragmentación" value={snapshot.analysis ? `${snapshot.analysis.lineAssessments.length} líneas` : "Pendiente"} detail="Hipótesis técnicas" pending={!snapshot.analysis}/><DevMetric label="Contexto PAM" value={pam ? "Recibido" : "Pendiente"} detail="Se conserva separado" pending={!pam}/><DevMetric label="Autorización" value={snapshot.authorization?.authorized ? "Otorgada" : "Pendiente"} detail="Gestión de reclamos" pending={!snapshot.authorization?.authorized}/><DevMetric label="Documentos" value={String(snapshot.documents.length)} detail="Fuentes del caso"/></div><div className="dev-tabs">{(["overview", "traceability", "documents"] as const).map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item === "overview" ? "Resumen" : item === "traceability" ? "Matriz de trazabilidad" : "Documentos"}</button>)}</div>{notice && <p className="patient-analysis-notice">{notice}</p>}{tab === "overview" && <DeveloperOverview snapshot={snapshot} total={total} busy={busy} onAnalyze={() => void onAnalyze()} onExport={() => downloadJson(`${selected}-preinforme.json`, snapshot)} />}{tab === "traceability" && <DeveloperTraceability snapshot={snapshot} onExport={() => downloadJson(`${selected}-matriz.json`, snapshot.analysis)} onExportMarkdown={() => snapshot.analysis && downloadMarkdown(`${selected}-matriz.md`, snapshot.analysis)} />}{tab === "documents" && <DeveloperDocuments snapshot={snapshot} busy={busy} onFile={(file, kind) => void onFile(file, kind)} />}</>}</section></div></section></main>;
 }
 
 function DevMetric({ label, value, detail, pending }: { label: string; value: string; detail: string; pending?: boolean }) { return <article className={`dev-metric ${pending ? "pending" : ""}`}><span>{label}</span><strong>{value}</strong><small>{detail}</small></article>; }
 function DeveloperOverview({ snapshot, total, busy, onAnalyze, onExport }: { snapshot: Snapshot; total: number; busy: boolean; onAnalyze: () => void; onExport: () => void }) { const account = accountDoc(snapshot); const analysis = snapshot.analysis; const candidates = analysis?.lineAssessments.filter((item) => item.candidates.some((candidate) => candidate.probability >= 0.45)) || []; return <div className="developer-overview"><div className="dev-flow-card"><div className="card-heading"><div><span className="card-kicker">FLUJO DEL EXPEDIENTE</span><h3>Cuenta clínica primero</h3></div><span className="dev-percentage">{analysis ? "100%" : "50%"}</span></div><div className="dev-flow"><FlowStep number="01" title="Cuenta" state={account ? "complete" : "pending"} detail={account ? "Recibida" : "Pendiente"}/><i/><FlowStep number="02" title="Análisis" state={analysis ? "complete" : "current"} detail={analysis ? "Listo" : "En curso"}/><i/><FlowStep number="03" title="Contexto PAM" state={pamDoc(snapshot) ? "complete" : "pending"} detail={pamDoc(snapshot) ? "Separado" : "Opcional"}/><i/><FlowStep number="04" title="Preinforme" state={analysis ? "current" : "pending"} detail={analysis ? "Disponible" : "Pendiente"}/></div></div><div className="developer-scope-card"><div><span className="card-kicker">ALCANCE ACTUAL</span><h3>Posibles desfragmentaciones del prestador</h3><p>Se revisan glosas, códigos, cantidades y vínculos dentro de la cuenta clínica. El PAM se conserva como contexto documental.</p></div><span>OPERATIVO</span></div><div className="dev-analysis-grid"><article><span className="card-kicker">CUENTA CLÍNICA</span><strong>{money(total)}</strong><small>Total informado por el prestador</small></article><article><span className="card-kicker">LÍNEAS CANDIDATAS</span><strong>{candidates.length}</strong><small>Requieren contraste técnico</small></article><article><span className="card-kicker">PRÓXIMA ACCIÓN</span><strong>{analysis ? "Exportar" : "Analizar"}</strong><small>{analysis ? "Preinforme del caso" : "Ejecutar motor"}</small></article></div><div className="developer-actions"><button className="portal-button portal-button-primary" onClick={onAnalyze} disabled={busy}>{busy ? "Procesando…" : analysis ? "Actualizar análisis" : "Abrir analizador"} →</button><button className="portal-button portal-button-secondary" onClick={onExport}>Exportar preinforme</button></div>{analysis && <DeveloperAnalysisDetail analysis={analysis}/>}</div>; }
-function DeveloperTraceability({ snapshot, onExport }: { snapshot: Snapshot; onExport: () => void }) { return <div className="traceability-view"><div className="traceability-toolbar"><div><span className="card-kicker">MATRIZ DE CUENTA CLÍNICA</span><h3>Evidencia línea por línea</h3></div><button className="portal-button portal-button-secondary" onClick={onExport}>Exportar matriz</button></div>{snapshot.analysis ? <DeveloperAnalysisDetail analysis={snapshot.analysis}/> : <section className="trace-note"><span>i</span><p>Ejecuta el análisis desde Resumen para generar la matriz.</p></section>}</div>; }
+function DeveloperTraceability({ snapshot, onExport, onExportMarkdown }: { snapshot: Snapshot; onExport: () => void; onExportMarkdown: () => void }) { return <div className="traceability-view"><div className="traceability-toolbar"><div><span className="card-kicker">MATRIZ DE CUENTA CLÍNICA</span><h3>Evidencia línea por línea</h3></div><div className="traceability-toolbar-actions"><button className="portal-button portal-button-secondary" onClick={onExport}>Exportar .json</button><button className="portal-button portal-button-secondary" onClick={onExportMarkdown}>Exportar .md</button></div></div>{snapshot.analysis ? <DeveloperAnalysisDetail analysis={snapshot.analysis}/> : <section className="trace-note"><span>i</span><p>Ejecuta el análisis desde Resumen para generar la matriz.</p></section>}</div>; }
 function DeveloperAnalysisDetail({ analysis }: { analysis: ClinicalAccountAnalysis }) { const rows = analysis.lineAssessments.filter((item) => !/bonificacion|copago|liquidacion|pam|ajuste/i.test(`${item.line.description} ${item.line.section || ""}`)); return <section className="developer-analysis-detail"><div className="developer-analysis-detail-head"><div><span className="card-kicker">ANÁLISIS DEL PRESTADOR</span><h3>Hipótesis técnicas trazables</h3><p>Estos resultados requieren contraste contractual y documental.</p></div><div className="developer-analysis-badges"><span>{rows.length} líneas en foco</span></div></div><div className="developer-detail-metrics"><article><b>{rows.length}</b><small>Líneas en foco</small></article><article><b>{rows.filter((item) => item.candidates.length).length}</b><small>Con hipótesis</small></article><article><b>{money(rows.filter((item) => item.candidates.length).reduce((sum, item) => sum + item.line.amount, 0))}</b><small>Valor bajo hipótesis</small></article><article><b>{analysis.anomalies.length}</b><small>Señales</small></article></div><div className="developer-line-table"><div className="developer-line-head"><span>Línea / origen</span><span>Hipótesis</span><span>Valor</span></div>{rows.map((item) => { const candidate = [...item.candidates].sort((left, right) => right.probability - left.probability)[0]; return <article key={item.line.id}><div><b>{item.line.description}</b><small>{item.line.section || "Sin sección"} · pág. {item.line.page}{item.line.code ? ` · código ${item.line.code}` : ""}</small></div><div><strong>{candidate ? `${Math.round(candidate.probability * 100)}%` : "Sin hipótesis"}</strong><small>{candidate?.reasons[0] || "Requiere clasificación adicional"}{candidate?.missingEvidence?.length ? ` · Falta: ${candidate.missingEvidence.join("; ")}` : ""}</small></div><b>{money(item.line.amount)}</b></article>; })}</div></section>; }
 function FlowStep({ number, title, state, detail }: { number: string; title: string; state: "complete" | "current" | "pending"; detail: string }) { return <div className={state}><span>{number}</span><b>{title}</b><small>{detail}</small></div>; }
 function DeveloperDocuments({ snapshot, busy, onFile }: { snapshot: Snapshot; busy: boolean; onFile: (file: File, classification: string) => void }) { return <div className="developer-documents"><div className="traceability-toolbar"><div><span className="card-kicker">DOCUMENTOS DEL CASO</span><h3>Fuentes cargadas</h3></div><span className="document-replacement-note">Los archivos nuevos quedan vinculados al caso</span></div><div className="dev-document-grid"><OperationalDoc type="Cuenta clínica" document={accountDoc(snapshot)} classification="Cuenta clínica" busy={busy} onFile={onFile}/><OperationalDoc type="PAM / liquidación" document={pamDoc(snapshot)} classification="PAM / liquidación" busy={busy} onFile={onFile}/><OperationalDoc type="Contrato / plan" document={snapshot.documents.find((doc) => /contrato|plan/i.test(doc.classification))} classification="Contrato" busy={busy} onFile={onFile}/></div></div>; }

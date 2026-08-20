@@ -288,6 +288,37 @@ export const DEFAULT_CHILEAN_INCLUSION_KNOWLEDGE: InclusionKnowledge[] = [
       "Son compatibles con cuidados habituales de enfermería, pero la conclusión económica exige identificar el tipo de estancia y el contrato.",
   },
   {
+    id: "CL-STAY-NURSING-IV-002",
+    label: "Circuito intravenoso y cuidado local de enfermería",
+    terms: [
+      "intravena jelco",
+      "jelco teflon",
+      "mariposa intrav",
+      "aposito quir",
+      "aposito tegaderm",
+      "prot cutaneo",
+      "skin remove",
+      "toallita c alcohol",
+      "toallita alcohol esteril",
+      "tapa clave",
+      "llave 3 pasos",
+      "bajada standar",
+      "jeringa",
+      "aguja",
+      "liga elastica para puncion",
+      "jeringa gases",
+      "kit hemocultivo",
+    ],
+    bundle: "hospital_stay",
+    probability: 0.62,
+    authority: "clinical_review",
+    status: "provisional",
+    scope: "contract_specific",
+    sourceReference: "Cuenta Rafaella: hospitalización pediátrica sin pabellón",
+    rationale:
+      "En una hospitalización pediátrica sin ancla de pabellón, el conjunto forma un circuito coherente de instalación, mantención, administración intravenosa y toma de muestras. La inclusión económica todavía exige el contrato, convenio o norma técnica aplicable.",
+  },
+  {
     id: "CL-PERI-THROMBO-001",
     label: "Elementos de prevención tromboembólica perioperatoria",
     terms: ["medias antiembol", "manga piernera antienb", "manga piernera antiemb"],
@@ -337,6 +368,61 @@ function inferSectionFamily(section: string): BundleFamily {
   return alias?.[1] ?? "unassigned";
 }
 
+const HOSPITAL_STAY_ANCHORS = [
+  "dia cama",
+  "hospitalizacion",
+  "hospitalizado",
+  "habitacion",
+  "pediatria",
+  "sala cuna",
+  "nursery",
+  "uti",
+  "uci",
+  "atencion cerrada",
+];
+
+const OPERATING_ROOM_ANCHORS = [
+  "derecho pabellon",
+  "pabellon transitorio",
+  "pabellon quirurgico",
+  "quirofano",
+  "farmacia en pabellon",
+  "anestesia",
+  "apendicectomia",
+  "colecistectomia",
+  "turbinectomia",
+  "septoplastia",
+  "rinoplastia",
+  "neurectomia",
+  "cesarea",
+  "amigdalectomia",
+  "cirugia",
+];
+
+const HOSPITAL_NURSING_CONTEXT_RULES = new Set([
+  "CL-STAY-NURSING-001",
+  "CL-STAY-NURSING-IV-002",
+]);
+
+function includesAnchor(value: string, anchors: string[]) {
+  const normalized = normalize(value);
+  return anchors.some((anchor) => normalized.includes(anchor));
+}
+
+function episodeContext(lines: ChileanBillingLine[]) {
+  const hasHospitalStay = lines.some((line) =>
+    includesAnchor(`${line.section ?? ""} ${line.subgroup ?? ""} ${line.description}`, HOSPITAL_STAY_ANCHORS),
+  );
+  const hasOperatingRoom = lines.some((line) =>
+    includesAnchor(`${line.section ?? ""} ${line.subgroup ?? ""} ${line.description}`, OPERATING_ROOM_ANCHORS),
+  );
+  return {
+    hasHospitalStay,
+    hasOperatingRoom,
+    noPavilionHospitalStay: hasHospitalStay && !hasOperatingRoom,
+  };
+}
+
 function scoreLine(
   line: ChileanBillingLine,
   lines: ChileanBillingLine[],
@@ -345,10 +431,24 @@ function scoreLine(
   const description = normalize(line.description);
   const section = normalize(`${line.section ?? ""} ${line.subgroup ?? ""}`);
   const sectionFamily = inferSectionFamily(section);
+  const context = episodeContext(lines);
+  const explicitHospitalSection = includesAnchor(
+    `${line.section ?? ""} ${line.subgroup ?? ""}`,
+    HOSPITAL_STAY_ANCHORS,
+  );
   const evidence = knowledge.filter(
     (entry) =>
       entry.status !== "contradicted" &&
-      entry.terms.some((term) => description.includes(normalize(term))),
+      entry.terms.some((term) => description.includes(normalize(term))) &&
+      !(
+        context.noPavilionHospitalStay &&
+        entry.bundle === "operating_room"
+      ) &&
+      !(
+        context.hasOperatingRoom &&
+        HOSPITAL_NURSING_CONTEXT_RULES.has(entry.id) &&
+        !explicitHospitalSection
+      ),
   );
   const linkedFamilies = new Set(
     lines
@@ -375,7 +475,17 @@ function scoreLine(
     let probability = matched.length
       ? Math.max(...matched.map((entry) => entry.probability))
       : 0.45;
-    const reasons = matched.map((entry) => entry.rationale);
+    const reasons = [
+      ...(bundle === "hospital_stay" && context.noPavilionHospitalStay
+        ? [
+            "El episodio contiene habitación/hospitalización pediátrica y no presenta un ancla de pabellón; el material se interpreta primero como apoyo de enfermería del día cama.",
+          ]
+        : []),
+      ...matched.map((entry) => entry.rationale),
+    ];
+    if (bundle === "hospital_stay" && context.noPavilionHospitalStay) {
+      probability += 0.08;
+    }
     if (sectionFamily === bundle) {
       probability += 0.1;
       reasons.push(`La sección chilena “${line.section ?? line.subgroup}” apunta al mismo contexto.`);

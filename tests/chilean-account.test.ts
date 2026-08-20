@@ -43,6 +43,29 @@ test("mantiene incertidumbre explícita para artículos de hospitalización", ()
   assert.match(candidate?.missingEvidence[0] ?? "", /Contrato|convenio/);
 });
 
+test("asocia el circuito de enfermería a día cama cuando no hay pabellón", () => {
+  const nursingLines: ChileanBillingLine[] = [
+    { ...base, id: "room", description: "HABITACION PEDIATRIA", section: "Hospitalización", amount: 529200 },
+    { ...base, id: "dressing", description: "APOSITO QUIR 10 X20 ESTERIL", section: "Materiales clínicos", amount: 2136 },
+    { ...base, id: "tegaderm", description: "APOSITO TEGADERM I.V", section: "Materiales clínicos", amount: 2744 },
+    { ...base, id: "skin", description: "PROT. CUTANEO CUTIMED", section: "Materiales clínicos", amount: 4260 },
+    { ...base, id: "remove", description: "SKIN REMOVE", section: "Materiales clínicos", amount: 1602 },
+    { ...base, id: "alcohol", description: "TOALLITA C/ALCOHOL ESTERIL", section: "Materiales clínicos", amount: 92 },
+    { ...base, id: "syringe", description: "JERINGA 3 ML LUER LOCK", section: "Materiales clínicos", amount: 267 },
+    { ...base, id: "needle", description: "AGUJA DESECHABLE", section: "Materiales clínicos", amount: 188 },
+    { ...base, id: "flebo", description: "FLEBOCLISIS", section: "Urgencia", amount: 41100 },
+  ];
+  const result = analyzeClinicalAccount(nursingLines);
+  for (const id of ["dressing", "tegaderm", "skin", "remove", "alcohol", "syringe", "needle", "flebo"]) {
+    const assessment = result.lineAssessments.find((item) => item.line.id === id);
+    assert.ok(assessment?.candidates.some((candidate) => candidate.bundle === "hospital_stay"), id);
+  }
+  for (const id of ["syringe", "needle"]) {
+    const assessment = result.lineAssessments.find((item) => item.line.id === id);
+    assert.equal(assessment?.candidates.some((candidate) => candidate.bundle === "operating_room"), false, id);
+  }
+});
+
 test("asigna alta probabilidad provisional a anestésicos de pabellón", () => {
   const result = analyzeClinicalAccount([
     { ...base, id: "pab", description: "Pabellón transitorio", section: "Pabellón transitorio", amount: 1522346 },
