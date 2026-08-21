@@ -1,12 +1,23 @@
 import {
+  findFunctionalEquivalenceAlerts,
   findObservedEquivalents,
   OBSERVED_CHILEAN_ACCOUNT_CORPUS,
+  type FunctionalEquivalenceAlert,
   type ObservedEquivalent,
 } from "./observed-corpus.ts";
+import {
+  UNIVERSAL_CLAIM_FRAMEWORK,
+  EQUALITY_PROJECTION_FRAMEWORK,
+  FULL_OPERATING_ROOM_FRAMEWORK,
+  type EqualityProjectionFramework,
+  type ClaimFramework,
+  type OperatingRoomFramework,
+} from "../claims/legal-basis.ts";
 
 export type BundleFamily =
   | "operating_room"
   | "hospital_stay"
+  | "hospitalized_medication"
   | "procedure"
   | "professional_fees"
   | "unassigned";
@@ -56,8 +67,42 @@ export type InclusionCandidate = {
   bundle: BundleFamily;
   probability: number;
   knowledgeIds: string[];
+  precedentIds: string[];
+  precedentSupport: number;
   reasons: string[];
   missingEvidence: string[];
+};
+
+export type PrecedentComparison = {
+  precedentId: string;
+  label: string;
+  sourceReference: string;
+  outcomeBundle: BundleFamily;
+  outcome: "included" | "excluded";
+  outcomeLabel: string;
+  comparability: number;
+  status: "strong_comparator" | "partial_comparator" | "not_comparable";
+  matchedFactors: string[];
+  missingEvidence: string[];
+  distinctionFactors: string[];
+  explanation: string;
+};
+
+export type ReasoningFinding = {
+  id:
+    | "SUP-CODING-ERROR-001"
+    | "SUP-RESTRICTIVE-EXCLUSION-001"
+    | "SUP-INTEGRAL-CHARGE-001"
+    | "SUP-INFORMATION-PAYMENT-001"
+    | "SUP-BUDGET-CODE-001"
+    | "SUP-PROCEDURAL-CHAIN-001";
+  title: string;
+  status: "relevant" | "needs_evidence" | "not_triggered";
+  explanation: string;
+  action: string;
+  matchedLineIds: string[];
+  evidenceToRequest: string[];
+  sourceReferences: string[];
 };
 
 export type AccountAnomaly = {
@@ -74,13 +119,20 @@ export type AccountAnomaly = {
 
 export type ClinicalAccountAnalysis = {
   version: string;
+  claimFramework: ClaimFramework;
+  equalityProjection: EqualityProjectionFramework;
+  operatingRoomFramework: OperatingRoomFramework;
   lineAssessments: Array<{
     line: ChileanBillingLine;
     normalizedSection: string;
     candidates: InclusionCandidate[];
     observedEquivalents: ObservedEquivalent[];
+    functionalEquivalenceAlerts: FunctionalEquivalenceAlert[];
+    precedentComparisons: PrecedentComparison[];
   }>;
+  functionalEquivalenceAlerts: FunctionalEquivalenceAlert[];
   anomalies: AccountAnomaly[];
+  reasoningFindings: ReasoningFinding[];
   providerIds: string[];
   observedCorpus: {
     version: string;
@@ -114,6 +166,8 @@ export const CHILEAN_SECTION_ALIASES: Record<string, BundleFamily> = {
   "dia cama": "hospital_stay",
   "dia cama individual": "hospital_stay",
   "farmacia hospitalizacion": "hospital_stay",
+  "medicamentos hospitalizados": "hospitalized_medication",
+  "medicamentos hospitalizacion": "hospitalized_medication",
   "materiales clinicos": "unassigned",
   farmacia: "unassigned",
   "honorario quirurgico": "professional_fees",
@@ -125,6 +179,39 @@ export const CHILEAN_SECTION_ALIASES: Record<string, BundleFamily> = {
  * entries can be added as claims are resolved, without rewriting old evidence.
  */
 export const DEFAULT_CHILEAN_INCLUSION_KNOWLEDGE: InclusionKnowledge[] = [
+  {
+    id: "CL-PAB-CIRCULAR43-FULL-001",
+    label: "Alcance integral del Derecho de Pabellón",
+    terms: [
+      "aspiracion", "bomba aspiracion", "receptal", "oxigeno", "aire comprimido",
+      "kit anestesia", "tubo endotraqueal", "entubacion", "monitor", "sensor", "electrodo",
+      "oxisensor", "resucitador", "conexion", "conector", "electrobisturi", "lapiz electrobisturi",
+      "600510244 alargador",
+      "placa valleylab", "micropunta", "laser quirurgico", "ventilacion mecanica", "endoscopia",
+      "laparoscopia", "microscopio", "hoja bisturi", "hojas bisturi", "cateter", "cat i v",
+      "branula", "intrafix", "adaptador suero", "tubo ext c llave", "delantal esteril",
+      "bata quirur", "alargador de tubo hme", "humidificador",
+      "bata quirurgica", "ropa esteril", "jeringa", "aguja", "fleboclisis", "bajada", "tapa",
+      "tapon", "llave 3 pasos", "guante", "drenaje", "canula", "sonda", "pano esteril",
+      "campo quirurgico", "gasa", "algodon", "torula", "aposito", "tela adhesiva", "micropore",
+      "tegaderm", "antiseptico", "desinfectante", "povidona", "clorhexidina", "formalina",
+      "allevyn", "hisopo esteril", "lapiz marcador", "mascarilla multivent", "tubo endot",
+      "jabon quirurgico", "esponja con jabon", "escobilla", "sutura", "sutupack", "vicryl", "monocryl",
+      "prolene", "ethilon", "pds", "surgitie", "propofol", "rocuronio", "remifentanilo",
+      "sevoflurano", "sugammadex", "bupivacaina", "lidocaina", "medias antiembol",
+      "anestesico", "oxido nitroso", "aire medicinal",
+      "manga piernera", "compresor neumatico", "calzon clinico", "cobertor underbody",
+    ],
+    bundle: "operating_room",
+    probability: 0.84,
+    authority: "technical_standard",
+    status: "provisional",
+    scope: "fonasa_mle",
+    sourceReference:
+      "Circular N.º 43 y Compendio de Procedimientos, Apéndice del Anexo N.º 4, Derecho de Pabellón, pp. 113-116",
+    rationale:
+      "Con pabellón confirmado, la categoría está expresamente comprendida en la definición amplia: equipos y no fungibles, insumos desechables o recuperables, fungibles generales, gases o anestésicos. El cobro separado requiere una diferencia objetiva y fundamento contractual verificable.",
+  },
   {
     id: "CL-PAB-GENERAL-001",
     label: "Insumos generales usados en pabellón",
@@ -319,17 +406,52 @@ export const DEFAULT_CHILEAN_INCLUSION_KNOWLEDGE: InclusionKnowledge[] = [
       "En una hospitalización pediátrica sin ancla de pabellón, el conjunto forma un circuito coherente de instalación, mantención, administración intravenosa y toma de muestras. La inclusión económica todavía exige el contrato, convenio o norma técnica aplicable.",
   },
   {
+    id: "CL-MED-HOSP-OCULAR-001",
+    label: "Medicamento utilizado durante hospitalización",
+    terms: ["lubricante ocular", "duratears", "unguento oftalmico"],
+    bundle: "hospitalized_medication",
+    probability: 0.84,
+    authority: "regulator_decision",
+    status: "provisional",
+    scope: "contract_specific",
+    sourceReference: "Tribunal Arbitral, Rol 4063244-2025, considerando 7: Lubricante Ocular",
+    rationale:
+      "La sentencia lo ubicó en el ítem Medicamentos Hospitalizados para el episodio resuelto. En una cuenta nueva debe verificarse identidad, administración efectiva y contrato aplicable.",
+  },
+  {
+    id: "CL-PAB-ARBITRAL-4063244-001",
+    label: "Elementos clasificados en Derecho de Pabellón por antecedente arbitral",
+    terms: [
+      "medias antiembolicas",
+      "medias antiembolismo",
+      "calzon clinico",
+      "esponja con jabon neutro",
+      "esponja jabon neutro",
+      "delantal esteril",
+      "mangas para compresor neumatico",
+      "manga compresor neumatico",
+    ],
+    bundle: "operating_room",
+    probability: 0.9,
+    authority: "regulator_decision",
+    status: "provisional",
+    scope: "contract_specific",
+    sourceReference: "Tribunal Arbitral, Rol 4063244-2025, considerando 7: Derecho de Pabellón",
+    rationale:
+      "La sentencia los agrupó bajo Derecho de Pabellón en el episodio resuelto. La proyección exige verificar pabellón real, función del elemento y contrato aplicable.",
+  },
+  {
     id: "CL-PERI-THROMBO-001",
     label: "Elementos de prevención tromboembólica perioperatoria",
     terms: ["medias antiembol", "manga piernera antienb", "manga piernera antiemb"],
-    bundle: "hospital_stay",
+    bundle: "operating_room",
     probability: 0.46,
     authority: "clinical_review",
     status: "provisional",
     scope: "provider_observation",
     sourceReference: "Cuenta D1482290 de turbinectomía y rinoplastia",
     rationale:
-      "Se vincula a prevención tromboembólica perioperatoria. Debe acreditarse el uso de cada dispositivo, distinguir sus funciones y aclarar si corresponde a pabellón, hospitalización o cobro separado.",
+      "La sentencia arbitral ubicó estos elementos en Derecho de Pabellón para el episodio resuelto. La función perioperatoria es compatible, pero debe acreditarse el uso y la equivalencia del nuevo contexto.",
   },
   {
     id: "CL-STAY-AMENITY-001",
@@ -342,7 +464,6 @@ export const DEFAULT_CHILEAN_INCLUSION_KNOWLEDGE: InclusionKnowledge[] = [
       "calzon clinico",
       "delantal paciente",
       "medias antiembol",
-      "lubricante ocular",
       "removedor de adhesivo",
       "manga piernera antienb",
       "manga piernera antiemb",
@@ -355,6 +476,109 @@ export const DEFAULT_CHILEAN_INCLUSION_KNOWLEDGE: InclusionKnowledge[] = [
     sourceReference: "Cuenta INDISA apendicitis y antecedentes de reclamo",
     rationale:
       "No existe una lista universal exhaustiva. Debe aprenderse de contratos, resoluciones y decisiones regulatorias específicas.",
+  },
+];
+
+export type PrecedentRule = {
+  id: string;
+  label: string;
+  sourceReference: string;
+  terms: string[];
+  codes: string[];
+  outcomeBundle: BundleFamily;
+  outcome: "included" | "excluded";
+  outcomeLabel: string;
+  decisionOutcome: string;
+  caseContext: string;
+};
+
+/**
+ * Antecedentes adjudicados que pueden compararse con nuevas cuentas. El
+ * alcance queda expresamente limitado al caso resuelto: el motor los usa
+ * para construir una presunción argumental y pedir consistencia, no para
+ * declarar cobertura por sí solo.
+ */
+export const CHILEAN_PRECEDENT_RULES: PrecedentRule[] = [
+  {
+    id: "SUP-ARB-4063244-2025-DIACAMA-001",
+    label: "Día cama: insumos de enfermería y hospitalización",
+    sourceReference:
+      "Tribunal Arbitral de la Superintendencia de Salud, Rol 4063244-2025, considerando 7, sentencia de 15-04-2026",
+    terms: [
+      "removedor de adhesivos",
+      "removedor de adhesivo",
+      "removedor adhesivos",
+      "delantal paciente azul",
+      "delantal paciente",
+      "termometro digital",
+      "termometro",
+      "instalacion de via venosa",
+      "instalacion via venosa",
+      "fleboclisis",
+    ],
+    codes: ["63100133", "600510115", "2601118", "2601119"],
+    outcomeBundle: "hospital_stay",
+    outcome: "included",
+    outcomeLabel: "Día Cama",
+    decisionOutcome:
+      "En el episodio resuelto, Removedor de Adhesivos, Delantal Paciente Azul, Termómetro Digital, Instalación de Vía Venosa y Fleboclisis fueron sumados al Día Cama y bonificados bajo ese ítem.",
+    caseContext:
+      "Reclamo por cargos de insumos durante atención de urgencia y hospitalización, con discusión de homologación y cobertura contractual.",
+  },
+  {
+    id: "SUP-ARB-4063244-2025-MED-HOSP-001",
+    label: "Lubricante ocular: criterio arbitral de medicamento hospitalizado",
+    sourceReference:
+      "Tribunal Arbitral de la Superintendencia de Salud, Rol 4063244-2025, considerando 7, sentencia de 15-04-2026",
+    terms: ["lubricante ocular", "duratears", "unguento oftalmico"],
+    codes: [],
+    outcomeBundle: "hospitalized_medication",
+    outcome: "included",
+    outcomeLabel: "Medicamentos hospitalizados",
+    decisionOutcome:
+      "En el episodio resuelto, el Lubricante Ocular fue sumado al ítem Medicamentos Hospitalizados y bonificado conforme a ese rubro.",
+    caseContext:
+      "Clasificación expresa de un medicamento utilizado durante un episodio hospitalario; exige validar administración y condiciones contractuales del caso nuevo.",
+  },
+  {
+    id: "SUP-ARB-4063244-2025-PAB-001",
+    label: "Pabellón: elementos de uso quirúrgico",
+    sourceReference:
+      "Tribunal Arbitral de la Superintendencia de Salud, Rol 4063244-2025, considerando 7, sentencia de 15-04-2026",
+    terms: [
+      "medias antiembolicas",
+      "medias antiembolismo",
+      "calzon clinico",
+      "esponja con jabon neutro",
+      "esponja jabon neutro",
+      "delantal esteril",
+      "mangas para compresor neumatico",
+      "manga compresor neumatico",
+      "manga piernera antiemb",
+    ],
+    codes: [],
+    outcomeBundle: "operating_room",
+    outcome: "included",
+    outcomeLabel: "Derecho de Pabellón",
+    decisionOutcome:
+      "En el episodio resuelto, Medias Antiembólicas, Calzón Clínico, Esponja con Jabón Neutro, Delantal Estéril y Mangas para Compresor Neumático fueron sumados al Derecho de Pabellón y bonificados bajo ese ítem.",
+    caseContext:
+      "Clasificación expresa de elementos asociados al recinto quirúrgico; requiere confirmar que el episodio nuevo tenga pabellón y función equivalente.",
+  },
+  {
+    id: "SUP-ARB-4063244-2025-EXCL-001",
+    label: "Set de aseo personal adulto: exclusión en el caso resuelto",
+    sourceReference:
+      "Tribunal Arbitral de la Superintendencia de Salud, Rol 4063244-2025, considerando 7, sentencia de 15-04-2026",
+    terms: ["set de aseo personal adulto", "set aseo personal adulto"],
+    codes: [],
+    outcomeBundle: "unassigned",
+    outcome: "excluded",
+    outcomeLabel: "Sin cobertura en el caso resuelto",
+    decisionOutcome:
+      "En el episodio resuelto, el Set de Aseo Personal Adulto permaneció sin cobertura; esa conclusión no autoriza trasladar la exclusión a otro plan o episodio sin comparar sus circunstancias.",
+    caseContext:
+      "La sentencia distinguió artículos de uso personal de los insumos incorporados a Día Cama o Derecho de Pabellón.",
   },
 ];
 
@@ -382,6 +606,8 @@ const HOSPITAL_STAY_ANCHORS = [
 ];
 
 const OPERATING_ROOM_ANCHORS = [
+  "derecho de pabellon",
+  "pabellon",
   "derecho pabellon",
   "pabellon transitorio",
   "pabellon quirurgico",
@@ -423,15 +649,134 @@ function episodeContext(lines: ChileanBillingLine[]) {
   };
 }
 
+function precedentComparisonsForLine(
+  line: ChileanBillingLine,
+  lines: ChileanBillingLine[],
+): PrecedentComparison[] {
+  const description = normalize(`${line.code ?? ""} ${line.description}`);
+  const section = `${line.section ?? ""} ${line.subgroup ?? ""}`;
+  const context = episodeContext(lines);
+  const sectionFamily = inferSectionFamily(section);
+
+  return CHILEAN_PRECEDENT_RULES.flatMap((precedent) => {
+    const codeMatch = precedent.codes.some(
+      (code) => code === line.code || code === line.fonasaCode,
+    );
+    const matchedTerms = precedent.terms.filter((term) =>
+      description.includes(normalize(term)),
+    );
+    if (!codeMatch && matchedTerms.length === 0) return [];
+
+    let comparability = codeMatch ? 0.62 : 0.48;
+    const matchedFactors: string[] = [];
+    const distinctionFactors: string[] = [];
+
+    if (codeMatch) {
+      matchedFactors.push("Coincide el código del insumo con el antecedente.");
+    }
+    if (matchedTerms.length > 0) {
+      matchedFactors.push(
+        `La glosa coincide con ${matchedTerms.map((term) => `“${term}”`).join(", ")}.`,
+      );
+      comparability += 0.1;
+    }
+
+    const targetIsHospital =
+      precedent.outcomeBundle === "hospital_stay" ||
+      precedent.outcomeBundle === "hospitalized_medication" ||
+      precedent.outcome === "excluded";
+    const targetIsOperatingRoom = precedent.outcomeBundle === "operating_room";
+    const hospitalContext =
+      context.hasHospitalStay || sectionFamily === "hospital_stay";
+    const operatingRoomContext =
+      context.hasOperatingRoom || sectionFamily === "operating_room";
+    if (targetIsHospital && hospitalContext) {
+      comparability += 0.14;
+      matchedFactors.push("El episodio o la sección corresponde a hospitalización.");
+    } else if (targetIsHospital) {
+      distinctionFactors.push(
+        "No se identificó todavía un ancla de hospitalización o Día Cama en el episodio.",
+      );
+    }
+
+    if (targetIsOperatingRoom && operatingRoomContext) {
+      comparability += 0.14;
+      matchedFactors.push("El episodio o la sección contiene un ancla de pabellón.");
+    } else if (targetIsOperatingRoom) {
+      distinctionFactors.push(
+        "No se identificó un ancla de pabellón; debe justificarse por qué el criterio de Derecho de Pabellón sería comparable.",
+      );
+    }
+
+    if (targetIsHospital && context.noPavilionHospitalStay) {
+      comparability += 0.1;
+      matchedFactors.push("No se identificó ancla de pabellón en el episodio.");
+    } else if (targetIsHospital && context.hasOperatingRoom) {
+      distinctionFactors.push(
+        "El episodio contiene un ancla de pabellón; debe explicarse por qué el criterio de hospitalización sería comparable.",
+      );
+    }
+
+    if (line.amount !== 0) {
+      comparability += 0.04;
+      matchedFactors.push("El concepto aparece como cargo individualizado.");
+    }
+
+    const normalizedComparability = clamp(comparability);
+    const status =
+      normalizedComparability >= 0.8
+        ? "strong_comparator"
+        : normalizedComparability >= 0.55
+          ? "partial_comparator"
+          : "not_comparable";
+
+    return [{
+      precedentId: precedent.id,
+      label: precedent.label,
+      sourceReference: precedent.sourceReference,
+      outcomeBundle: precedent.outcomeBundle,
+      outcome: precedent.outcome,
+      outcomeLabel: precedent.outcomeLabel,
+      comparability: normalizedComparability,
+      status,
+      matchedFactors: unique(matchedFactors),
+      missingEvidence: [
+        "Contrato, plan, convenio y arancel aplicables al episodio",
+        "Registro clínico o de uso que confirme la función del insumo",
+        "Respuesta del prestador y de la Isapre sobre la diferencia de clasificación",
+      ],
+      distinctionFactors: unique(distinctionFactors),
+      explanation:
+        status === "strong_comparator"
+          ? `${precedent.decisionOutcome} La coincidencia actual permite invocarlo como antecedente comparable, sujeto a validar el contrato y el contexto.`
+          : `${precedent.decisionOutcome} La coincidencia es parcial; se requiere completar los factores de comparación antes de pedir el mismo tratamiento.`,
+    }];
+  });
+}
+
 function scoreLine(
   line: ChileanBillingLine,
   lines: ChileanBillingLine[],
   knowledge: InclusionKnowledge[],
 ): InclusionCandidate[] {
-  const description = normalize(line.description);
+  const description = normalize(`${line.code ?? ""} ${line.description}`);
   const section = normalize(`${line.section ?? ""} ${line.subgroup ?? ""}`);
   const sectionFamily = inferSectionFamily(section);
+  const professionalCharge =
+    sectionFamily === "professional_fees" ||
+    /valor arancelario anestesico|honorario|anestesiologo|cirujano/.test(description);
   const context = episodeContext(lines);
+  const precedentComparisons = precedentComparisonsForLine(line, lines);
+  const adjudicatedExclusion = precedentComparisons.find(
+    (comparison) =>
+      comparison.outcome === "excluded" &&
+      comparison.comparability >= 0.8,
+  );
+  const strongAdjudicatedBundle = precedentComparisons.find(
+    (comparison) =>
+      comparison.outcome === "included" &&
+      comparison.status === "strong_comparator",
+  )?.outcomeBundle;
   const explicitHospitalSection = includesAnchor(
     `${line.section ?? ""} ${line.subgroup ?? ""}`,
     HOSPITAL_STAY_ANCHORS,
@@ -440,6 +785,11 @@ function scoreLine(
     (entry) =>
       entry.status !== "contradicted" &&
       entry.terms.some((term) => description.includes(normalize(term))) &&
+      !(
+        entry.id === "CL-PAB-CIRCULAR43-FULL-001" &&
+        (!context.hasOperatingRoom || professionalCharge)
+      ) &&
+      (!strongAdjudicatedBundle || entry.bundle === strongAdjudicatedBundle) &&
       !(
         context.noPavilionHospitalStay &&
         entry.bundle === "operating_room"
@@ -468,10 +818,19 @@ function scoreLine(
   // principal (p. ej. una colecistectomía o un derecho de pabellón) en un
   // componente posiblemente incluido. Solo el conocimiento específico sobre
   // la glosa abre una hipótesis de inclusión.
+  if (adjudicatedExclusion) return [];
   const bundles = unique(evidence.map((entry) => entry.bundle));
 
   return bundles.map((bundle) => {
     const matched = evidence.filter((entry) => entry.bundle === bundle);
+    const precedentMatches = precedentComparisons.filter(
+      (comparison) =>
+        comparison.outcome === "included" &&
+        comparison.outcomeBundle === bundle,
+    );
+    const precedentSupport = precedentMatches.length
+      ? Math.max(...precedentMatches.map((comparison) => comparison.comparability))
+      : 0;
     let probability = matched.length
       ? Math.max(...matched.map((entry) => entry.probability))
       : 0.45;
@@ -494,17 +853,34 @@ function scoreLine(
       probability += 0.08;
       reasons.push("Comparte fecha y número documental con una prestación principal del mismo contexto.");
     }
+    if (precedentSupport > 0) {
+      probability += Math.min(0.3, precedentSupport * 0.32);
+      reasons.push(
+        `Existe un antecedente arbitral comparable (${Math.round(precedentSupport * 100)}% de comparabilidad); puede invocarse igualdad ante la ley para pedir un trato coherente caso a caso, sin convertirlo en cobertura automática.`,
+      );
+      if (precedentMatches.some((comparison) => comparison.status !== "strong_comparator")) {
+        reasons.push("La comparabilidad es parcial y requiere justificar las diferencias del nuevo episodio.");
+      }
+    }
     const needsContract = matched.some(
       (entry) => entry.scope !== "general_chile" && entry.status !== "confirmed",
     );
+    const missingEvidence = needsContract
+      ? ["Contrato, convenio o resolución aplicable al episodio"]
+      : [];
+    if (precedentMatches.length > 0) {
+      missingEvidence.push(
+        "Verificar equivalencia material del antecedente: ítem, episodio, función, contrato y registro de uso",
+      );
+    }
     return {
       bundle,
       probability: clamp(probability),
       knowledgeIds: matched.map((entry) => entry.id),
+      precedentIds: precedentMatches.map((comparison) => comparison.precedentId),
+      precedentSupport: Number(precedentSupport.toFixed(3)),
       reasons: unique(reasons),
-      missingEvidence: needsContract
-        ? ["Contrato, convenio o resolución aplicable al episodio"]
-        : [],
+      missingEvidence: unique(missingEvidence),
     };
   });
 }
@@ -590,19 +966,151 @@ function detectAnomalies(lines: ChileanBillingLine[]): AccountAnomaly[] {
   return anomalies;
 }
 
+function buildReasoningFindings(lines: ChileanBillingLine[]): ReasoningFinding[] {
+  const lineText = (line: ChileanBillingLine) =>
+    normalize(`${line.description} ${line.section ?? ""} ${line.subgroup ?? ""}`);
+  const codingLines = lines.filter((line) =>
+    /00 00 000 00|pna|gnc|no codific|sin codigo|sin codigo/.test(lineText(line)),
+  );
+  const exclusionLines = lines.filter((line) =>
+    /no cubiert|exclu|rechaz|no bonif|sin cobertura|pna|gnc/.test(lineText(line)),
+  );
+  const operatingRoomLines = lines.filter((line) =>
+    includesAnchor(lineText(line), OPERATING_ROOM_ANCHORS),
+  );
+  const budgetLines = lines.filter((line) =>
+    /presupuesto|cotizacion|pre presupuesto/.test(lineText(line)),
+  );
+  const source = {
+    coding: "Jurisprudencia SIS, Rol Arbitral 10492-2013, p. 60; Rol 4063244-2025, considerandos 4-6",
+    exclusion: "Jurisprudencia SIS, Rol Administrativo 1508-2014, p. 65; Compendio Beneficios, pp. 10-12",
+    integral: "Circular N.º 43 y Compendio de Procedimientos, Apéndice del Anexo N.º 4, Derecho de Pabellón, pp. 113-116; Jurisprudencia SIS, Rol Administrativo 1037885-2013, pp. 80-83; Rol Arbitral 4063244-2025, considerando 7",
+    information: "Jurisprudencia SIS, Rol Arbitral 24893-2013, pp. 73-79; Compendios de Beneficios y Contratos",
+    budget: "Jurisprudencia SIS, Rol Administrativo 200074-2013, p. 84",
+    procedure: "Compendio Procedimientos, Capítulo V, pp. 288-300",
+  };
+  const findings: ReasoningFinding[] = [
+    {
+      id: "SUP-CODING-ERROR-001",
+      title: "La codificación no debe trasladar automáticamente el costo al paciente",
+      status: codingLines.length ? "relevant" : "not_triggered",
+      explanation:
+        "Si la diferencia proviene de cómo el prestador o la Isapre codificó una prestación, debe compararse el servicio efectivamente realizado con el arancel, el plan y el PAM. La jurisprudencia reconoce que una diferencia de codificación en un prestador preferente no puede perjudicar al beneficiario; si el servicio carece de código, la homologación requiere el cauce y la justificación correspondientes.",
+      action:
+        "Solicitar código aplicado, código FONASA o equivalente, regla de homologación, programa médico, plan y explicación escrita de quién asumió la diferencia.",
+      matchedLineIds: codingLines.map((line) => line.id),
+      evidenceToRequest: [
+        "Arancel y tabla de homologaciones aplicada",
+        "PAM o liquidación con código y motivo de rechazo",
+        "Programa médico, ficha o registro que pruebe la prestación efectivamente realizada",
+      ],
+      sourceReferences: [source.coding],
+    },
+    {
+      id: "SUP-RESTRICTIVE-EXCLUSION-001",
+      title: "Las exclusiones requieren fundamento y prueba suficiente",
+      status: exclusionLines.length ? "relevant" : "not_triggered",
+      explanation:
+        "Una glosa de exclusión, no bonificación o PNA/GNC no demuestra por sí sola que el cargo esté fuera de cobertura. Las exclusiones son excepcionales y restrictivas: la institución debe identificar la cláusula, el concepto legal o contractual y los antecedentes que lo acreditan. La duda no se resuelve convirtiendo una inferencia en certeza.",
+      action:
+        "Pedir la cláusula exacta, el fundamento técnico-contractual, la prueba de la exclusión y la razón por la que no se aplicó un rubro principal o una cobertura mínima.",
+      matchedLineIds: exclusionLines.map((line) => line.id),
+      evidenceToRequest: [
+        "Contrato, plan, arancel y norma técnico-administrativa vigente",
+        "Comunicación escrita de la negativa o restricción",
+        "Antecedentes clínicos que sostengan la causal invocada",
+      ],
+      sourceReferences: [source.exclusion],
+    },
+    {
+      id: "SUP-INTEGRAL-CHARGE-001",
+      title: "Control de integralidad y cobro separado",
+      status: operatingRoomLines.length > 0 ? "needs_evidence" : "not_triggered",
+      explanation:
+        "Con pabellón confirmado, la Circular N.º 43 y su apéndice establecen un alcance amplio que comprende sala y recuperación, equipos y no fungibles, insumos desechables o recuperables, fungibles generales, gases y anestésicos. Además, cuando una maniobra necesaria forma parte de un procedimiento de mayor complejidad sin código independiente, la jurisprudencia exige controlar su integralidad. La revisión debe identificar qué se usó y qué regla concreta permitiría el cobro separado.",
+      action:
+        "Comparar protocolo operatorio, registro de uso, código independiente, descripción del procedimiento y composición contractual del pabellón.",
+      matchedLineIds: operatingRoomLines.map((line) => line.id),
+      evidenceToRequest: [
+        "Protocolo operatorio o registro del procedimiento",
+        "Arancel con código de la maniobra y de la prestación principal",
+        "Composición contractual del Derecho de Pabellón y materiales incluidos",
+      ],
+      sourceReferences: [source.integral],
+    },
+    {
+      id: "SUP-INFORMATION-PAYMENT-001",
+      title: "La modalidad de pago y el rechazo deben ser comprensibles",
+      status: lines.length ? "needs_evidence" : "not_triggered",
+      explanation:
+        "La cobertura no se puede auditar mirando sólo el cargo o sólo el PAM. Deben reconstruirse la modalidad de pago, los conceptos excluidos del convenio prestador-Isapre, la liquidación, el copago y la comunicación escrita del rechazo. La jurisprudencia vinculó la falta de esa información con la pérdida práctica de la oportunidad de pedir cobertura.",
+      action:
+        "Solicitar cuenta pormenorizada, PAM/liquidación, modalidad de pago, prestaciones excluidas del convenio, fecha de solicitud y respuesta escrita.",
+      matchedLineIds: lines.map((line) => line.id),
+      evidenceToRequest: [
+        "Cuenta con glosa, código, fecha, cantidad, valor unitario y total",
+        "PAM, liquidación, copago y modalidad de pago",
+        "Carta de negativa o restricción y fecha de notificación",
+      ],
+      sourceReferences: [source.information],
+    },
+    {
+      id: "SUP-BUDGET-CODE-001",
+      title: "El presupuesto se contrasta con lo efectivamente realizado",
+      status: budgetLines.length ? "relevant" : "not_triggered",
+      explanation:
+        "Un presupuesto puede ser vinculante para la Isapre cuando contiene los mismos códigos de las prestaciones efectivamente otorgadas y éstas se realizaron en las condiciones presupuestadas. Por eso no basta con comparar sólo el monto total.",
+      action:
+        "Cruzar presupuesto, códigos, condiciones de atención, cuenta final y PAM; registrar cualquier diferencia de glosa o de prestación.",
+      matchedLineIds: budgetLines.map((line) => line.id),
+      evidenceToRequest: [
+        "Presupuesto aprobado y fecha de emisión",
+        "Cuenta final y PAM con códigos equivalentes",
+        "Registro de las condiciones efectivamente otorgadas",
+      ],
+      sourceReferences: [source.budget],
+    },
+    {
+      id: "SUP-PROCEDURAL-CHAIN-001",
+      title: "La evidencia debe preparar el ciclo de reclamo",
+      status: lines.length ? "needs_evidence" : "not_triggered",
+      explanation:
+        "El motor debe ordenar la aclaración antes de escalar: reclamo escrito al reclamado, constancia de recepción, respuesta fundada y expediente; luego, si persiste la controversia, reclamo administrativo ante la Superintendencia con copia de la presentación y de la respuesta o del vencimiento del plazo. La matriz de cuenta es evidencia de apoyo, no reemplaza ese procedimiento.",
+      action:
+        "Conservar fechas, folios, respuestas, documentos y diferencias; generar peticiones separadas para prestador, Isapre y Superintendencia.",
+      matchedLineIds: lines.map((line) => line.id),
+      evidenceToRequest: [
+        "Constancia de reclamo al prestador y respuesta",
+        "Constancia de reclamo a la Isapre y respuesta fundada",
+        "Cuenta, PAM, contrato, arancel y antecedentes de uso ordenados por folio",
+      ],
+      sourceReferences: [source.procedure],
+    },
+  ];
+  return findings;
+}
+
 export function analyzeClinicalAccount(
   lines: ChileanBillingLine[],
   knowledge: InclusionKnowledge[] = DEFAULT_CHILEAN_INCLUSION_KNOWLEDGE,
 ): ClinicalAccountAnalysis {
+  const functionalEquivalenceAlerts = findFunctionalEquivalenceAlerts(lines);
   return {
-    version: "cl-account-v1",
+    version: "cl-account-v5",
+    claimFramework: UNIVERSAL_CLAIM_FRAMEWORK,
+    equalityProjection: EQUALITY_PROJECTION_FRAMEWORK,
+    operatingRoomFramework: FULL_OPERATING_ROOM_FRAMEWORK,
     lineAssessments: lines.map((line) => ({
       line,
       normalizedSection: normalize(`${line.section ?? ""} ${line.subgroup ?? ""}`),
       candidates: scoreLine(line, lines, knowledge),
       observedEquivalents: findObservedEquivalents(line),
+      functionalEquivalenceAlerts: functionalEquivalenceAlerts.filter((alert) => alert.lineId === line.id),
+      precedentComparisons: precedentComparisonsForLine(line, lines),
     })),
+    functionalEquivalenceAlerts,
     anomalies: detectAnomalies(lines),
+    reasoningFindings: buildReasoningFindings(lines),
     providerIds: unique(lines.map((line) => line.providerId).filter(Boolean)),
     observedCorpus: {
       version: OBSERVED_CHILEAN_ACCOUNT_CORPUS.version,
@@ -613,8 +1121,14 @@ export function analyzeClinicalAccount(
     },
     limitations: [
       "La probabilidad expresa pertenencia plausible a una prestación principal; no prueba por sí sola un cobro improcedente.",
-      "No existe una lista técnica universal y exhaustiva para cada material, marca o presentación.",
+      "El Apéndice del Anexo N.º 4 contiene una lista amplia de categorías de pabellón, pero no resuelve por sí solo toda marca, presentación, implante o condición contractual.",
+      "Con pabellón confirmado, los cargos separados que correspondan a equipos, no fungibles, desechables, recuperables, fungibles generales, gases o anestésicos activan una presunción técnica de inclusión para revisión y una carga de explicación del cobro separado.",
       "La conclusión económica requiere el contrato, convenio, arancel o decisión regulatoria aplicable.",
+      "Un antecedente arbitral comparable permite solicitar trato coherente por igualdad ante la ley, pero no crea cobertura automática ni reemplaza la homologación o la decisión del caso nuevo.",
+      "La sentencia arbitral aporta varias conclusiones distintas: medicamento hospitalizado, Día Cama, Derecho de Pabellón y una exclusión concreta. Cada una se compara por separado y puede producir un resultado distinto.",
+      "La jurisprudencia sobre codificación, integralidad, exclusiones, información y presupuestos se usa como regla de control y solicitud de evidencia, no como presunción automática de cobertura.",
+      "Las alertas de equivalencia funcional recorren el corpus observado completo y agrupan productos por función clínica, no sólo por glosa, marca o código. El nivel alto/medio/contexto orienta la revisión y no reemplaza el registro de uso.",
+      "Una alerta puede apuntar a más de un destino funcional (por ejemplo, vía venosa y medicamento hospitalizado); el motor no suma esos destinos ni los convierte automáticamente en monto recuperable.",
       "La fase de cuenta clínica debe completarse antes de incorporar PAM, bonificación, copago o rechazo de la Isapre.",
     ],
   };

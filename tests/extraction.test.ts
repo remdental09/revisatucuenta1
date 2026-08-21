@@ -89,3 +89,38 @@ test("extracts Clínica Santa María rows, glued dates, and returns", () => {
   assert.deepEqual(result.account?.lines.map((line) => line.amount), [95600, -10077]);
   assert.deepEqual(result.account?.lines.map((line) => line.date), ["18/02/2025", "23/02/2025"]);
 });
+
+test("separa códigos pegados a la glosa y conserva la sección entre páginas", () => {
+  const result = structureDocument(
+    [
+      {
+        page: 1,
+        text: [
+          "MATERIALES CLINICOS",
+          "600513920MEDIAS ANTIEMBOLISMO L 15/05/2025 8.752 1 8.752",
+        ].join("\n"),
+      },
+      {
+        page: 2,
+        text: [
+          "500507248PROPOFOL KIT 1% 100 ML 15/05/2025 43.350 1 43.350",
+          "600516567394945 TUBO ENDOTRAQUEAL 15/05/2025 5.288 1 5.288",
+          "NATH. 86204",
+          "C/VACUOTIP 248016",
+          "DESECHABLE 2006",
+        ].join("\n"),
+      },
+    ],
+    "account",
+    false,
+  );
+
+  assert.deepEqual(
+    result.account?.lines.map(({ code, description, amount, section }) => ({ code, description, amount, section })),
+    [
+      { code: "600513920", description: "MEDIAS ANTIEMBOLISMO L", amount: 8752, section: "Materiales clínicos" },
+      { code: "500507248", description: "PROPOFOL KIT 1% 100 ML", amount: 43350, section: "Materiales clínicos" },
+      { code: "600516567", description: "394945 TUBO ENDOTRAQUEAL", amount: 5288, section: "Materiales clínicos" },
+    ],
+  );
+});

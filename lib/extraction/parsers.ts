@@ -40,13 +40,33 @@ function parseNumber(value: string) {
   return amount(value.replace(/^\$/, ""));
 }
 
+function splitAccountPrefix(value: string) {
+  const normalized = normalize(value);
+  const catalogWithReference = normalized.match(/^([56]\d{8})(\d+)\s+(.+)$/i);
+  if (catalogWithReference) {
+    return {
+      code: catalogWithReference[1],
+      description: normalize(`${catalogWithReference[2]} ${catalogWithReference[3]}`),
+    };
+  }
+  const separated = normalized.match(/^([0-9][0-9.-]{5,20})\s+(.+)$/i);
+  if (separated) {
+    return { code: separated[1], description: normalize(separated[2]) };
+  }
+  const compact = normalized.match(/^((?:[56]\d{8}|\d{6,8}))(.*)$/i);
+  if (!compact) return;
+  const code = compact[1];
+  const description = normalize(compact[2]);
+  if (!description) return;
+  return { code, description };
+}
+
 function accountTableLine(line: string, page: number, section?: string): ExtractedLine | undefined {
   const dateMatch = line.match(/\d{2}[/-]\d{2}[/-]\d{4}\b/);
   if (!dateMatch || dateMatch.index === undefined) return;
-  const prefix = line.slice(0, dateMatch.index).trim().match(/^([0-9][0-9A-Z.-]{5,20})\s+(.+)$/i);
+  const prefix = splitAccountPrefix(line.slice(0, dateMatch.index).trim());
   if (!prefix) return;
-  const code = prefix[1];
-  const description = normalize(prefix[2]);
+  const { code, description } = prefix;
   if (description.length < 3 || /^(total|bonif)/i.test(description)) return;
   const tail = line.slice(dateMatch.index + dateMatch[0].length).trim();
   const values = tail.match(/^(-?[\d.]+(?:,\d+)?)\s+(\d+(?:[.,]\d+)?)\s+\(?(-?[\d.]+(?:,\d+)?)\)?(?:\s+\*)?$/);
@@ -107,8 +127,8 @@ function sectionFromLine(line: string, current?: string) {
 
 function monetaryLines(pages: TextPage[], kind: "account" | "pam"): ExtractedLine[] {
   const results: ExtractedLine[] = [];
+  let section: string | undefined;
   for (const page of pages) {
-    let section: string | undefined;
     const rawLines = page.text.split(/\r?\n/).map(normalize).filter(Boolean);
     for (let index = 0; index < rawLines.length; index += 1) {
       const rawLine = rawLines[index];
@@ -134,6 +154,7 @@ function monetaryLines(pages: TextPage[], kind: "account" | "pam"): ExtractedLin
       if (!match) continue;
       if (kind === "pam") continue;
       if (/^(?:total|subtotal|bonif|valor|cl[ií]nica\b|servicios\s+m[eé]dicos\b|asociaci[oó]n\s+m[eé]dica\b|[\d.$])/i.test(match[1].trim())) continue;
+      if (!/[.$]/.test(match[2]) && normalize(match[1]).split(/\s+/).length <= 2) continue;
       const parsed = amount(match[2]);
       if (!Number.isFinite(parsed)) continue;
       results.push({ description: normalize(match[1]), amount: parsed, page: page.page });
@@ -148,12 +169,12 @@ function compact<T>(values: Array<T | undefined>): T[] {
 
 export function parseClinicalAccount(pages: TextPage[]): StructuredExtraction {
   const fields = compact([
-    findField(pages, "provider", "Prestador", [/Empresa\s+Emisora\s*:\s*([^\n]{3,70})/i, /(?:cl[ií]nica|hospital|prestador)\s*[:\-]?\s*([^\n]{3,70})/i], 82),
-    findField(pages, "patient", "Paciente", [/Paciente\s*:\s*(.+?)\s+Rut\s+Paciente/i, /(?:paciente|nombre)\s*[:\-]\s*([^\n]{3,80})/i]),
-    findField(pages, "account_number", "Número de cuenta", [/Id\.?\s*Ingreso\s*:\s*([0-9.\s-]+)/i, /(?:n[°ºo]\s*)?(?:cuenta|folio)\s*[:\-]?\s*([A-Z0-9.-]{4,})/i]),
-    findField(pages, "admission_date", "Fecha de ingreso", [/(?:fecha\s+de\s+)?ingreso\s*[:\-]?\s*(\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4})/i]),
-    findField(pages, "discharge_date", "Fecha de alta", [/(?:fecha\s+(?:de\s+)?(?:alta|egreso))\s*[:\-]?\s*(\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4})/i]),
-    findField(pages, "total", "Total cuenta clínica", [/(?:total\s+(?:cuenta|general)|total\s+a\s+pagar)\s*[:\-]?\s*\$?\s*([0-9.]+(?:,\d{1,2})?)/i], 94),
+    findField(pages, "provider", "Prestador", [/Empresa\s+Emisora\s*:\s*([^\n]{3,70})/i, /(?:cl[ií]nica|hospital|prestador)\s*[:-]?\s*([^\n]{3,70})/i], 82),
+    findField(pages, "patient", "Paciente", [/Paciente\s*:\s*(.+?)\s+Rut\s+Paciente/i, /(?:paciente|nombre)\s*[:-]\s*([^\n]{3,80})/i]),
+    findField(pages, "account_number", "Número de cuenta", [/Id\.?\s*Ingreso\s*:\s*([0-9.\s-]+)/i, /(?:n[°ºo]\s*)?(?:cuenta|folio)\s*[:-]?\s*([A-Z0-9.-]{4,})/i]),
+    findField(pages, "admission_date", "Fecha de ingreso", [/(?:fecha\s+de\s+)?ingreso\s*[:-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})/i]),
+    findField(pages, "discharge_date", "Fecha de alta", [/(?:fecha\s+(?:de\s+)?(?:alta|egreso))\s*[:-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})/i]),
+    findField(pages, "total", "Total cuenta clínica", [/(?:total\s+(?:cuenta|general)|total\s+a\s+pagar)\s*[:-]?\s*\$?\s*([0-9.]+(?:,\d{1,2})?)/i], 94),
   ]);
   return {
     type: "account",
@@ -166,12 +187,12 @@ export function parseClinicalAccount(pages: TextPage[]): StructuredExtraction {
 
 export function parsePam(pages: TextPage[]): StructuredExtraction {
   const fields = compact([
-    findField(pages, "payer", "Isapre / financiador", [/(?:isapre|instituci[oó]n|asegurador)\s*[:\-]?\s*([^\n]{3,60})/i], 86),
-    findField(pages, "folio", "Folio PAM", [/(?:folio|n[°ºo]\s*(?:pam|liquidaci[oó]n))\s*[:\-]?\s*([A-Z0-9.-]{3,})/i]),
-    findField(pages, "beneficiary", "Beneficiario", [/(?:beneficiario|paciente)\s*[:\-]\s*([^\n]{3,80})/i]),
-    findField(pages, "billed_total", "Total facturado", [/(?:total\s+(?:facturado|prestaciones|cuenta))\s*[:\-]?\s*\$?\s*([0-9.]+(?:,\d{1,2})?)/i, /Total\s+\$\s*([0-9.]+)/i], 92),
-    findField(pages, "bonus", "Bonificación", [/(?:total\s+)?bonificaci[oó]n(?:\s+isapre)?\s*[:\-]?\s*\$?\s*([0-9.]+(?:,\d{1,2})?)/i, /Total\s+\$\s*[0-9.]+\s+\$\s*([0-9.]+)/i], 94),
-    findField(pages, "copay", "Copago", [/(?:total\s+)?copago(?:\s+afiliado)?\s*[:\-]?\s*\$?\s*([0-9.]+(?:,\d{1,2})?)/i, /Total\s+\$\s*[0-9.]+\s+\$\s*[0-9.]+\s+\$\s*([0-9.]+)/i], 94),
+    findField(pages, "payer", "Isapre / financiador", [/(?:isapre|instituci[oó]n|asegurador)\s*[:-]?\s*([^\n]{3,60})/i], 86),
+    findField(pages, "folio", "Folio PAM", [/(?:folio|n[°ºo]\s*(?:pam|liquidaci[oó]n))\s*[:-]?\s*([A-Z0-9.-]{3,})/i]),
+    findField(pages, "beneficiary", "Beneficiario", [/(?:beneficiario|paciente)\s*[:-]\s*([^\n]{3,80})/i]),
+    findField(pages, "billed_total", "Total facturado", [/(?:total\s+(?:facturado|prestaciones|cuenta))\s*[:-]?\s*\$?\s*([0-9.]+(?:,\d{1,2})?)/i, /Total\s+\$\s*([0-9.]+)/i], 92),
+    findField(pages, "bonus", "Bonificación", [/(?:total\s+)?bonificaci[oó]n(?:\s+isapre)?\s*[:-]?\s*\$?\s*([0-9.]+(?:,\d{1,2})?)/i, /Total\s+\$\s*[0-9.]+\s+\$\s*([0-9.]+)/i], 94),
+    findField(pages, "copay", "Copago", [/(?:total\s+)?copago(?:\s+afiliado)?\s*[:-]?\s*\$?\s*([0-9.]+(?:,\d{1,2})?)/i, /Total\s+\$\s*[0-9.]+\s+\$\s*[0-9.]+\s+\$\s*([0-9.]+)/i], 94),
   ]);
   return {
     type: "pam",

@@ -35,8 +35,16 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const developmentStylesheet =
+    process.env.NODE_ENV === "development" ? "/app/globals.css?direct" : null;
+
   return (
     <html lang="es">
+      {developmentStylesheet ? (
+        <head>
+          <link rel="stylesheet" href={developmentStylesheet} />
+        </head>
+      ) : null}
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >

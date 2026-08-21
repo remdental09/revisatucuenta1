@@ -76,6 +76,11 @@ export function localSaveDocument(input: { id: string; caseId: string; name: str
   const timestamp = now();
   documents.set(input.id, { id: input.id, case_id: input.caseId, original_name: input.name, mime_type: input.mimeType, byte_size: input.byteSize, classification: input.classification, classification_confidence: input.confidence, created_at: timestamp });
   addActivity(input.caseId, "Documento incorporado", `${input.name} quedó disponible para revisión.`);
+  const item = cases.get(input.caseId);
+  if (item && item.status === "collecting") {
+    cases.set(input.caseId, { ...item, status: "under_review", updated_at: timestamp });
+    addActivity(input.caseId, "Revisión iniciada", "El expediente quedó en cola para revisión interna.");
+  }
 }
 
 export function localSaveExtraction(documentId: string, extraction: DocumentExtraction, savedFields: number) {

@@ -30,5 +30,11 @@ export async function POST(request: Request) {
     .bind(documentId, caseId, file.name, key, file.type || "application/octet-stream", file.size, String(form.get("classification") || "Por confirmar"), Number(form.get("confidence") || 0)).run();
   await env.DB.prepare(`INSERT INTO case_activities (id, case_id, title, detail) VALUES (?, ?, ?, ?)`)
     .bind(crypto.randomUUID(), caseId, "Documento incorporado", `${file.name} quedó disponible para revisión.`).run();
+  const currentCase = await env.DB.prepare(`SELECT status FROM cases WHERE id = ?`).bind(caseId).first();
+  if (String(currentCase?.status || "") === "collecting") {
+    await env.DB.prepare(`UPDATE cases SET status = 'under_review', updated_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(caseId).run();
+    await env.DB.prepare(`INSERT INTO case_activities (id, case_id, title, detail) VALUES (?, ?, ?, ?)`)
+      .bind(crypto.randomUUID(), caseId, "Revisión iniciada", "El expediente quedó en cola para revisión interna.").run();
+  }
   return Response.json({ documentId, storageKey: key }, { status: 201 });
 }

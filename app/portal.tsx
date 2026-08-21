@@ -491,6 +491,7 @@ function DeveloperAnalysisDetail({ analysis, claimAuthorized }: { analysis: Clin
   const labelForBundle = (bundle: string) => ({
     operating_room: "Derecho de pabellón / perioperatorio",
     hospital_stay: "Día cama / hospitalización",
+    hospitalized_medication: "Medicamentos hospitalizados",
     procedure: "Procedimiento",
     professional_fees: "Honorarios médicos",
     unassigned: "Sin asignación suficiente",
