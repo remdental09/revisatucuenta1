@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { structureDocument } from "../lib/extraction/parsers.ts";
 import { textItemsToLines } from "../lib/extraction/client.ts";
+import { assessExtractionQuality, buildReaderChangeProposal } from "../lib/extraction/reader-quality.ts";
 
 test("extracts account and PAM independently from a mixed document", () => {
   const result = structureDocument(
@@ -210,4 +211,15 @@ test("reconoce filas OCR de cuenta clínica con columnas completas", () => {
       },
     ],
   );
+});
+
+test("marca un formato sin líneas y prepara una propuesta sin cambiar el código", () => {
+  const extraction = structureDocument([{ page: 1, text: "CUENTA CLINICA FORMATO NUEVO\nContenido no reconocido" }], "account", false);
+  const assessment = assessExtractionQuality(extraction, "account");
+  assert.equal(assessment.status, "reader_change_needed");
+  assert.equal(assessment.codeChangeNeeded, true);
+  assert.equal(assessment.llmAssist.role, "assistive_only");
+  const proposal = buildReaderChangeProposal(assessment, "cuenta-nueva.pdf");
+  assert.equal(proposal.status, "pending_human_review");
+  assert.match(proposal.safetyBoundary, /no modifica el lector/);
 });

@@ -503,3 +503,36 @@ button { cursor:pointer; }
 .dev-doc button:disabled { cursor:not-allowed; opacity:.55; }
 .dev-doc .dev-doc-analyze { border-color:#b9524e; background:#b9524e; color:#fff; }
 .dev-doc .dev-doc-analyze:hover:not(:disabled) { background:#983f3c; border-color:#983f3c; }
+.reader-quality-panel { margin:18px 0 0; padding:16px; border:1px solid #dfe8eb; border-left:3px solid #4e94ad; border-radius:9px; background:#f8fbfc; }
+.reader-quality-panel.reader_change_needed { border-color:#e9c9c5; border-left-color:#b9524e; background:#fff8f7; }
+.reader-quality-panel.review_required { border-color:#e9ddc3; border-left-color:#d49a37; background:#fffdf8; }
+.reader-quality-head { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; }
+.reader-quality-head h3 { margin:6px 0 0; color:#2f5262; font:500 18px Georgia,serif; }
+.reader-quality-panel.reader_change_needed .reader-quality-head h3 { color:#713f3b; }
+.reader-quality-head p { max-width:650px; margin:7px 0 0; color:#78909a; font-size:9px; line-height:1.55; }
+.reader-quality-status { padding:6px 8px; border-radius:99px; background:#e8f4ed; color:#38815e; font-size:8px; font-weight:850; white-space:nowrap; }
+.reader-quality-status.review_required { background:#fff2d8; color:#9a6e20; }
+.reader-quality-status.reader_change_needed { background:#f9dfdc; color:#a44942; }
+.reader-quality-metrics { display:grid; grid-template-columns:repeat(4,1fr); gap:7px; margin-top:14px; }
+.reader-quality-metrics article { padding:10px; border:1px solid #e2eaed; border-radius:7px; background:#fff; }
+.reader-quality-metrics b,.reader-quality-metrics small { display:block; }
+.reader-quality-metrics b { color:#31596b; font:500 17px Georgia,serif; }
+.reader-quality-metrics small { margin-top:4px; color:#95a3a9; font-size:8px; }
+.reader-quality-signals { display:flex; flex-wrap:wrap; gap:5px 7px; margin-top:12px; }
+.reader-quality-signals b { width:100%; margin-bottom:2px; color:#58717c; font-size:9px; }
+.reader-quality-signals span { padding:5px 7px; border-radius:5px; background:#edf4f6; color:#6f858e; font-size:8px; line-height:1.35; }
+.reader-quality-unknown { margin-top:12px; padding-top:11px; border-top:1px solid #e4ecef; }
+.reader-quality-unknown>b { display:block; margin-bottom:7px; color:#58717c; font-size:9px; }
+.reader-quality-unknown>div { display:grid; grid-template-columns:52px 1fr; gap:3px 8px; padding:7px 0; border-top:1px solid #eef2f3; }
+.reader-quality-unknown span { color:#a44942; font-size:8px; font-weight:800; }
+.reader-quality-unknown strong { color:#4d6570; font-size:9px; overflow-wrap:anywhere; }
+.reader-quality-unknown small { grid-column:2; color:#8d9ba0; font-size:8px; line-height:1.35; }
+.reader-quality-actions { display:flex; flex-wrap:wrap; align-items:center; gap:7px; margin-top:14px; }
+.reader-quality-actions .portal-button { min-height:32px; font-size:8px; }
+.reader-quality-actions small { flex:1 1 260px; color:#8b9aa0; font-size:8px; line-height:1.4; }
+.reader-quality-next { margin:12px 0 0; padding-top:10px; border-top:1px solid #e4ecef; color:#71868f; font-size:9px; line-height:1.45; }
+.reader-quality-next b { color:#55707d; }
+.patient-analysis-pending { margin-top:12px; padding:16px; border:1px solid #e7d7b4; border-radius:9px; background:#fffaf0; }
+.patient-analysis-pending h3 { margin:6px 0 0; color:#6e5939; font:500 19px Georgia,serif; }
+.patient-analysis-pending p { max-width:620px; margin:7px 0 0; color:#806f53; font-size:10px; line-height:1.55; }
+@media (max-width: 700px) { .reader-quality-head { flex-direction:column; }.reader-quality-metrics { grid-template-columns:repeat(2,1fr); }.reader-quality-actions .portal-button { flex:1 1 100%; }.reader-quality-unknown>div { grid-template-columns:48px 1fr; } }

@@ -27,9 +27,36 @@ export type StructuredExtraction = {
   lines: ExtractedLine[];
 };
 
+export type ReaderAssessmentStatus = "ready" | "review_required" | "reader_change_needed";
+
+export type ReaderUnknownItem = {
+  value: string;
+  page: number;
+  reason: string;
+  confidence: number;
+};
+
+export type ReaderAssessment = {
+  status: ReaderAssessmentStatus;
+  parserMode: "direct_pdf" | "ocr" | "mixed";
+  confidence: number;
+  templateFingerprint: string;
+  unknownItems: ReaderUnknownItem[];
+  lowConfidencePages: number[];
+  signals: string[];
+  nextAction: string;
+  codeChangeNeeded: boolean;
+  llmAssist: {
+    status: "not_configured" | "ready_for_review";
+    role: "assistive_only";
+    contractVersion: string;
+  };
+};
+
 export type DocumentExtraction = {
   pageCount: number;
   usedOcr: boolean;
+  readerAssessment?: ReaderAssessment;
   account?: StructuredExtraction;
   pam?: StructuredExtraction;
 };

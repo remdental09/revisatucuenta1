@@ -7,7 +7,11 @@ services:
     startCommand: npm run start
     healthCheckPath: /
     envVars:
-      - key: NODE_VERSION
-        value: "22.13.0"
-      - key: REVISA_VOLATILE_MODE
-        value: "true"
+        - key: NODE_VERSION
+          value: "22.13.0"
+        - key: REVISA_VOLATILE_MODE
+          value: "true"
+        - key: REVISA_READER_ALERTS
+          value: "true"
+        - key: REVISA_LLM_MODE
+          value: "assistive_only"
