@@ -1,7 +1,7 @@
 import type { DocumentExtraction } from "../extraction/types";
 import type { ClinicalAccountAnalysis } from "../rules/chilean-account";
 
-type LocalCase = { id: string; patient_name: string; episode_label: string; status: string; created_at: string; updated_at: string };
+type LocalCase = { id: string; patient_name: string; contact_email?: string; episode_label: string; status: string; created_at: string; updated_at: string };
 type LocalDocument = { id: string; case_id: string; original_name: string; mime_type: string; byte_size: number; classification: string; classification_confidence: number; page_from?: number; page_to?: number; created_at: string };
 type LocalActivity = { id: string; case_id: string; title: string; detail: string; event_at: string; pending: number };
 
@@ -55,9 +55,9 @@ export function localListCases() {
   }));
 }
 
-export function localCreateCase(input: { id: string; patientName?: string; episodeLabel: string }) {
+export function localCreateCase(input: { id: string; patientName?: string; contactEmail?: string; episodeLabel: string }) {
   const timestamp = now();
-  cases.set(input.id, { id: input.id, patient_name: input.patientName || "Paciente", episode_label: input.episodeLabel, status: "collecting", created_at: timestamp, updated_at: timestamp });
+  cases.set(input.id, { id: input.id, patient_name: input.patientName || "Paciente", contact_email: input.contactEmail, episode_label: input.episodeLabel, status: "collecting", created_at: timestamp, updated_at: timestamp });
   addActivity(input.id, "Caso creado", "Se abrió el expediente para revisión.");
 }
 
@@ -72,7 +72,7 @@ export function localGetCase(id: string) {
   const analysis = analyses.get(id);
   const authorization = authorizations.get(id);
   return {
-    case: { id: item.id, patientName: item.patient_name, episodeLabel: item.episode_label, status: item.status, createdAt: item.created_at, updatedAt: item.updated_at },
+    case: { id: item.id, patientName: item.patient_name, contactEmail: item.contact_email, episodeLabel: item.episode_label, status: item.status, createdAt: item.created_at, updatedAt: item.updated_at },
     documents: caseDocuments, analysis: analysis?.analysis, analysisUpdatedAt: analysis?.updatedAt,
     authorization: authorization ? { authorized: authorization.authorized === 1, scope: authorization.scope, at: authorization.authorizedAt } : undefined,
     activities: activities.filter((activity) => activity.case_id === id).map((activity) => ({ id: activity.id, title: activity.title, detail: activity.detail, date: activity.event_at, pending: activity.pending === 1 })),

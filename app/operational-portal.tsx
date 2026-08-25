@@ -27,7 +27,7 @@ type CaseDocument = {
 type Activity = { id: string; title: string; detail: string; date: string; pending?: boolean };
 type Authorization = { authorized: boolean; scope: string; at?: string };
 type Snapshot = {
-  case: { id: string; patientName: string; episodeLabel: string; status: string; createdAt: string; updatedAt: string };
+  case: { id: string; patientName: string; contactEmail?: string; episodeLabel: string; status: string; createdAt: string; updatedAt: string };
   documents: CaseDocument[];
   analysis?: ClinicalAccountAnalysis;
   authorization?: Authorization;
@@ -519,6 +519,7 @@ export function PortalEntry() {
 
 function PatientStart({ onCreated }: { onCreated: (caseId: string) => void }) {
   const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
   const [episode, setEpisode] = useState("Revisión de cuenta clínica");
   const [file, setFile] = useState<File>();
   const [busy, setBusy] = useState(false);
@@ -530,8 +531,9 @@ function PatientStart({ onCreated }: { onCreated: (caseId: string) => void }) {
     setError("");
     const id = crypto.randomUUID();
     try {
-      const created = await fetch("/api/cases", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id, patientName: name || "Paciente", episodeLabel: episode }) });
-      if (!created.ok) throw new Error("No se pudo crear el expediente");
+      const created = await fetch("/api/cases", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id, patientName: name || "Paciente", contactEmail: email, requireContact: true, episodeLabel: episode }) });
+      const payload = await created.json().catch(() => ({}));
+      if (!created.ok) throw new Error(payload.error || "No se pudo crear el expediente");
       if (file) await uploadDocument(id, file, "Cuenta clínica");
       onCreated(id);
     } catch (reason) {
@@ -541,7 +543,7 @@ function PatientStart({ onCreated }: { onCreated: (caseId: string) => void }) {
     }
   }
 
-  return <main className="patient-login"><form className="patient-login-card" onSubmit={submit}><div className="portal-brand"><span>R</span> RevisaTuCuenta</div><div className="login-seal">⌁</div><p className="portal-kicker">Nuevo expediente</p><h1>Comienza tu revisión.</h1><p>Ingresa tus datos y, si ya la tienes, carga la cuenta clínica del prestador.</p><input aria-label="Nombre" placeholder="Nombre para identificar el caso" value={name} onChange={(event) => setName(event.target.value)} /><input aria-label="Episodio" placeholder="Episodio o atención" value={episode} onChange={(event) => setEpisode(event.target.value)} /><label className="portal-button portal-button-secondary"><input type="file" accept="application/pdf,image/jpeg,image/png" hidden onChange={(event) => setFile(event.target.files?.[0])} />{file ? file.name : "Cargar cuenta clínica"}</label>{error && <p className="patient-analysis-notice">{error}</p>}<button className="portal-button portal-button-primary" disabled={busy}>{busy ? "Creando expediente…" : "Crear expediente"}</button><a className="back-link" href="/">← Volver</a></form></main>;
+  return <main className="patient-login"><form className="patient-login-card" onSubmit={submit}><div className="portal-brand"><span>R</span> RevisaTuCuenta</div><div className="login-seal">⌁</div><p className="portal-kicker">Nuevo expediente</p><h1>Comienza tu revisión.</h1><p>Antes de cargar la cuenta, deja un correo para identificar el expediente y avisarte de sus actualizaciones.</p><input aria-label="Correo electrónico" type="email" required placeholder="Tu correo electrónico" value={email} onChange={(event) => setEmail(event.target.value)} /><input aria-label="Nombre" placeholder="Nombre para identificar el caso" value={name} onChange={(event) => setName(event.target.value)} /><input aria-label="Episodio" placeholder="Episodio o atención" value={episode} onChange={(event) => setEpisode(event.target.value)} /><label className="portal-button portal-button-secondary"><input type="file" accept="application/pdf,image/jpeg,image/png" hidden onChange={(event) => setFile(event.target.files?.[0])} />{file ? file.name : "Cargar cuenta clínica"}</label>{error && <p className="patient-analysis-notice">{error}</p>}<button className="portal-button portal-button-primary" disabled={busy}>{busy ? "Creando expediente…" : "Crear expediente"}</button><p className="patient-contact-note">Usaremos este correo sólo para identificar el expediente y avisarte de sus actualizaciones. La cuenta clínica no se almacena de forma permanente en este entorno.</p><a className="back-link" href="/">← Volver</a></form></main>;
 }
 
 export function PatientPortal({ initialCaseId = "" }: { initialCaseId?: string }) {
@@ -638,7 +640,7 @@ export function PatientPortal({ initialCaseId = "" }: { initialCaseId?: string }
   const readerAssessment = account?.extraction?.readerAssessment;
   const firstName = snapshot.case.patientName.split(" ")[0];
   return <main className="patient-portal">
-    <header className="patient-topbar"><a className="portal-brand" href="/"><span>R</span> RevisaTuCuenta</a><div className="patient-topbar-right"><span className="surface-pill patient-pill">Vista paciente</span><span className="avatar">{snapshot.case.patientName.slice(0, 2).toUpperCase()}</span><span className="patient-email">{snapshot.case.patientName}</span><a className="patient-signout-button" href="/signout-with-chatgpt?return_to=%2F" aria-label="Cerrar sesión">Cerrar sesión</a></div></header>
+    <header className="patient-topbar"><a className="portal-brand" href="/"><span>R</span> RevisaTuCuenta</a><div className="patient-topbar-right"><span className="surface-pill patient-pill">Vista paciente</span><span className="avatar">{snapshot.case.patientName.slice(0, 2).toUpperCase()}</span><span className="patient-email">{snapshot.case.contactEmail || snapshot.case.patientName}</span><a className="patient-signout-button" href="/signout-with-chatgpt?return_to=%2F" aria-label="Cerrar sesión">Cerrar sesión</a></div></header>
     <div className="patient-layout"><aside className="patient-sidebar"><div className="case-mini"><span className="case-icon">⌁</span><div><small>CASO ACTIVO</small><b>{snapshot.case.patientName}</b><span>Expediente {caseId.slice(0, 8)}</span></div></div><nav className="patient-nav">{(["Resumen", "Documentos", "Actividad"] as const).map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item}</button>)}</nav><div className="patient-sidebar-help"><span>?</span><div><b>¿Necesitas ayuda?</b><small>Escríbenos sobre tu caso.</small></div></div></aside>
       <section className="patient-main"><div className="patient-heading"><div><p className="portal-kicker">Mi expediente</p><h1>Hola, {firstName}.</h1><p>{snapshot.case.episodeLabel}</p></div><span className="case-status"><i /> En análisis</span></div>
          {tab === "Resumen" && <PatientSummary account={account} pam={pam} reviewAmount={possibleDisputeAmount(snapshot.analysis)} analysisAvailable={Boolean(snapshot.analysis)} analysisRunning={status === "running"} progress={progress} stage={stage} authorized={Boolean(snapshot.authorization?.authorized)} busy={busy} readerReviewRequired={Boolean(readerAssessment && readerAssessment.status !== "ready")} readerChangeNeeded={readerAssessment?.status === "reader_change_needed"} onAccount={() => accountInputRef.current?.click()} onPam={() => inputRef.current?.click()} onAnalyze={() => void runAnalysis()} onAuthorize={() => void authorize()} />}
