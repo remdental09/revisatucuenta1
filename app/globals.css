@@ -499,3 +499,7 @@ button { cursor:pointer; }
   .patient-document>div:nth-child(2) { min-width:calc(100% - 52px); }
   .patient-document .document-status { width:100%; padding-left:48px; text-align:left; }
 }
+.dev-doc-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:6px; flex:0 0 auto !important; }
+.dev-doc button:disabled { cursor:not-allowed; opacity:.55; }
+.dev-doc .dev-doc-analyze { border-color:#b9524e; background:#b9524e; color:#fff; }
+.dev-doc .dev-doc-analyze:hover:not(:disabled) { background:#983f3c; border-color:#983f3c; }
