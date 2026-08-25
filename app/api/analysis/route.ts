@@ -55,7 +55,9 @@ export async function POST(request: Request) {
   }
 
   const env = await getCloudflareEnv();
-  const corpusSnapshot = await getObservedCorpusSnapshot(env);
+  // Account hypotheses are evaluated only against the validated account corpus.
+  // PAM observations remain a separate coverage source for a later reconciliation.
+  const corpusSnapshot = await getObservedCorpusSnapshot(env, "account");
   const analysis = analyzeClinicalAccount(body.lines, undefined, corpusSnapshot.corpus);
   analysis.observedCorpus.pendingContributionCount = corpusSnapshot.pendingCount;
   analysis.observedCorpus.validatedContributionCount = corpusSnapshot.validatedCount;
@@ -72,7 +74,7 @@ export async function POST(request: Request) {
       lines: body.lines,
     });
     const corpusStatus = await registerCorpusContribution(env, body.caseId, contribution);
-    const nextSnapshot = await getObservedCorpusSnapshot(env);
+    const nextSnapshot = await getObservedCorpusSnapshot(env, "account");
     analysis.observedCorpus.pendingContributionCount = nextSnapshot.pendingCount;
     analysis.observedCorpus.validatedContributionCount = nextSnapshot.validatedCount;
     analysis.corpusLearning = {

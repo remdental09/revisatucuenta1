@@ -8,7 +8,7 @@ import {
   type ChileanBillingLine,
 } from "../lib/rules/chilean-account.ts";
 import { POST as analyzeAccountRequest } from "../app/api/analysis/route.ts";
-import { POST as registerCorpusObservationRequest } from "../app/api/corpus/route.ts";
+import { GET as getCorpusObservationRequest, POST as registerCorpusObservationRequest } from "../app/api/corpus/route.ts";
 import { POST as createCaseRequest } from "../app/api/cases/route.ts";
 import { POST as updateCorpusRequest } from "../app/api/cases/[id]/corpus/route.ts";
 import {
@@ -527,4 +527,46 @@ test("acumula cuenta y PAM en una observación pendiente antes de activar el cor
   }), { params: Promise.resolve({ id: caseId }) });
   assert.equal(validated.status, 200);
   assert.equal((await validated.json()).activeInCorpus, true);
+});
+
+test("mantiene el PAM validado fuera del corpus de análisis de cuenta", async () => {
+  const baselineResponse = await getCorpusObservationRequest(new Request("http://localhost/api/corpus"));
+  const baseline = await baselineResponse.json() as { caseCount: number; observationCount: number };
+  const caseId = `pam-only-corpus-${randomUUID()}`;
+  const created = await createCaseRequest(new Request("http://localhost/api/cases", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id: caseId, episodeLabel: "PAM aislado" }),
+  }));
+  assert.equal(created.status, 201);
+
+  const pam = await registerCorpusObservationRequest(new Request("http://localhost/api/corpus", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      caseId,
+      sourceKind: "pam",
+      sourceDocumentId: "pam-only-document",
+      lines: [{ id: "pam-only-line", description: "Prestación exclusiva de liquidación PAM", amount: 1200, page: 1, section: "PAM" }],
+    }),
+  }));
+  assert.equal(pam.status, 200);
+
+  const validated = await updateCorpusRequest(new Request(`http://localhost/api/cases/${caseId}/corpus`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ status: "validated" }),
+  }), { params: Promise.resolve({ id: caseId }) });
+  assert.equal(validated.status, 200);
+
+  const accountProbe = await analyzeAccountRequest(new Request("http://localhost/api/analysis", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ lines: [{ id: "account-probe", description: "Prestación exclusiva de liquidación PAM", amount: 1200, page: 1, section: "Materiales clínicos" }] }),
+  }));
+  const payload = await accountProbe.json() as { observedCorpus: { caseCount: number; observationCount: number }; lineAssessments: Array<{ observedEquivalents: unknown[] }> };
+  assert.equal(accountProbe.status, 200);
+  assert.equal(payload.observedCorpus.caseCount, baseline.caseCount);
+  assert.equal(payload.observedCorpus.observationCount, baseline.observationCount);
+  assert.equal(payload.lineAssessments[0]?.observedEquivalents.length, 0);
 });

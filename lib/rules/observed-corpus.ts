@@ -58,6 +58,7 @@ export type ObservedCorpusContribution = {
   coverage?: ObservedCorpusCase["coverage"];
   coverageNote?: string;
   lines: Array<{
+    sourceKind?: "account" | "pam";
     description: string;
     amount: number;
     code?: string;

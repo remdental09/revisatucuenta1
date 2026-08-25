@@ -1145,6 +1145,8 @@ export function analyzeClinicalAccount(
       "Las alertas de equivalencia funcional recorren el corpus observado completo y agrupan productos por función clínica, no sólo por glosa, marca o código. El nivel alto/medio/contexto orienta la revisión y no reemplaza el registro de uso.",
       "Una alerta puede apuntar a más de un destino funcional (por ejemplo, vía venosa y medicamento hospitalizado); el motor no suma esos destinos ni los convierte automáticamente en monto recuperable.",
       "La fase de cuenta clínica debe completarse antes de incorporar PAM, bonificación, copago o rechazo de la Isapre.",
+      "El PAM o programa de atención médica informa cobertura, bonificación, copago y rechazos; no desglosa por sí solo la cuenta ni determina una desfragmentación. La cuenta clínica es la fuente primaria para esa hipótesis.",
+      "Una conciliación posterior puede comparar cuenta y PAM, pero no debe reescribir ni ocultar el análisis independiente de ninguna de las dos fuentes.",
     ],
   };
 }

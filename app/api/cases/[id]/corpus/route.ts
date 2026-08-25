@@ -17,7 +17,7 @@ export async function GET(
   const env = await getCloudflareEnv();
   const status = await getCorpusContributionStatus(env, id);
   if (!status) return Response.json({ error: "La cuenta todavía no tiene una observación de corpus" }, { status: 404 });
-  const snapshot = await getObservedCorpusSnapshot(env);
+  const snapshot = await getObservedCorpusSnapshot(env, "account");
   return Response.json({
     caseId: id,
     status,
@@ -48,7 +48,7 @@ export async function POST(
   }
   const updated = await updateCorpusContributionStatus(env, id, body.status);
   if (!updated) return Response.json({ error: "La cuenta todavía no tiene una observación de corpus" }, { status: 404 });
-  const snapshot = await getObservedCorpusSnapshot(env);
+  const snapshot = await getObservedCorpusSnapshot(env, "account");
   return Response.json({
     caseId: id,
     status: body.status,

@@ -31,10 +31,13 @@ function isBillingLine(value: unknown): value is ChileanBillingLine {
   );
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   const env = await getCloudflareEnv();
-  const snapshot = await getObservedCorpusSnapshot(env);
+  const requestedKind = new URL(request.url).searchParams.get("sourceKind");
+  const sourceKind: CorpusSourceKind = requestedKind === "pam" ? "pam" : "account";
+  const snapshot = await getObservedCorpusSnapshot(env, sourceKind);
   return Response.json({
+    sourceKind,
     version: snapshot.corpus.version,
     caseCount: snapshot.corpus.caseCount,
     observationCount: snapshot.corpus.observationCount,
@@ -67,7 +70,7 @@ export async function POST(request: Request) {
     lines: body.lines,
   });
   const status = await registerCorpusContribution(env, body.caseId, contribution);
-  const snapshot = await getObservedCorpusSnapshot(env);
+  const snapshot = await getObservedCorpusSnapshot(env, body.sourceKind);
   return Response.json({
     caseId: body.caseId,
     sourceKind: body.sourceKind,

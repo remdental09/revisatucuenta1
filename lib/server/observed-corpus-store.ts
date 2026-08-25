@@ -40,6 +40,7 @@ export function buildCorpusContribution(input: {
     coverage: "verified_fragmentation_subset",
     coverageNote: "Líneas extraídas y analizadas por el motor; incorporación pendiente de validación interna.",
     lines: input.lines.map((line) => ({
+      sourceKind: input.sourceKind || "account",
       description: line.description,
       amount: line.amount,
       code: line.code,
@@ -55,6 +56,7 @@ export function buildCorpusContribution(input: {
 
 function contributionLineKey(line: ObservedCorpusContribution["lines"][number]) {
   return [
+    line.sourceKind || "",
     line.code || "",
     line.fonasaCode || "",
     line.description.trim().toLowerCase(),
@@ -64,6 +66,30 @@ function contributionLineKey(line: ObservedCorpusContribution["lines"][number]) 
     line.unitAmount ?? "",
     line.amount,
   ].join("|");
+}
+
+/**
+ * Keeps the active learning corpus source-specific. Untagged mixed legacy
+ * observations are excluded because their provenance cannot be reconstructed
+ * safely.
+ */
+function contributionForSourceKind(
+  contribution: ObservedCorpusContribution,
+  sourceKind: CorpusSourceKind,
+): ObservedCorpusContribution | undefined {
+  const taggedLines = contribution.lines.filter((line) => line.sourceKind);
+  const lines = contribution.lines.filter((line) => {
+    if (line.sourceKind) return line.sourceKind === sourceKind;
+    return taggedLines.length === 0 && contribution.sourceKinds?.length === 1 && contribution.sourceKinds[0] === sourceKind;
+  });
+  if (!lines.length) return undefined;
+  return {
+    ...contribution,
+    sourceKinds: [sourceKind],
+    sourceLineCount: lines.length,
+    observedLineCount: lines.length,
+    lines,
+  };
 }
 
 function uniqueStrings(values: Array<string | undefined>) {
@@ -175,7 +201,10 @@ export async function removePendingCorpusContribution(env: any, caseId: string) 
   await env.DB.prepare(`DELETE FROM corpus_contributions WHERE case_id = ? AND status <> 'validated'`).bind(caseId).run();
 }
 
-export async function getObservedCorpusSnapshot(env: any): Promise<{
+export async function getObservedCorpusSnapshot(
+  env: any,
+  sourceKind: CorpusSourceKind = "account",
+): Promise<{
   corpus: ObservedCorpus;
   pendingCount: number;
   validatedCount: number;
@@ -202,11 +231,15 @@ export async function getObservedCorpusSnapshot(env: any): Promise<{
 
   const validated = rows
     .filter((row) => row.status === "validated")
-    .map((row) => row.contribution);
+    .flatMap((row) => {
+      const contribution = contributionForSourceKind(row.contribution, sourceKind);
+      return contribution ? [contribution] : [];
+    });
+  const relevantRows = rows.filter((row) => contributionForSourceKind(row.contribution, sourceKind));
   return {
     corpus: mergeObservedCorpus(OBSERVED_CHILEAN_ACCOUNT_CORPUS, validated),
-    pendingCount: rows.filter((row) => row.status === "pending_review").length,
-    validatedCount: validated.length,
+    pendingCount: relevantRows.filter((row) => row.status === "pending_review").length,
+    validatedCount: relevantRows.filter((row) => row.status === "validated").length,
   };
 }
 
