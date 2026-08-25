@@ -27,6 +27,9 @@ const localState = runtimeGlobal.__revisaTuCuentaLocalState ??= {
 const { cases, documents, extractions, analyses, authorizations, activities } = localState;
 
 export async function getCloudflareEnv(): Promise<any | null> {
+  // Render demo mode is intentionally volatile: it must never attach or
+  // discover a durable Cloudflare database/bucket while running the analyzer.
+  if (typeof process !== "undefined" && process.env.REVISA_VOLATILE_MODE === "true") return null;
   try {
     const module = await import("cloudflare:workers");
     return module.env ?? null;
