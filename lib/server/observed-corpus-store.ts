@@ -164,6 +164,17 @@ export async function updateCorpusContributionStatus(
   return Number(result.meta?.changes || 0) > 0;
 }
 
+/** Removes unvalidated observations when their source document is deleted. */
+export async function removePendingCorpusContribution(env: any, caseId: string) {
+  if (!env?.DB) {
+    const previous = localContributions.get(caseId);
+    if (previous?.status !== "validated") localContributions.delete(caseId);
+    return;
+  }
+  await ensureCaseSchema(env.DB);
+  await env.DB.prepare(`DELETE FROM corpus_contributions WHERE case_id = ? AND status <> 'validated'`).bind(caseId).run();
+}
+
 export async function getObservedCorpusSnapshot(env: any): Promise<{
   corpus: ObservedCorpus;
   pendingCount: number;

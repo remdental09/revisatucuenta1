@@ -1,5 +1,6 @@
 import { ensureCaseSchema } from "../../../lib/server/case-schema.ts";
-import { getCloudflareEnv, localGetDocuments, localSaveDocument } from "../../../lib/server/runtime-store.ts";
+import { getCloudflareEnv, localDeleteDocument, localGetDocuments, localSaveDocument } from "../../../lib/server/runtime-store.ts";
+import { removePendingCorpusContribution } from "../../../lib/server/observed-corpus-store.ts";
 
 export async function GET(request: Request) {
   const caseId = new URL(request.url).searchParams.get("caseId");
@@ -37,4 +38,43 @@ export async function POST(request: Request) {
       .bind(crypto.randomUUID(), caseId, "Revisión iniciada", "El expediente quedó en cola para revisión interna.").run();
   }
   return Response.json({ documentId, storageKey: key }, { status: 201 });
+}
+
+export async function DELETE(request: Request) {
+  const params = new URL(request.url).searchParams;
+  const caseId = params.get("caseId") || "";
+  const documentId = params.get("documentId") || "";
+  if (!caseId || !documentId) return Response.json({ error: "Caso o documento ausente" }, { status: 400 });
+
+  const env = await getCloudflareEnv();
+  if (!env?.DB) {
+    const deleted = localDeleteDocument(documentId, caseId);
+    if (!deleted) return Response.json({ error: "Documento no encontrado" }, { status: 404 });
+    await removePendingCorpusContribution(env, caseId);
+    return Response.json({ documentId, deleted: true, name: deleted.name });
+  }
+
+  await ensureCaseSchema(env.DB);
+  const document = await env.DB.prepare(
+    `SELECT id, original_name, storage_key FROM documents WHERE id = ? AND case_id = ?`,
+  ).bind(documentId, caseId).first() as { id?: string; original_name?: string; storage_key?: string } | null;
+  if (!document) return Response.json({ error: "Documento no encontrado" }, { status: 404 });
+
+  await env.DB.prepare(`DELETE FROM extracted_fields WHERE document_id = ?`).bind(documentId).run();
+  await env.DB.prepare(`DELETE FROM document_extractions WHERE document_id = ?`).bind(documentId).run();
+  await env.DB.prepare(`DELETE FROM case_analyses WHERE case_id = ?`).bind(caseId).run();
+  await env.DB.prepare(`DELETE FROM documents WHERE id = ? AND case_id = ?`).bind(documentId, caseId).run();
+  await removePendingCorpusContribution(env, caseId);
+
+  if (env.DOCUMENTS && document.storage_key) {
+    try { await env.DOCUMENTS.delete(String(document.storage_key)); } catch { /* The database record is the source of truth for the UI. */ }
+  }
+
+  const remaining = await env.DB.prepare(`SELECT COUNT(*) AS count FROM documents WHERE case_id = ?`).bind(caseId).first();
+  const nextStatus = Number(remaining?.count || 0) > 0 ? "under_review" : "collecting";
+  await env.DB.prepare(`UPDATE cases SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(nextStatus, caseId).run();
+  await env.DB.prepare(`INSERT INTO case_activities (id, case_id, title, detail) VALUES (?, ?, ?, ?)`)
+    .bind(crypto.randomUUID(), caseId, "Documento eliminado", `${String(document.original_name || "El documento")} fue retirado del expediente.`).run();
+
+  return Response.json({ documentId, deleted: true, name: String(document.original_name || "") });
 }

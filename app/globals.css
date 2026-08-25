@@ -485,3 +485,17 @@ button { cursor:pointer; }
   .patient-review-status-card>p { font-size:13px; }
   .patient-advisory-card h3 { font-size:21px; }
 }
+
+.patient-signout-button { min-height:34px; padding:0 11px; display:inline-flex; align-items:center; border:1px solid #d9e4df; border-radius:7px; background:#fff; color:#426b5a; font-size:11px; font-weight:800; text-decoration:none; }
+.patient-signout-button:hover { border-color:#b9d2c5; background:#f5faf7; }
+.patient-document-delete { margin-top:8px; padding:6px 9px; border:1px solid #eccfcb !important; border-radius:6px !important; background:#fff8f7 !important; color:#a44942 !important; font:800 10px inherit !important; cursor:pointer; }
+.patient-document-delete:hover { background:#fff0ee !important; border-color:#dca19b !important; }
+.patient-document-delete:disabled { cursor:wait; opacity:.65; }
+@media (max-width: 700px) {
+  .patient-topbar { align-items:flex-start; padding-top:14px; padding-bottom:14px; }
+  .patient-topbar-right { flex-wrap:wrap; justify-content:flex-end; gap:7px; }
+  .patient-signout-button { font-size:10px; }
+  .patient-document { align-items:flex-start; flex-wrap:wrap; }
+  .patient-document>div:nth-child(2) { min-width:calc(100% - 52px); }
+  .patient-document .document-status { width:100%; padding-left:48px; text-align:left; }
+}
