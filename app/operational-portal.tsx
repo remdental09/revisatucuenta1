@@ -575,7 +575,16 @@ export function PatientPortal({ initialCaseId = "" }: { initialCaseId?: string }
       setProgress(simulatedProgress);
       setStage(simulatedProgress < 35 ? "Ordenando los documentos" : simulatedProgress < 65 ? "Revisando los cargos" : "Preparando el resultado");
     }, 180);
-    try { await analyzeCase(caseId, accountDoc(snapshot), snapshot.case.episodeLabel); setProgress(100); setStage("Resultado disponible para revisión"); setStatus("complete"); await refresh(); notify("Análisis guardado en el expediente"); }
+    try {
+      const analysis = await analyzeCase(caseId, accountDoc(snapshot), snapshot.case.episodeLabel);
+      setSnapshot((current) => current ? {
+        ...current,
+        analysis,
+        case: { ...current.case, status: "analysis_ready", updatedAt: new Date().toISOString() },
+      } : current);
+      setProgress(100); setStage("Resultado disponible para revisión"); setStatus("complete");
+      await refresh(); notify("Análisis guardado en el expediente");
+    }
     catch (reason) { setStatus("error"); setError(errorMessage(reason, "No se pudo analizar la cuenta")); }
     finally { window.clearInterval(timer); setBusy(false); }
   }
@@ -716,7 +725,21 @@ export function DeveloperPortal({ initialCaseId = "" }: { initialCaseId?: string
   async function refresh() { if (!selected) return; try { setSnapshot(await getSnapshot(selected)); } catch (reason) { setNotice(errorMessage(reason, "No se pudo cargar el expediente")); } }
   useEffect(() => { void refresh(); }, [selected]);
   async function onFile(file: File, classification: string) { if (!selected) return; setBusy(true); try { const result = await uploadDocument(selected, file, classification); await refresh(); await refreshCases(); setNotice(result.corpusRegistered ? "Documento guardado, extraído y enviado a revisión de aprendizaje" : "Documento guardado y extraído; el aprendizaje quedó pendiente de sincronización"); } catch (reason) { setNotice(errorMessage(reason, "No se pudo procesar el documento")); } finally { setBusy(false); } }
-  async function onAnalyze() { if (!snapshot) return; setBusy(true); try { await analyzeCase(selected, accountDoc(snapshot), snapshot.case.episodeLabel); await refresh(); await refreshCases(); setTab("traceability"); setNotice("Análisis guardado; la observación quedó pendiente de revisión de corpus"); } catch (reason) { setNotice(errorMessage(reason, "No se pudo analizar el caso")); } finally { setBusy(false); } }
+  async function onAnalyze() {
+    if (!snapshot) return;
+    setBusy(true);
+    try {
+      const analysis = await analyzeCase(selected, accountDoc(snapshot), snapshot.case.episodeLabel);
+      setSnapshot((current) => current ? {
+        ...current,
+        analysis,
+        case: { ...current.case, status: "analysis_ready", updatedAt: new Date().toISOString() },
+      } : current);
+      await refresh(); await refreshCases(); setTab("traceability");
+      setNotice("Análisis guardado; la observación quedó pendiente de revisión de corpus");
+    } catch (reason) { setNotice(errorMessage(reason, "No se pudo analizar el caso")); }
+    finally { setBusy(false); }
+  }
   async function onCorpusStatus(status: "pending_review" | "validated" | "rejected") { if (!selected) return; setBusy(true); try { const response = await fetch(`/api/cases/${encodeURIComponent(selected)}/corpus`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ status }) }); const payload = await response.json().catch(() => ({})); if (!response.ok) throw new Error(payload.error || "No se pudo actualizar el corpus"); await refresh(); setNotice(payload.message || "Estado del corpus actualizado"); } catch (reason) { setNotice(errorMessage(reason, "No se pudo actualizar el corpus")); } finally { setBusy(false); } }
   const visibleCases = useMemo(() => cases.filter((item) => `${item.patient_name} ${item.id} ${item.episode_label}`.toLowerCase().includes(query.toLowerCase())), [cases, query]);
   if (!selected) return <DeveloperEmpty error={casesError} onCreated={async (id) => { setSelectedId(id); await refreshCases(); }} />;

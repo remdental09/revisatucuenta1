@@ -14,8 +14,14 @@ type LocalRuntimeState = {
   activities: LocalActivity[];
 };
 
-const runtimeGlobal = globalThis as typeof globalThis & { __revisaTuCuentaLocalState?: LocalRuntimeState };
-const localState = runtimeGlobal.__revisaTuCuentaLocalState ??= {
+// Render's volatile demo can evaluate route bundles in more than one global
+// realm. Keep the temporary state on the Node process when available so the
+// case list, case detail and analysis routes see the same in-memory session.
+type VolatileRuntimeHost = { __revisaTuCuentaLocalState?: LocalRuntimeState };
+const runtimeHost = (typeof process !== "undefined"
+  ? process
+  : globalThis) as unknown as VolatileRuntimeHost;
+const localState = runtimeHost.__revisaTuCuentaLocalState ??= {
   cases: new Map<string, LocalCase>(),
   documents: new Map<string, LocalDocument>(),
   extractions: new Map<string, DocumentExtraction>(),
