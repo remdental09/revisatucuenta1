@@ -2,6 +2,7 @@ import { ensureCaseSchema, jsonOrNull } from "../../../../lib/server/case-schema
 import { getCloudflareEnv, localGetCase } from "../../../../lib/server/runtime-store.ts";
 import type { DocumentExtraction } from "../../../../lib/extraction/types";
 import type { ClinicalAccountAnalysis } from "../../../../lib/rules/chilean-account";
+import { getCorpusContributionStatus } from "../../../../lib/server/observed-corpus-store.ts";
 
 export async function GET(
   _request: Request,
@@ -11,7 +12,8 @@ export async function GET(
   const env = await getCloudflareEnv();
   if (!env?.DB) {
     const snapshot = localGetCase(id);
-    return snapshot ? Response.json(snapshot) : Response.json({ error: "Caso no encontrado" }, { status: 404 });
+    if (!snapshot) return Response.json({ error: "Caso no encontrado" }, { status: 404 });
+    return Response.json({ ...snapshot, corpusStatus: await getCorpusContributionStatus(env, id) });
   }
   await ensureCaseSchema(env.DB);
   const caseResult = await env.DB.prepare(`SELECT * FROM cases WHERE id = ?`).bind(id).first();
@@ -68,5 +70,6 @@ export async function GET(
       date: String(activity.event_at),
       pending: Number(activity.pending) === 1,
     })),
+    corpusStatus: await getCorpusContributionStatus(env, id),
   });
 }

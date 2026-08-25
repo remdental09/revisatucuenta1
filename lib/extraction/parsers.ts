@@ -10,8 +10,23 @@ export type TextPage = { page: number; text: string };
 const normalize = (value: string) =>
   value.replace(/\u00a0/g, " ").replace(/[ \t]+/g, " ").trim();
 
-const amount = (value: string) =>
-  Number(value.replace(/[^0-9,-]/g, "").replace(/\./g, "").replace(",", "."));
+const amount = (value: string) => {
+  const normalized = value.replace(/[^0-9,.-]/g, "");
+  const negative = normalized.startsWith("-");
+  const unsigned = normalized.replace(/^-/, "");
+  if (!unsigned) return Number.NaN;
+
+  // Chilean account PDFs sometimes OCR a thousands-formatted value as a
+  // mixture such as 1,914.834. Treat repeated three-digit groups as an
+  // integer amount before applying decimal-comma parsing.
+  if (/^\d{1,3}(?:[.,]\d{3})+$/.test(unsigned)) {
+    const parsed = Number(unsigned.replace(/[.,]/g, ""));
+    return negative ? -parsed : parsed;
+  }
+
+  const parsed = Number(unsigned.replace(/\./g, "").replace(",", "."));
+  return negative ? -parsed : parsed;
+};
 
 function findField(
   pages: TextPage[],
@@ -61,20 +76,76 @@ function splitAccountPrefix(value: string) {
   return { code, description };
 }
 
-function accountTableLine(line: string, page: number, section?: string): ExtractedLine | undefined {
-  const dateMatch = line.match(/\d{2}[/-]\d{2}[/-]\d{4}\b/);
+const accountDatePattern = /(?:\d{2}\s*[-/:]\s*\d{2}\s*[-/:]\s*\d{4}|\d{4}[-/:]\d{2}[-/:]\d{2}|\d{2}\d{2}[-/:]\d{4})\b/;
+
+function normalizeAccountDateLine(value: string) {
+  return value
+    .replace(/\b(\d{2})\s*[-/:]\s*(\d{2})\s*[-/:]\s*(\d{4})\b/g, "$1/$2/$3")
+    .replace(/\b(\d{4})[-/:](\d{2})[-/:](\d{2})\b/g, "$3/$2/$1")
+    .replace(/\b(\d{2})(\d{2})[-/:](\d{4})\b/g, "$1/$2/$3");
+}
+
+function numericToken(value: string) {
+  const cleaned = value
+    .replace(/[|*]+$/g, "")
+    .replace(/[^0-9,.-]/g, "");
+  if (!cleaned || !/[0-9]/.test(cleaned) || !/^[-]?[0-9][0-9.,-]*$/.test(cleaned)) return;
+  const parsed = parseNumber(cleaned);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function separateReceiptMarker(tokens: string[]) {
+  if (!tokens.length) return tokens;
+  const last = tokens[tokens.length - 1];
+  const match = last.match(/^(-?(?:\d+(?:[.,]\d+)?))(\d)$/);
+  if (!match || !/[12]/.test(match[2])) return tokens;
+  const amountPart = match[1].replace(/,$/, "");
+  if (amountPart.replace(/[^0-9]/g, "").length < 3) return tokens;
+  return [...tokens.slice(0, -1), amountPart, match[2]];
+}
+
+function accountTableLine(line: string, page: number, section?: string, providerId?: string): ExtractedLine | undefined {
+  const normalizedLine = normalizeAccountDateLine(line);
+  const dateMatch = normalizedLine.match(accountDatePattern);
   if (!dateMatch || dateMatch.index === undefined) return;
-  const prefix = splitAccountPrefix(line.slice(0, dateMatch.index).trim());
+  const prefix = splitAccountPrefix(normalizedLine.slice(0, dateMatch.index).trim());
   if (!prefix) return;
   const { code, description } = prefix;
   if (description.length < 3 || /^(total|bonif)/i.test(description)) return;
-  const tail = line.slice(dateMatch.index + dateMatch[0].length).trim();
+  const tail = normalizedLine.slice(dateMatch.index + dateMatch[0].length).trim();
   const values = tail.match(/^(-?[\d.]+(?:,\d+)?)\s+(\d+(?:[.,]\d+)?)\s+\(?(-?[\d.]+(?:,\d+)?)\)?(?:\s+\*)?$/);
-  const tokens = tail.split(/\s+/);
+  const tokens = separateReceiptMarker(tail.split(/\s+/));
   const quantityIndex = tokens.findIndex((token) => /^\d{1,3},\d{3}$/.test(token));
   const unitAmountToken = quantityIndex >= 0
     ? tokens.slice(quantityIndex + 1).find((token) => /^\$?[\d.]+(?:,\d+)?$/.test(token))
     : undefined;
+  const numericValues = tokens.map(numericToken).filter((value): value is number => value !== undefined);
+
+  // Some providers print the full account row as:
+  // quantity, unit value, exento, afecto, neto, IVA, total, receipt marker.
+  // OCR often changes the separators or turns the final marker into a star,
+  // so the total is read from the seventh numeric column when available.
+  if (!values && quantityIndex < 0 && numericValues.length >= 7) {
+    const quantity = numericValues[0];
+    const unitAmount = numericValues[1];
+    const hasReceiptMarker = [1, 2].includes(numericValues[numericValues.length - 1]);
+    const totalIndex = numericValues.length >= 8 ? 6 : hasReceiptMarker ? 5 : 6;
+    const total = numericValues[totalIndex];
+    if (Number.isFinite(quantity) && Number.isFinite(unitAmount) && Number.isFinite(total)) {
+      return {
+        code,
+        description,
+        amount: total,
+        unitAmount,
+        quantity,
+        date: dateMatch[0],
+        section,
+        providerId,
+        page,
+      };
+    }
+  }
+
   if (!values && (!unitAmountToken || quantityIndex < 0)) return;
   const unitAmount = values ? parseNumber(values[1]) : parseNumber(unitAmountToken!);
   const quantity = values
@@ -92,11 +163,12 @@ function accountTableLine(line: string, page: number, section?: string): Extract
     date: dateMatch[0],
     fonasaCode,
     section,
+    providerId,
     page,
   };
 }
 
-function pamTableLine(line: string, page: number, neighborDescription = ""): ExtractedLine | undefined {
+function pamTableLine(line: string, page: number, neighborDescription = "", providerId?: string): ExtractedLine | undefined {
   const match = line.match(
     /^([0-9]{6,8})(?:\s+(.+?))?\s+(\d+(?:[.,]\d+)?)\s+\$\s*([0-9.]+)\s+\$\s*([0-9.]+)\s+\$\s*([0-9.]+)\s*$/,
   );
@@ -110,8 +182,17 @@ function pamTableLine(line: string, page: number, neighborDescription = ""): Ext
     quantity,
     unitAmount: quantity ? value / quantity : value,
     amount: value,
+    providerId,
     page,
   };
+}
+
+function providerFromLine(line: string) {
+  const match = line.match(/\b(\d{7,8}-[\dkK])\s+((?:cl[ií]nica|servicios|hospital|centro)[^|]+?)(?=\s+\d{1,2}:\d{2}\b|$)/i);
+  if (!match) return;
+  const name = normalize(match[2]);
+  if (!/(cl[ií]nica|servicios|hospital|centro)/i.test(name)) return;
+  return `${match[1]} ${name}`;
 }
 
 function sectionFromLine(line: string, current?: string) {
@@ -125,14 +206,20 @@ function sectionFromLine(line: string, current?: string) {
   return current;
 }
 
+function isAccountMetadataLine(value: string) {
+  return /^(?:empresa|sucursal|id\.?\s*(?:ingreso|liquidaci[oó]n)|rut\b|paciente\b|direcci[oó]n\b|localidad\b|tel[eé]fono\b|diagn[oó]stico\b|m[eé]dico tratante\b|tipo de cobro\b|fecha(?:_?ingreso|\s+alta|\s+corte)\b|oficina\b|emisor\b|folio\s+pam\b|documento asociado\b|num\.?\s*ficha\b)/i.test(value.trim());
+}
+
 function monetaryLines(pages: TextPage[], kind: "account" | "pam"): ExtractedLine[] {
   const results: ExtractedLine[] = [];
   let section: string | undefined;
+  let providerId: string | undefined;
   for (const page of pages) {
     const rawLines = page.text.split(/\r?\n/).map(normalize).filter(Boolean);
     for (let index = 0; index < rawLines.length; index += 1) {
       const rawLine = rawLines[index];
       const line = normalize(rawLine);
+      providerId = providerFromLine(line) ?? providerId;
       section = sectionFromLine(line, section);
       const previous = rawLines[index - 1] ?? "";
       const next = rawLines[index + 1] ?? "";
@@ -144,8 +231,8 @@ function monetaryLines(pages: TextPage[], kind: "account" | "pam"): ExtractedLin
         )
         .join(" ");
       const structured = kind === "account"
-        ? accountTableLine(line, page.page, section)
-        : pamTableLine(line, page.page, neighborDescription);
+        ? accountTableLine(line, page.page, section, providerId)
+        : pamTableLine(line, page.page, neighborDescription, providerId);
       if (structured) {
         results.push(structured);
         continue;
@@ -153,11 +240,12 @@ function monetaryLines(pages: TextPage[], kind: "account" | "pam"): ExtractedLin
       const match = line.match(/^(.{3,}?)\s+\$?\s*([0-9]{1,3}(?:\.[0-9]{3})+|[0-9]{4,})(?:,\d{1,2})?\s*$/);
       if (!match) continue;
       if (kind === "pam") continue;
+      if (isAccountMetadataLine(match[1])) continue;
       if (/^(?:total|subtotal|bonif|valor|cl[ií]nica\b|servicios\s+m[eé]dicos\b|asociaci[oó]n\s+m[eé]dica\b|[\d.$])/i.test(match[1].trim())) continue;
       if (!/[.$]/.test(match[2]) && normalize(match[1]).split(/\s+/).length <= 2) continue;
       const parsed = amount(match[2]);
       if (!Number.isFinite(parsed)) continue;
-      results.push({ description: normalize(match[1]), amount: parsed, page: page.page });
+      results.push({ description: normalize(match[1]), amount: parsed, page: page.page, providerId });
     }
   }
   return results.slice(0, 5000);

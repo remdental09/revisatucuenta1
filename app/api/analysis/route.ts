@@ -4,8 +4,13 @@ import {
 } from "../../../lib/rules/chilean-account.ts";
 import { ensureCaseSchema } from "../../../lib/server/case-schema.ts";
 import { getCloudflareEnv, localSaveAnalysis } from "../../../lib/server/runtime-store.ts";
+import {
+  buildCorpusContribution,
+  getObservedCorpusSnapshot,
+  registerCorpusContribution,
+} from "../../../lib/server/observed-corpus-store.ts";
 
-type AnalysisRequest = { caseId?: string; lines?: unknown };
+type AnalysisRequest = { caseId?: string; episodeLabel?: string; lines?: unknown };
 
 function isBillingLine(value: unknown): value is ChileanBillingLine {
   if (!value || typeof value !== "object") return false;
@@ -49,9 +54,33 @@ export async function POST(request: Request) {
     );
   }
 
-  const analysis = analyzeClinicalAccount(body.lines);
+  const env = await getCloudflareEnv();
+  const corpusSnapshot = await getObservedCorpusSnapshot(env);
+  const analysis = analyzeClinicalAccount(body.lines, undefined, corpusSnapshot.corpus);
+  analysis.observedCorpus.pendingContributionCount = corpusSnapshot.pendingCount;
+  analysis.observedCorpus.validatedContributionCount = corpusSnapshot.validatedCount;
+  analysis.corpusLearning = {
+    status: "not_registered",
+    message: "Esta ejecución no se vinculó a un expediente para incorporación al corpus.",
+  };
   if (body.caseId) {
-    const env = await getCloudflareEnv();
+    const contribution = buildCorpusContribution({
+      caseId: body.caseId,
+      episodeClass: body.episodeLabel,
+      sourceKind: "account",
+      sourceDocumentId: body.lines[0]?.documentId,
+      lines: body.lines,
+    });
+    const corpusStatus = await registerCorpusContribution(env, body.caseId, contribution);
+    const nextSnapshot = await getObservedCorpusSnapshot(env);
+    analysis.observedCorpus.pendingContributionCount = nextSnapshot.pendingCount;
+    analysis.observedCorpus.validatedContributionCount = nextSnapshot.validatedCount;
+    analysis.corpusLearning = {
+      status: corpusStatus,
+      message: corpusStatus === "validated"
+        ? "La cuenta ya está incorporada como observación validada del corpus."
+        : "La cuenta quedó como observación pendiente. Se incorporará al corpus activo después de revisión interna.",
+    };
     if (!env?.DB) {
       localSaveAnalysis(body.caseId, analysis);
       return Response.json(analysis);

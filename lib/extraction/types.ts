@@ -14,6 +14,7 @@ export type ExtractedLine = {
   code?: string;
   fonasaCode?: string;
   section?: string;
+  providerId?: string;
   quantity?: number;
   unitAmount?: number;
 };

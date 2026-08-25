@@ -124,3 +124,90 @@ test("separa códigos pegados a la glosa y conserva la sección entre páginas",
     ],
   );
 });
+
+test("conserva la entidad facturadora por bloque de cuenta", () => {
+  const result = structureDocument(
+    [{
+      page: 1,
+      text: [
+        "96770100-9 Clínica Alemana de Santiago S.A. 00:15",
+        "MATERIALES CLINICOS",
+        "600510115 TERMOMETRO DIGITAL FLEXI 31/03/2021 3.408 1 3.408",
+        "77413290-2 Servicios Clinica Alemana Ltda. 00:15",
+        "HONORARIOS QUIRURGICOS",
+        "2004006 Cesárea 31/03/2021 105.924 1 105.924",
+      ].join("\n"),
+    }],
+    "account",
+    false,
+  );
+  assert.equal(result.account?.lines[0]?.providerId, "96770100-9 Clínica Alemana de Santiago S.A.");
+  assert.equal(result.account?.lines[1]?.providerId, "77413290-2 Servicios Clinica Alemana Ltda.");
+});
+
+test("reconoce filas OCR de cuenta clínica con columnas completas", () => {
+  const result = structureDocument(
+    [{
+      page: 1,
+      text: [
+        "DIA CAMA",
+        "22100039 CALZON CLINICO 06-07:2025 1 1.641 0 1.379 1.379 262 1.6411",
+        "22020145 REMOVEDOR DE ADHESIVO 06-07-2005 2 319 0 536 536 102 6381",
+        "22040003 JERINGA 10 CC EMBUTIDA 06-07-2025 5 421 0 1.770 1.770 335 2.1051",
+        "18-02-053-02 APENDICECTOMIA POR VIA 06-07-2025 1 1.914.834 185.990 1.452.810 1.638.800 276.034 1.914.834 2 *",
+      ].join("\n"),
+    }],
+    "account",
+    true,
+  );
+
+  assert.deepEqual(
+    result.account?.lines.map(({ code, description, amount, unitAmount, quantity, date, section }) => ({
+      code,
+      description,
+      amount,
+      unitAmount,
+      quantity,
+      date,
+      section,
+    })),
+    [
+      {
+        code: "22100039",
+        description: "CALZON CLINICO",
+        amount: 1641,
+        unitAmount: 1641,
+        quantity: 1,
+        date: "06/07/2025",
+        section: "Hospitalización",
+      },
+      {
+        code: "22020145",
+        description: "REMOVEDOR DE ADHESIVO",
+        amount: 638,
+        unitAmount: 319,
+        quantity: 2,
+        date: "06/07/2005",
+        section: "Hospitalización",
+      },
+      {
+        code: "22040003",
+        description: "JERINGA 10 CC EMBUTIDA",
+        amount: 2105,
+        unitAmount: 421,
+        quantity: 5,
+        date: "06/07/2025",
+        section: "Hospitalización",
+      },
+      {
+        code: "18-02-053-02",
+        description: "APENDICECTOMIA POR VIA",
+        amount: 1914834,
+        unitAmount: 1914834,
+        quantity: 1,
+        date: "06/07/2025",
+        section: "Hospitalización",
+      },
+    ],
+  );
+});

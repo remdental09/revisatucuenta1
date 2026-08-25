@@ -41,7 +41,10 @@ export function textItemsToLines(items: PositionedTextItem[]) {
 
 async function recognizeImage(image: File | HTMLCanvasElement) {
   const { recognize } = await import("tesseract.js");
-  const result = await recognize(image, "spa");
+  const result = await recognize(image, "spa", {
+    preserve_interword_spaces: "1",
+    tessedit_pageseg_mode: "6",
+  });
   return result.data.text;
 }
 
@@ -67,7 +70,10 @@ async function extractPdf(file: File, onProgress?: (progress: number) => void) {
     );
     if (text.replace(/\s/g, "").length < 60) {
       usedOcr = true;
-      const viewport = page.getViewport({ scale: 1.6 });
+      // Account rows are dense and their totals often differ only by a
+      // thousands separator. A larger render materially improves OCR of the
+      // unit, tax and total columns without changing the extracted layout.
+      const viewport = page.getViewport({ scale: 2.2 });
       const canvas = document.createElement("canvas");
       canvas.width = Math.ceil(viewport.width);
       canvas.height = Math.ceil(viewport.height);

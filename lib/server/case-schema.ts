@@ -7,6 +7,7 @@ export async function ensureCaseSchema(db: D1Database) {
     db.prepare(`CREATE TABLE IF NOT EXISTS case_analyses (id TEXT PRIMARY KEY, case_id TEXT NOT NULL UNIQUE, analysis_json TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(case_id) REFERENCES cases(id))`),
     db.prepare(`CREATE TABLE IF NOT EXISTS claim_authorizations (id TEXT PRIMARY KEY, case_id TEXT NOT NULL UNIQUE, authorized INTEGER NOT NULL DEFAULT 0, scope TEXT NOT NULL, authorized_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(case_id) REFERENCES cases(id))`),
     db.prepare(`CREATE TABLE IF NOT EXISTS case_activities (id TEXT PRIMARY KEY, case_id TEXT NOT NULL, title TEXT NOT NULL, detail TEXT NOT NULL, event_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, pending INTEGER NOT NULL DEFAULT 0, FOREIGN KEY(case_id) REFERENCES cases(id))`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS corpus_contributions (case_id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'pending_review', contribution_json TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`),
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_documents_case_id ON documents(case_id)`),
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_extracted_fields_document_id ON extracted_fields(document_id)`),
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_case_activities_case_id ON case_activities(case_id, event_at)`),

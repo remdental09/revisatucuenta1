@@ -42,6 +42,34 @@ export type ObservedCorpus = {
   patterns: ObservedItemPattern[];
 };
 
+/**
+ * A new account is kept as a desidentified observation. It is deliberately
+ * smaller than a billing line: page, date, document ids and professional ids
+ * are not part of the learning record.
+ */
+export type ObservedCorpusContribution = {
+  caseKey: string;
+  sourceKinds?: Array<"account" | "pam">;
+  sourceDocumentIds?: string[];
+  provider?: string;
+  episodeClass: string;
+  sourceLineCount: number;
+  observedLineCount: number;
+  coverage?: ObservedCorpusCase["coverage"];
+  coverageNote?: string;
+  lines: Array<{
+    description: string;
+    amount: number;
+    code?: string;
+    fonasaCode?: string;
+    section?: string;
+    subgroup?: string;
+    quantity?: number;
+    unitAmount?: number;
+    provider?: string;
+  }>;
+};
+
 export type CorpusLookupLine = {
   id?: string;
   description: string;
@@ -118,6 +146,106 @@ const normalize = (value = "") =>
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
+
+const uniqueValues = (values: Array<string | undefined>) =>
+  Array.from(new Set(values.filter((value): value is string => Boolean(value && value.trim()))));
+
+function updateMin(current: number | null, next: number | undefined) {
+  return next == null || !Number.isFinite(next) ? current : current == null ? next : Math.min(current, next);
+}
+
+function updateMax(current: number | null, next: number | undefined) {
+  return next == null || !Number.isFinite(next) ? current : current == null ? next : Math.max(current, next);
+}
+
+/**
+ * Merges only validated, desidentified account observations into the static
+ * corpus. It never modifies the shipped JSON and never creates legal rules.
+ */
+export function mergeObservedCorpus(
+  base: ObservedCorpus,
+  contributions: ObservedCorpusContribution[],
+): ObservedCorpus {
+  const existingCases = new Set(base.cases.map((item) => item.caseKey));
+  const accepted = contributions.filter((contribution) => !existingCases.has(contribution.caseKey));
+  const cases = base.cases.map((item) => ({ ...item }));
+  const patterns = new Map<string, ObservedItemPattern>(
+    base.patterns.map((pattern) => [pattern.normalizedDescription, {
+      ...pattern,
+      aliases: [...pattern.aliases],
+      codes: [...pattern.codes],
+      fonasaCodes: [...pattern.fonasaCodes],
+      providers: [...pattern.providers],
+      sections: [...pattern.sections],
+      caseKeys: [...pattern.caseKeys],
+    }]),
+  );
+  let additionalObservations = 0;
+
+  for (const contribution of accepted) {
+    cases.push({
+      caseKey: contribution.caseKey,
+      provider: contribution.provider || "No informado",
+      episodeClass: contribution.episodeClass || "Cuenta clínica",
+      sourceLineCount: contribution.sourceLineCount,
+      observedLineCount: contribution.observedLineCount,
+      coverage: contribution.coverage || "verified_fragmentation_subset",
+      coverageNote: contribution.coverageNote || "Observación incorporada después de revisión interna.",
+    });
+    for (const line of contribution.lines) {
+      const description = line.description.trim();
+      const normalizedDescription = normalize(description);
+      if (!normalizedDescription) continue;
+      additionalObservations += 1;
+      const sectionValues = uniqueValues([line.section, line.subgroup]);
+      const providerValues = uniqueValues([line.provider, contribution.provider]);
+      const current = patterns.get(normalizedDescription);
+      if (!current) {
+        patterns.set(normalizedDescription, {
+          description,
+          normalizedDescription,
+          aliases: [],
+          codes: uniqueValues([line.code]),
+          fonasaCodes: uniqueValues([line.fonasaCode]),
+          providers: providerValues,
+          sections: sectionValues,
+          caseKeys: [contribution.caseKey],
+          observationCount: 1,
+          zeroValueCount: line.amount === 0 ? 1 : 0,
+          refundCount: line.amount < 0 ? 1 : 0,
+          unitPriceMin: updateMin(null, line.unitAmount),
+          unitPriceMax: updateMax(null, line.unitAmount),
+          totalMin: updateMin(null, line.amount),
+          totalMax: updateMax(null, line.amount),
+        });
+        continue;
+      }
+      if (description !== current.description && !current.aliases.includes(description)) current.aliases.push(description);
+      current.codes = uniqueValues([...current.codes, line.code]);
+      current.fonasaCodes = uniqueValues([...current.fonasaCodes, line.fonasaCode]);
+      current.providers = uniqueValues([...current.providers, ...providerValues]);
+      current.sections = uniqueValues([...current.sections, ...sectionValues]);
+      current.caseKeys = uniqueValues([...current.caseKeys, contribution.caseKey]);
+      current.observationCount += 1;
+      if (line.amount === 0) current.zeroValueCount += 1;
+      if (line.amount < 0) current.refundCount += 1;
+      current.unitPriceMin = updateMin(current.unitPriceMin, line.unitAmount);
+      current.unitPriceMax = updateMax(current.unitPriceMax, line.unitAmount);
+      current.totalMin = updateMin(current.totalMin, line.amount);
+      current.totalMax = updateMax(current.totalMax, line.amount);
+    }
+  }
+
+  return {
+    ...base,
+    version: accepted.length ? `${base.version}+incremental-v1` : base.version,
+    caseCount: base.caseCount + accepted.length,
+    observationCount: base.observationCount + additionalObservations,
+    patternCount: patterns.size,
+    cases,
+    patterns: [...patterns.values()],
+  };
+}
 
 const STOP_TOKENS = new Set([
   "de", "del", "la", "el", "los", "las", "con", "sin", "para", "por",
@@ -434,8 +562,8 @@ function isMedicationLike(lineText: string, sectionText: string) {
   return hasDose && !materialLike && /medicamento|farmacia|farmacos|f\u00e1rmacos/.test(sectionText);
 }
 
-function observedSupportForRule(rule: FunctionalRule) {
-  const matchingPatterns = OBSERVED_CHILEAN_ACCOUNT_CORPUS.patterns
+function observedSupportForRule(rule: FunctionalRule, corpus: ObservedCorpus) {
+  const matchingPatterns = corpus.patterns
     .filter((pattern) => hasAnyTerm(normalize(pattern.description), rule.terms).length > 0)
     .sort((left, right) => right.observationCount - left.observationCount);
   return {
@@ -450,6 +578,7 @@ function functionalAlertForLine(
   line: CorpusLookupLine,
   lines: CorpusLookupLine[],
   rule: FunctionalRule,
+  corpus: ObservedCorpus,
 ): FunctionalEquivalenceAlert | null {
   const lineText = normalize(`${line.code ?? ""} ${line.description}`);
   const sectionText = normalize(`${line.section ?? ""} ${line.subgroup ?? ""}`);
@@ -470,7 +599,7 @@ function functionalAlertForLine(
   const lineIsOperatingRoom = OPERATING_ROOM_CONTEXT_TERMS.some((term) => fullLineText.includes(normalize(term)));
   const targetHospital = rule.targetBundles.includes("hospital_stay");
   const contextConflict = targetHospital && context.hasOperatingRoom && !lineIsHospital && !lineIsOperatingRoom;
-  const observed = observedSupportForRule(rule);
+  const observed = observedSupportForRule(rule, corpus);
   let comparability = 0.42 + Math.min(0.24, matchedSignals.length * 0.08) + (sectionMatch.length ? 0.13 : 0);
   if (targetHospital && context.hasHospital) comparability += 0.15;
   if (rule.targetBundles.includes("operating_room") && context.hasOperatingRoom) comparability += 0.15;
@@ -515,9 +644,10 @@ function functionalAlertForLine(
 export function findFunctionalEquivalenceAlerts(
   lines: CorpusLookupLine[],
   limitPerLine = 4,
+  corpus: ObservedCorpus = OBSERVED_CHILEAN_ACCOUNT_CORPUS,
 ): FunctionalEquivalenceAlert[] {
   return lines.flatMap((line) => FUNCTIONAL_RULES
-    .map((rule) => functionalAlertForLine(line, lines, rule))
+    .map((rule) => functionalAlertForLine(line, lines, rule, corpus))
     .filter((alert): alert is FunctionalEquivalenceAlert => alert !== null)
     .sort((left, right) => right.comparability - left.comparability)
     .slice(0, Math.max(0, limitPerLine)));
@@ -555,8 +685,9 @@ function scorePattern(line: CorpusLookupLine, pattern: ObservedItemPattern) {
 export function findObservedEquivalents(
   line: CorpusLookupLine,
   limit = 5,
+  corpus: ObservedCorpus = OBSERVED_CHILEAN_ACCOUNT_CORPUS,
 ): ObservedEquivalent[] {
-  return OBSERVED_CHILEAN_ACCOUNT_CORPUS.patterns
+  return corpus.patterns
     .map((pattern) => ({ pattern, score: scorePattern(line, pattern) }))
     .filter(
       (entry): entry is { pattern: ObservedItemPattern; score: NonNullable<ReturnType<typeof scorePattern>> } =>

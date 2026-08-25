@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import test from "node:test";
 
 import {
@@ -7,6 +8,9 @@ import {
   type ChileanBillingLine,
 } from "../lib/rules/chilean-account.ts";
 import { POST as analyzeAccountRequest } from "../app/api/analysis/route.ts";
+import { POST as registerCorpusObservationRequest } from "../app/api/corpus/route.ts";
+import { POST as createCaseRequest } from "../app/api/cases/route.ts";
+import { POST as updateCorpusRequest } from "../app/api/cases/[id]/corpus/route.ts";
 import {
   findObservedEquivalents,
   OBSERVED_CHILEAN_ACCOUNT_CORPUS,
@@ -354,10 +358,27 @@ test("expone el motor para las próximas cuentas con trazabilidad de página", a
   );
   assert.equal(response.status, 200);
   const analysis = await response.json() as { version: string; claimFramework: { legalBasis: string; appliesTo: string }; lineAssessments: Array<{ line: ChileanBillingLine }> };
-  assert.equal(analysis.version, "cl-account-v5");
+  assert.equal(analysis.version, "cl-account-v6");
   assert.equal(analysis.claimFramework.legalBasis, UNIVERSAL_CLAIM_LEGAL_BASIS);
   assert.equal(analysis.claimFramework.appliesTo, "all_items_and_categories");
   assert.equal(analysis.lineAssessments[0]?.line.page, 1);
+});
+
+test("detecta paquetes, valores cero, itemización selectiva y ajustes plurales", () => {
+  const result = analyzeClinicalAccount([
+    { ...base, id: "pab", description: "Derecho de pabellón", section: "Pabellón", amount: 900000, date: "2026-03-06", providerId: "clinica-a" },
+    { ...base, id: "package", description: "PQTE CESAREA", section: "Materiales clínicos", amount: 0, date: "2026-03-06", providerId: "clinica-a" },
+    { ...base, id: "gauze-zero", description: "Gasa estéril", section: "Materiales clínicos", amount: 0, date: "2026-03-06", providerId: "clinica-a" },
+    { ...base, id: "dressing", description: "Apósito estéril", section: "Materiales clínicos", amount: 2400, date: "2026-03-07", providerId: "clinica-a" },
+    { ...base, id: "adjustment", description: "AJUSTES HOSPITALIZACION", section: "Hospitalización", amount: 142929, date: "2026-03-06", providerId: "clinica-a" },
+    { ...base, id: "second-provider", description: "Honorario quirúrgico", section: "Honorarios", amount: 12000, date: "2026-03-06", providerId: "servicios-b" },
+  ]);
+  assert.ok(result.accountSignals.some((signal) => signal.type === "package_component_zero_value"));
+  assert.ok(result.accountSignals.some((signal) => signal.type === "possible_selective_itemization"));
+  assert.ok(result.accountSignals.some((signal) => signal.type === "opaque_adjustment" && signal.amount === 142929));
+  assert.ok(result.accountSignals.some((signal) => signal.type === "multi_entity_billing"));
+  assert.ok(result.accountSignals.some((signal) => signal.type === "multi_context_date_split"));
+  assert.ok(result.anomalies.some((anomaly) => anomaly.type === "opaque_adjustment" && anomaly.lineIds.includes("adjustment")));
 });
 
 test("el generador aplica el fundamento común a cualquier ítem o rubro", () => {
@@ -415,4 +436,95 @@ test("la repetición histórica no se convierte sola en fragmentación", () => {
   ]);
   assert.ok(analysis.lineAssessments[0]!.observedEquivalents.length > 0);
   assert.equal(analysis.lineAssessments[0]!.candidates.length, 0);
+});
+
+test("incorpora cuentas nuevas al corpus sólo después de validarlas", async () => {
+  const caseId = `corpus-test-${randomUUID()}`;
+  const created = await createCaseRequest(new Request("http://localhost/api/cases", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id: caseId, episodeLabel: "Hospitalización pediátrica" }),
+  }));
+  assert.equal(created.status, 201);
+
+  const requestBody = {
+    caseId,
+    episodeLabel: "Hospitalización pediátrica",
+    lines: [{ id: "new-item", description: "Termómetro incremental de prueba", amount: 100, page: 1, section: "Materiales clínicos" }],
+  };
+  const firstAnalysis = await analyzeAccountRequest(new Request("http://localhost/api/analysis", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(requestBody),
+  }));
+  const firstPayload = await firstAnalysis.json() as { corpusLearning?: { status: string }; observedCorpus: { caseCount: number } };
+  assert.equal(firstAnalysis.status, 200);
+  assert.equal(firstPayload.corpusLearning?.status, "pending_review");
+  assert.equal(firstPayload.observedCorpus.caseCount, OBSERVED_CHILEAN_ACCOUNT_CORPUS.caseCount);
+
+  const validated = await updateCorpusRequest(new Request(`http://localhost/api/cases/${caseId}/corpus`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ status: "validated" }),
+  }), { params: Promise.resolve({ id: caseId }) });
+  const validatedPayload = await validated.json() as { activeInCorpus: boolean; caseCount: number };
+  assert.equal(validated.status, 200);
+  assert.equal(validatedPayload.activeInCorpus, true);
+  assert.equal(validatedPayload.caseCount, OBSERVED_CHILEAN_ACCOUNT_CORPUS.caseCount + 1);
+
+  const secondAnalysis = await analyzeAccountRequest(new Request("http://localhost/api/analysis", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(requestBody),
+  }));
+  const secondPayload = await secondAnalysis.json() as { observedCorpus: { caseCount: number; observationCount: number }; lineAssessments: Array<{ observedEquivalents: Array<{ description: string }> }> };
+  assert.equal(secondPayload.observedCorpus.caseCount, OBSERVED_CHILEAN_ACCOUNT_CORPUS.caseCount + 1);
+  assert.equal(secondPayload.observedCorpus.observationCount, OBSERVED_CHILEAN_ACCOUNT_CORPUS.observationCount + 1);
+  assert.equal(secondPayload.lineAssessments[0]?.observedEquivalents[0]?.description, "Termómetro incremental de prueba");
+});
+
+test("acumula cuenta y PAM en una observación pendiente antes de activar el corpus", async () => {
+  const caseId = `account-pam-corpus-${randomUUID()}`;
+  const created = await createCaseRequest(new Request("http://localhost/api/cases", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id: caseId, episodeLabel: "Cuenta y PAM" }),
+  }));
+  assert.equal(created.status, 201);
+
+  const account = await registerCorpusObservationRequest(new Request("http://localhost/api/corpus", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      caseId,
+      sourceKind: "account",
+      sourceDocumentId: "account-doc",
+      lines: [{ id: "account-line", description: "Apósito estéril", amount: 1200, page: 1, section: "Materiales clínicos" }],
+    }),
+  }));
+  assert.equal(account.status, 200);
+  assert.equal((await account.json()).status, "pending_review");
+
+  const pam = await registerCorpusObservationRequest(new Request("http://localhost/api/corpus", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      caseId,
+      sourceKind: "pam",
+      sourceDocumentId: "pam-doc",
+      lines: [{ id: "pam-line", description: "Prestación hospitalaria", amount: 1200, page: 1, section: "PAM" }],
+    }),
+  }));
+  const pamPayload = await pam.json() as { status: string; activeInCorpus: boolean };
+  assert.equal(pam.status, 200);
+  assert.equal(pamPayload.status, "pending_review");
+  assert.equal(pamPayload.activeInCorpus, false);
+
+  const validated = await updateCorpusRequest(new Request(`http://localhost/api/cases/${caseId}/corpus`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ status: "validated" }),
+  }), { params: Promise.resolve({ id: caseId }) });
+  assert.equal(validated.status, 200);
+  assert.equal((await validated.json()).activeInCorpus, true);
 });

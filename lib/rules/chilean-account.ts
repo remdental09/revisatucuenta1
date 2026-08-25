@@ -3,6 +3,7 @@ import {
   findObservedEquivalents,
   OBSERVED_CHILEAN_ACCOUNT_CORPUS,
   type FunctionalEquivalenceAlert,
+  type ObservedCorpus,
   type ObservedEquivalent,
 } from "./observed-corpus.ts";
 import {
@@ -13,6 +14,10 @@ import {
   type ClaimFramework,
   type OperatingRoomFramework,
 } from "../claims/legal-basis.ts";
+import {
+  detectAccountStructuralSignals,
+  type AccountStructuralSignal,
+} from "./account-signals.ts";
 
 export type BundleFamily =
   | "operating_room"
@@ -131,6 +136,7 @@ export type ClinicalAccountAnalysis = {
     precedentComparisons: PrecedentComparison[];
   }>;
   functionalEquivalenceAlerts: FunctionalEquivalenceAlert[];
+  accountSignals: AccountStructuralSignal[];
   anomalies: AccountAnomaly[];
   reasoningFindings: ReasoningFinding[];
   providerIds: string[];
@@ -140,6 +146,12 @@ export type ClinicalAccountAnalysis = {
     observationCount: number;
     patternCount: number;
     learningBoundary: string;
+    pendingContributionCount?: number;
+    validatedContributionCount?: number;
+  };
+  corpusLearning?: {
+    status: "not_registered" | "pending_review" | "validated";
+    message: string;
   };
   limitations: string[];
 };
@@ -915,7 +927,7 @@ function detectAnomalies(lines: ChileanBillingLine[]): AccountAnomaly[] {
     }
     if (
       line.amount > 0 &&
-      /\b(ajuste|varios|diferencia|cargo adicional)\b/.test(
+      /\b(ajustes?|varios|diferencias?|cargos?\s+adicionales?)\b/.test(
         normalize(`${line.section ?? ""} ${line.description}`),
       )
     ) {
@@ -1093,10 +1105,12 @@ function buildReasoningFindings(lines: ChileanBillingLine[]): ReasoningFinding[]
 export function analyzeClinicalAccount(
   lines: ChileanBillingLine[],
   knowledge: InclusionKnowledge[] = DEFAULT_CHILEAN_INCLUSION_KNOWLEDGE,
+  corpus: ObservedCorpus = OBSERVED_CHILEAN_ACCOUNT_CORPUS,
 ): ClinicalAccountAnalysis {
-  const functionalEquivalenceAlerts = findFunctionalEquivalenceAlerts(lines);
+  const functionalEquivalenceAlerts = findFunctionalEquivalenceAlerts(lines, 4, corpus);
+  const accountSignals = detectAccountStructuralSignals(lines);
   return {
-    version: "cl-account-v5",
+    version: "cl-account-v6",
     claimFramework: UNIVERSAL_CLAIM_FRAMEWORK,
     equalityProjection: EQUALITY_PROJECTION_FRAMEWORK,
     operatingRoomFramework: FULL_OPERATING_ROOM_FRAMEWORK,
@@ -1104,20 +1118,21 @@ export function analyzeClinicalAccount(
       line,
       normalizedSection: normalize(`${line.section ?? ""} ${line.subgroup ?? ""}`),
       candidates: scoreLine(line, lines, knowledge),
-      observedEquivalents: findObservedEquivalents(line),
+      observedEquivalents: findObservedEquivalents(line, 5, corpus),
       functionalEquivalenceAlerts: functionalEquivalenceAlerts.filter((alert) => alert.lineId === line.id),
       precedentComparisons: precedentComparisonsForLine(line, lines),
     })),
     functionalEquivalenceAlerts,
+    accountSignals,
     anomalies: detectAnomalies(lines),
     reasoningFindings: buildReasoningFindings(lines),
     providerIds: unique(lines.map((line) => line.providerId).filter(Boolean)),
     observedCorpus: {
-      version: OBSERVED_CHILEAN_ACCOUNT_CORPUS.version,
-      caseCount: OBSERVED_CHILEAN_ACCOUNT_CORPUS.caseCount,
-      observationCount: OBSERVED_CHILEAN_ACCOUNT_CORPUS.observationCount,
-      patternCount: OBSERVED_CHILEAN_ACCOUNT_CORPUS.patternCount,
-      learningBoundary: OBSERVED_CHILEAN_ACCOUNT_CORPUS.learningBoundary,
+      version: corpus.version,
+      caseCount: corpus.caseCount,
+      observationCount: corpus.observationCount,
+      patternCount: corpus.patternCount,
+      learningBoundary: corpus.learningBoundary,
     },
     limitations: [
       "La probabilidad expresa pertenencia plausible a una prestación principal; no prueba por sí sola un cobro improcedente.",

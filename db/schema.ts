@@ -68,3 +68,11 @@ export const caseActivities = sqliteTable("case_activities", {
   eventAt: text("event_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   pending: integer("pending").notNull().default(0),
 }, (table) => [index("idx_case_activities_case_id").on(table.caseId, table.eventAt)]);
+
+export const corpusContributions = sqliteTable("corpus_contributions", {
+  caseId: text("case_id").primaryKey(),
+  status: text("status").notNull().default("pending_review"),
+  contributionJson: text("contribution_json").notNull(),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
