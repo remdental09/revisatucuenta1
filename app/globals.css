@@ -436,3 +436,52 @@ button { cursor:pointer; }
 @media (max-width: 700px) { .patient-review-amount { align-items:flex-start; flex-direction:column; gap:9px; } }
 @media (max-width: 700px) { .patient-advisory-card { align-items:flex-start; flex-direction:column; }.patient-advisory-card .portal-button { width:100%; } }
 @media (max-width: 700px) { .patient-analysis-launch { align-items:flex-start; flex-direction:column; }.patient-analyze-button,.patient-analysis-progress-wrap { width:100%; } }
+
+/* Patient-facing readability and advisory call-to-action */
+.patient-portal { font-size:16px; }
+.patient-portal .card-kicker { font-size:11px; letter-spacing:.9px; }
+.patient-topbar { min-height:74px; }
+.patient-email { font-size:12px; }
+.surface-pill { font-size:11px; }
+.case-mini small { font-size:10px; }
+.case-mini b { font-size:12px; }
+.case-mini>div>span { font-size:10px; }
+.patient-nav button { font-size:13px; }
+.patient-sidebar-help b { font-size:12px; }
+.patient-sidebar-help small { font-size:10px; }
+.patient-heading h1 { font-size:39px; }
+.patient-heading p:not(.portal-kicker) { font-size:14px; }
+.case-status { font-size:11px; }
+.patient-card { padding:25px; }
+.patient-review-status-card h2 { font-size:27px; }
+.patient-review-status-card>p { font-size:14px; }
+.patient-review-status span { font-size:12px; }
+.patient-review-status small { font-size:11px; }
+.patient-review-flow>div { font-size:11px; }
+.patient-review-amount .card-kicker { font-size:11px; }
+.patient-review-amount strong { font-size:29px; }
+.patient-review-amount p { font-size:12px; }
+.patient-advisory-card { padding:20px; }
+.patient-advisory-card h3 { font-size:23px; }
+.patient-advisory-card p { font-size:13px; line-height:1.65; }
+.patient-advisory-card .portal-button { min-height:48px; font-size:13px; }
+.patient-review-actions .portal-button { font-size:13px; }
+.next-card h2 { font-size:26px; }
+.next-card p { font-size:13px; }
+.patient-document>div span { font-size:10px; }
+.patient-document b { font-size:13px; }
+.patient-document small { font-size:11px; }
+.document-status em { font-size:11px; }
+.document-tip p { font-size:12px; }
+.activity-item small { font-size:11px; }
+.activity-item b { font-size:14px; }
+.activity-item p { font-size:12px; }
+.patient-analysis-disclaimer,.patient-analysis-notice { font-size:11px; }
+@media (max-width: 700px) {
+  .patient-main { padding:30px 17px 50px; }
+  .patient-heading h1 { font-size:34px; }
+  .patient-card { padding:20px; }
+  .patient-review-status-card h2 { font-size:24px; }
+  .patient-review-status-card>p { font-size:13px; }
+  .patient-advisory-card h3 { font-size:21px; }
+}
