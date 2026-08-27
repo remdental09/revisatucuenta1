@@ -1,5 +1,9 @@
 import { DeveloperPortal, PatientPortal, PortalEntry } from "./operational-portal";
 
+// Railway must evaluate the query string on every request so the public
+// patient and developer portals remain separate entry points.
+export const dynamic = "force-dynamic";
+
 type PageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
