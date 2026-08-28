@@ -2,7 +2,7 @@ export type AuthenticatedUser = {
   id: string;
   email: string;
   displayName: string;
-  source: "chatgpt" | "email" | "development";
+  source: "chatgpt" | "email" | "development" | "pilot";
 };
 
 type SignedTokenPurpose = "magic_link" | "session";
@@ -12,6 +12,7 @@ type SignedTokenPayload = {
   userId?: string;
   email: string;
   displayName?: string;
+  source?: AuthenticatedUser["source"];
   issuedAt: number;
   expiresAt: number;
 };
@@ -102,6 +103,10 @@ export function emailAuthenticationConfigured() {
   return Boolean(authSessionSecret() && runtimeEnv("RESEND_API_KEY") && runtimeEnv("AUTH_EMAIL_FROM"));
 }
 
+export function pilotAuthenticationConfigured() {
+  return Boolean(authSessionSecret() && runtimeEnv("REVISA_PILOT_ACCESS_KEY"));
+}
+
 export function developmentAuthenticationEnabled() {
   return runtimeEnv("NODE_ENV") !== "production" && runtimeEnv("REVISA_AUTH_DEV_MODE") === "true";
 }
@@ -141,6 +146,29 @@ export async function magicLinkUser(token: string): Promise<AuthenticatedUser | 
   };
 }
 
+function safeEqual(left: string, right: string) {
+  const leftBytes = new TextEncoder().encode(left);
+  const rightBytes = new TextEncoder().encode(right);
+  let difference = leftBytes.length ^ rightBytes.length;
+  const length = Math.max(leftBytes.length, rightBytes.length);
+  for (let index = 0; index < length; index += 1) {
+    difference |= (leftBytes[index] ?? 0) ^ (rightBytes[index] ?? 0);
+  }
+  return difference === 0;
+}
+
+export async function pilotUser(accessKey: string): Promise<AuthenticatedUser | undefined> {
+  const configuredKey = runtimeEnv("REVISA_PILOT_ACCESS_KEY");
+  if (!configuredKey || !authSessionSecret() || !safeEqual(accessKey.trim(), configuredKey)) return;
+  const email = normalizeEmail(runtimeEnv("REVISA_AUTH_DEV_EMAIL") || "piloto@revisatucuenta.local");
+  return {
+    id: `pilot:${(await emailUserId(email)).slice("email:".length)}`,
+    email,
+    displayName: "Piloto RevisaTuCuenta",
+    source: "pilot",
+  };
+}
+
 export async function createSessionToken(user: AuthenticatedUser) {
   const secret = authSessionSecret();
   if (!secret) throw new Error("La sesión no está configurada");
@@ -150,6 +178,7 @@ export async function createSessionToken(user: AuthenticatedUser) {
     userId: user.id,
     email: normalizeEmail(user.email),
     displayName: user.displayName,
+    source: user.source,
     issuedAt: now,
     expiresAt: now + SESSION_DURATION_SECONDS,
   }, secret);
@@ -183,7 +212,7 @@ export async function getAuthenticatedUser(request: Request): Promise<Authentica
         id: payload.userId,
         email: normalizeEmail(payload.email),
         displayName: payload.displayName || payload.email,
-        source: "email",
+        source: payload.source || "email",
       };
     }
   }
@@ -211,6 +240,7 @@ export async function requireApiUser(request: Request) {
 
 export function isDeveloperUser(user: AuthenticatedUser) {
   if (user.source === "development" && developmentAuthenticationEnabled()) return true;
+  if (user.source === "pilot" && pilotAuthenticationConfigured()) return true;
   const allowed = (runtimeEnv("REVISA_DEVELOPER_EMAILS") || "")
     .split(",")
     .map(normalizeEmail)
