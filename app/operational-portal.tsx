@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { extractHealthcareDocument } from "../lib/extraction/client";
-import type { DocumentExtraction } from "../lib/extraction/types";
+import { CURRENT_READER_VERSION, type DocumentExtraction } from "../lib/extraction/types";
 import { assessExtractionQuality, buildReaderChangeProposal, readerChangeProposalToMarkdown } from "../lib/extraction/reader-quality";
 import type { ClinicalAccountAnalysis, ChileanBillingLine } from "../lib/rules/chilean-account";
 import type { FunctionalEquivalenceAlert } from "../lib/rules/observed-corpus";
@@ -119,6 +119,22 @@ function totalFrom(doc: CaseDocument | undefined, kind: "account" | "pam") {
   const field = group?.fields.find((item) => item.key === fieldKey);
   const fieldValue = field ? Number(field.value.replace(/[^0-9-]/g, "")) : 0;
   return fieldValue || group?.lines.reduce((sum, line) => sum + line.amount, 0) || 0;
+}
+
+function extractionNeedsRefresh(document?: CaseDocument) {
+  return Boolean(document?.extraction && document.extraction.readerVersion !== CURRENT_READER_VERSION);
+}
+
+function hideStaleAnalysis(snapshot: Snapshot) {
+  const account = accountDoc(snapshot);
+  if (!extractionNeedsRefresh(account)) return snapshot;
+  return {
+    ...snapshot,
+    analysis: undefined,
+    documents: snapshot.documents.map((document) => document.id === account?.id
+      ? { ...document, processingStatus: "review_required", processingError: "La cuenta fue extraída con un lector anterior; debe releerse." }
+      : document),
+  };
 }
 
 function possibleDisputeAmount(analysis?: ClinicalAccountAnalysis) {
@@ -311,6 +327,9 @@ async function uploadDocument(caseId: string, file: File, classification: string
 }
 
 async function analyzeCase(caseId: string, document?: CaseDocument, episodeLabel?: string) {
+  if (extractionNeedsRefresh(document)) {
+    throw new Error("La cuenta fue leída con una versión anterior. Reemplaza la cuenta clínica para aplicar el lector actualizado.");
+  }
   const lines: ChileanBillingLine[] = document?.extraction?.account?.lines.map((line, index) => ({
     ...line,
     id: `${document.id}-${index}`,
@@ -633,7 +652,7 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
 
   async function refresh() {
     if (!caseId) return;
-    try { setError(""); const next = await getSnapshot(caseId); setSnapshot(next); if (next.analysis) setStatus("complete"); }
+    try { setError(""); const next = hideStaleAnalysis(await getSnapshot(caseId)); setSnapshot(next); if (next.analysis) setStatus("complete"); else setStatus("idle"); }
     catch (reason) { setError(errorMessage(reason, "No se pudo cargar el expediente")); }
   }
   useEffect(() => { void refresh(); }, [caseId]);
@@ -709,12 +728,13 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
 
   const account = accountDoc(snapshot); const pam = pamDoc(snapshot); const accountTotal = totalFrom(account, "account"); const pamTotal = totalFrom(pam, "pam");
   const readerAssessment = account?.extraction?.readerAssessment;
+  const readerNeedsRefresh = extractionNeedsRefresh(account);
   const firstName = snapshot.case.patientName.split(" ")[0];
   return <main className="patient-portal">
     <header className="patient-topbar"><a className="portal-brand" href="/"><span>R</span> RevisaTuCuenta</a><div className="patient-topbar-right"><span className="surface-pill patient-pill">Vista paciente</span><span className="avatar">{snapshot.case.patientName.slice(0, 2).toUpperCase()}</span><span className="patient-email">{user.email}</span><a className="patient-signout-button" href={signOutHref(user)} aria-label="Cerrar sesión">Cerrar sesión</a></div></header>
     <div className="patient-layout"><aside className="patient-sidebar"><div className="case-mini"><span className="case-icon">⌁</span><div><small>CASO ACTIVO</small><b>{snapshot.case.patientName}</b><span>Expediente {caseId.slice(0, 8)}</span></div></div><nav className="patient-nav">{(["Resumen", "Documentos", "Actividad"] as const).map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item}</button>)}</nav><div className="patient-sidebar-help"><span>?</span><div><b>¿Necesitas ayuda?</b><small>Escríbenos sobre tu caso.</small></div></div></aside>
       <section className="patient-main"><div className="patient-heading"><div><p className="portal-kicker">Mi expediente</p><h1>Hola, {firstName}.</h1><p>{snapshot.case.episodeLabel}</p></div><span className="case-status"><i /> En análisis</span></div>
-         {tab === "Resumen" && <PatientSummary account={account} pam={pam} reviewAmount={possibleDisputeAmount(snapshot.analysis)} analysisAvailable={Boolean(snapshot.analysis)} analysisRunning={status === "running"} progress={progress} stage={stage} authorized={Boolean(snapshot.authorization?.authorized)} busy={busy} readerReviewRequired={Boolean(account?.processingStatus === "failed" || account?.processingStatus === "review_required" || (readerAssessment && readerAssessment.status !== "ready"))} readerChangeNeeded={Boolean(account?.processingStatus === "failed" || account?.processingStatus === "review_required" || readerAssessment?.status === "reader_change_needed")} onAccount={() => accountInputRef.current?.click()} onPam={() => inputRef.current?.click()} onAnalyze={() => void runAnalysis()} onAuthorize={() => void authorize()} />}
+         {tab === "Resumen" && <PatientSummary account={account} pam={pam} reviewAmount={readerNeedsRefresh ? 0 : possibleDisputeAmount(snapshot.analysis)} analysisAvailable={Boolean(snapshot.analysis) && !readerNeedsRefresh} analysisRunning={status === "running"} progress={progress} stage={stage} authorized={Boolean(snapshot.authorization?.authorized)} busy={busy} readerReviewRequired={Boolean(readerNeedsRefresh || account?.processingStatus === "failed" || account?.processingStatus === "review_required" || (readerAssessment && readerAssessment.status !== "ready"))} readerChangeNeeded={Boolean(readerNeedsRefresh || account?.processingStatus === "failed" || account?.processingStatus === "review_required" || readerAssessment?.status === "reader_change_needed")} onAccount={() => accountInputRef.current?.click()} onPam={() => inputRef.current?.click()} onAnalyze={() => void runAnalysis()} onAuthorize={() => void authorize()} />}
         {tab === "Documentos" && <PatientDocuments snapshot={snapshot} deletingDocumentId={deletingDocumentId} onAccount={() => accountInputRef.current?.click()} onPam={() => inputRef.current?.click()} onDelete={(document) => void removeDocument(document)} />}
         {tab === "Actividad" && <PatientActivity activities={snapshot.activities} />}
       </section></div>
@@ -822,7 +842,7 @@ function AuthenticatedDeveloperPortal({ initialCaseId = "", user }: { initialCas
   const [selectedId, setSelectedId] = useState(initialCaseId);
   const [snapshot, setSnapshot] = useState<Snapshot>(); const [tab, setTab] = useState<"overview" | "traceability" | "documents">("documents"); const [query, setQuery] = useState(""); const [busy, setBusy] = useState(false); const [notice, setNotice] = useState("");
   const selected = cases.some((item) => item.id === selectedId) ? selectedId : cases[0]?.id || "";
-  async function refresh() { if (!selected) return; try { setSnapshot(await getSnapshot(selected)); } catch (reason) { setNotice(errorMessage(reason, "No se pudo cargar el expediente")); } }
+  async function refresh() { if (!selected) return; try { const next = hideStaleAnalysis(await getSnapshot(selected)); setSnapshot(next); if (extractionNeedsRefresh(accountDoc(next))) setNotice("La extracción anterior quedó fuera de vigencia. Reemplaza la cuenta clínica para aplicar el lector actualizado."); } catch (reason) { setNotice(errorMessage(reason, "No se pudo cargar el expediente")); } }
   useEffect(() => { void refresh(); }, [selected]);
   async function onFile(file: File, classification: string) { if (!selected) return; setBusy(true); try { const result = await uploadDocument(selected, file, classification); await refresh(); await refreshCases(); setNotice(result.corpusRegistered ? "Documento guardado, extraído y enviado a revisión de aprendizaje" : "Documento guardado y extraído; el aprendizaje quedó pendiente de sincronización"); } catch (reason) { setNotice(errorMessage(reason, "No se pudo procesar el documento")); } finally { setBusy(false); } }
   async function onAnalyze() {

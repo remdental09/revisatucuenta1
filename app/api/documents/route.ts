@@ -57,6 +57,9 @@ export async function POST(request: Request) {
   await env.DOCUMENTS.put(key, file.stream(), { httpMetadata: { contentType: file.type || "application/octet-stream" }, customMetadata: { caseId, documentId, originalName: file.name } });
   await env.DB.prepare(`INSERT OR REPLACE INTO documents (id, case_id, original_name, storage_key, mime_type, byte_size, classification, classification_confidence, processing_status, source_expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'extracting', ?)`)
     .bind(documentId, caseId, file.name, key, file.type || "application/octet-stream", file.size, String(form.get("classification") || "Por confirmar"), Number(form.get("confidence") || 0), expiresAt).run();
+  if (/cuenta|mixto/i.test(String(form.get("classification") || ""))) {
+    await env.DB.prepare(`DELETE FROM case_analyses WHERE case_id = ?`).bind(caseId).run();
+  }
   await env.DB.prepare(`INSERT INTO case_activities (id, case_id, title, detail) VALUES (?, ?, ?, ?)`)
     .bind(crypto.randomUUID(), caseId, "Documento incorporado", `${file.name} quedó disponible para revisión.`).run();
   const currentCase = await env.DB.prepare(`SELECT status FROM cases WHERE id = ?`).bind(caseId).first();

@@ -1,3 +1,7 @@
+// Increment this whenever the extraction rules change in a way that makes a
+// previously persisted extraction unsafe to present as current.
+export const CURRENT_READER_VERSION = "2026-08-28.1";
+
 export type ExtractionField = {
   key: string;
   label: string;
@@ -60,6 +64,7 @@ export type ReaderAssessment = {
 };
 
 export type DocumentExtraction = {
+  readerVersion?: string;
   pageCount: number;
   usedOcr: boolean;
   ocrPages?: number[];

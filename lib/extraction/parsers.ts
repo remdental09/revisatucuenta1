@@ -1,3 +1,4 @@
+import { CURRENT_READER_VERSION } from "./types.ts";
 import type {
   DocumentExtraction,
   ExtractedLine,
@@ -494,6 +495,7 @@ export function structureDocument(
     }
   }
   return {
+    readerVersion: CURRENT_READER_VERSION,
     pageCount: pages.length,
     usedOcr,
     ocrPages,
