@@ -1,4 +1,5 @@
 import type { DocumentExtraction } from "../extraction/types";
+import { isPlaceholderPatientName } from "../extraction/patient-identity.ts";
 import type { ClinicalAccountAnalysis } from "../rules/chilean-account";
 
 type LocalCase = { id: string; patient_name: string; contact_email?: string; episode_label: string; status: string; created_at: string; updated_at: string };
@@ -105,10 +106,16 @@ export function localDeleteDocument(documentId: string, caseId: string) {
   return { id: document.id, name: document.original_name };
 }
 
-export function localSaveExtraction(documentId: string, extraction: DocumentExtraction, savedFields: number) {
+export function localSaveExtraction(documentId: string, extraction: DocumentExtraction, savedFields: number, patientName?: string) {
   extractions.set(documentId, extraction);
   const document = documents.get(documentId);
-  if (document) addActivity(document.case_id, "Extracción completada", `${savedFields} campos quedaron vinculados a su documento de origen.`);
+  if (!document) return;
+  const item = cases.get(document.case_id);
+  if (patientName && item && isPlaceholderPatientName(item.patient_name)) {
+    cases.set(document.case_id, { ...item, patient_name: patientName, updated_at: now() });
+    addActivity(document.case_id, "Paciente identificado", "El nombre informado en la cuenta clínica quedó asociado al expediente.");
+  }
+  addActivity(document.case_id, "Extracción completada", `${savedFields} campos quedaron vinculados a su documento de origen.`);
 }
 
 export function localSaveAnalysis(caseId: string, analysis: ClinicalAccountAnalysis) {

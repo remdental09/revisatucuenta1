@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { structureDocument } from "../lib/extraction/parsers.ts";
+import { extractedPatientField } from "../lib/extraction/patient-identity.ts";
 import { textItemsToLines } from "../lib/extraction/client.ts";
 import { assessExtractionQuality, buildReaderChangeProposal } from "../lib/extraction/reader-quality.ts";
+import { localCreateCase, localGetCase, localSaveDocument, localSaveExtraction } from "../lib/server/runtime-store.ts";
 
 test("extracts account and PAM independently from a mixed document", () => {
   const result = structureDocument(
@@ -73,7 +75,7 @@ test("extracts Clínica Alemana patient identity without confusing the company R
         "Empresa Rut 96770100-9 Clínica Alemana de Santiago S.A.",
         "Previsión ISAPRE BANMEDICA S.A.",
         "Sucursal Vitacura",
-        "Nombre Paciente Rut: 00000000-0 PACIENTE EJEMPLO PRUEBA",
+        "Nombre Paciente Rut: 00000000-0 PERSONA EJEMPLO PRUEBA",
         "Cama Actual/Egreso 237ES",
         "Cuenta 1305597 - 1 Cerrada",
         "Fecha Ingreso 16/06/2023 22:08 Cama Actual/Egreso 237ES Fecha de Alta 22/06/2023 18:42",
@@ -84,7 +86,7 @@ test("extracts Clínica Alemana patient identity without confusing the company R
   );
 
   assert.equal(result.account?.fields.find((field) => field.key === "provider")?.value, "Clínica Alemana de Santiago S.A.");
-  assert.equal(result.account?.fields.find((field) => field.key === "patient")?.value, "PACIENTE EJEMPLO PRUEBA");
+  assert.equal(result.account?.fields.find((field) => field.key === "patient")?.value, "PERSONA EJEMPLO PRUEBA");
   assert.equal(result.account?.fields.find((field) => field.key === "patient_rut")?.value, "00000000-0");
   assert.equal(result.account?.fields.find((field) => field.key === "account_number")?.value, "1305597");
 });
@@ -94,9 +96,9 @@ test("extracts Clínica Santa María rows, glued dates, and returns", () => {
     [{
       page: 1,
       text: [
-        "Paciente : RODRIGUEZ MUÑOZ RAFAELLA DAKOTA Rut Paciente : 24.904.223-4",
+        "Paciente : PERSONA EJEMPLO SANTA MARIA Rut Paciente : 00.000.000 - 0",
         "Fecha_Ingreso : 18/02/2025 09:21:00 Fecha Egreso : 24/02/2025 13:00:00",
-        "Id. Ingreso : 1.353.849 - 2",
+        "Id. Ingreso : 1.111.111 - 1",
         "Empresa Emisora : CLINICA SANTA MARIA",
         "04-04-003-00 ECOTOMOGRAFIA ABDOMINAL 18/02/2025 95.600 1 95.600",
         "60450076 GLUCOSA 5% 4G NACL+2G KCL (30MEQ/XC23/02/2025 -10.077 1 (-10.077)",
@@ -109,11 +111,71 @@ test("extracts Clínica Santa María rows, glued dates, and returns", () => {
   );
 
   assert.equal(result.account?.fields.find((field) => field.key === "provider")?.value, "CLINICA SANTA MARIA");
-  assert.equal(result.account?.fields.find((field) => field.key === "patient")?.value, "RODRIGUEZ MUÑOZ RAFAELLA DAKOTA");
-  assert.equal(result.account?.fields.find((field) => field.key === "account_number")?.value, "1.353.849 - 2");
+  assert.equal(result.account?.fields.find((field) => field.key === "patient")?.value, "PERSONA EJEMPLO SANTA MARIA");
+  assert.equal(result.account?.fields.find((field) => field.key === "patient_rut")?.value, "00000000-0");
+  assert.equal(result.account?.fields.find((field) => field.key === "account_number")?.value, "1.111.111 - 1");
   assert.equal(result.account?.fields.find((field) => field.key === "discharge_date")?.value, "24/02/2025");
   assert.deepEqual(result.account?.lines.map((line) => line.amount), [95600, -10077]);
   assert.deepEqual(result.account?.lines.map((line) => line.date), ["18/02/2025", "23/02/2025"]);
+});
+
+test("extracts patient identity from an OCR-style Indisa account", () => {
+  const result = structureDocument(
+    [{
+      page: 1,
+      text: [
+        "Estado Cuenta Paciente Definitiva - Detallada",
+        "Empresa : CLINICA INDISA",
+        "Id. Ingreso : 611.915 - 8",
+        "Rut Paclente : 00.000.000 - 0",
+        "Paciente : PERSONA EJEMPLO INDISA",
+        "Rut Titular : 99.999.999 - 9",
+      ].join("\n"),
+    }],
+    "account",
+    true,
+  );
+
+  assert.equal(result.account?.fields.find((field) => field.key === "provider")?.value, "CLINICA INDISA");
+  assert.equal(result.account?.fields.find((field) => field.key === "patient")?.value, "PERSONA EJEMPLO INDISA");
+  assert.equal(result.account?.fields.find((field) => field.key === "patient_rut")?.value, "00000000-0");
+});
+
+test("extracts a patient name placed on the line after its OCR label", () => {
+  const result = structureDocument(
+    [{
+      page: 1,
+      text: [
+        "CUENTA CLINICA ESCANEADA",
+        "Nombre del Paciente:",
+        "PERSONA OCR EJEMPLO",
+        "Rut del Paciente: 00.000.000 - 0",
+      ].join("\n"),
+    }],
+    "account",
+    true,
+  );
+
+  assert.equal(result.account?.fields.find((field) => field.key === "patient")?.value, "PERSONA OCR EJEMPLO");
+  assert.equal(result.account?.fields.find((field) => field.key === "patient_rut")?.value, "00000000-0");
+});
+
+test("registers a confidently extracted patient name in a placeholder case", () => {
+  const caseId = "identity-registration-test";
+  const documentId = "identity-registration-document";
+  const extraction = structureDocument(
+    [{ page: 1, text: "CUENTA CLINICA\nPaciente: PERSONA REGISTRADA EJEMPLO\nRut Paciente: 00.000.000-0" }],
+    "account",
+    false,
+  );
+  const patientField = extractedPatientField(extraction);
+  assert.ok(patientField);
+
+  localCreateCase({ id: caseId, patientName: "Paciente", episodeLabel: "Revisión de cuenta clínica" });
+  localSaveDocument({ id: documentId, caseId, name: "cuenta-ejemplo.pdf", mimeType: "application/pdf", byteSize: 100, classification: "Cuenta clinica", confidence: 95 });
+  localSaveExtraction(documentId, extraction, extraction.account?.fields.length ?? 0, patientField.value);
+
+  assert.equal(localGetCase(caseId)?.case.patientName, "PERSONA REGISTRADA EJEMPLO");
 });
 
 test("separa códigos pegados a la glosa y conserva la sección entre páginas", () => {

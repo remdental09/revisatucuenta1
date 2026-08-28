@@ -255,23 +255,106 @@ function compact<T>(values: Array<T | undefined>): T[] {
   return values.filter((value): value is T => Boolean(value));
 }
 
+type IdentityCandidate = {
+  value: string;
+  page: number;
+  confidence: number;
+};
+
+function normalizePatientRut(value: string) {
+  const compactRut = value.toUpperCase().replace(/[^0-9K]/g, "");
+  if (!/^\d{7,8}[0-9K]$/.test(compactRut)) return;
+  return `${compactRut.slice(0, -1)}-${compactRut.slice(-1)}`;
+}
+
+function cleanPatientName(value: string) {
+  return normalize(value)
+    .replace(/^[\s:;,.\-]+/, "")
+    .replace(
+      /\s+(?:Rut\s+(?:del\s+)?Pac[ií1l]ente|Cuenta|Id\.?\s*(?:de\s+)?Ingreso|Fecha(?:\s+de)?\s+(?:Ingreso|Alta|Egreso)|Previsi[oó]n|Direcci[oó]n|Tel[eé]fono|Edad|C[oó]digo\s+de\s+Carga|Titular)\b.*$/i,
+      "",
+    )
+    .replace(/[\s:;,.\-]+$/, "")
+    .trim();
+}
+
+function looksLikePatientName(value: string) {
+  if (value.length < 5 || value.length > 100 || /\d/.test(value)) return false;
+  if (/\b(?:cl[ií]nica|hospital|empresa|prestador|cuenta|fecha|ingreso|egreso|paciente|beneficiario|rut|direcci[oó]n|tel[eé]fono)\b/i.test(value)) return false;
+  const words = value.match(/\p{L}[\p{L}'’-]*/gu) ?? [];
+  return words.length >= 2;
+}
+
+function patientIdentityFields(pages: TextPage[]) {
+  const names: IdentityCandidate[] = [];
+  const ruts: IdentityCandidate[] = [];
+  const addName = (rawValue: string | undefined, page: number, confidence: number) => {
+    if (!rawValue) return;
+    const value = cleanPatientName(rawValue);
+    if (looksLikePatientName(value)) names.push({ value, page, confidence });
+  };
+  const addRut = (rawValue: string | undefined, page: number, confidence: number) => {
+    if (!rawValue) return;
+    const value = normalizePatientRut(rawValue);
+    if (value) ruts.push({ value, page, confidence });
+  };
+
+  for (const page of pages) {
+    const lines = page.text.split(/\r?\n/).map(normalize).filter(Boolean);
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index];
+      const nextLine = lines[index + 1];
+
+      const rutBeforeName = line.match(
+        /Nombre\s+(?:del\s+)?Pac[ií1l]ente\s+Rut\s*:\s*((?:\d{1,2}(?:[.\s]\d{3}){2}|\d{7,8})\s*-\s*[\dkK])\s+(.+?)(?=\s+Cuenta\b|$)/i,
+      );
+      if (rutBeforeName) {
+        addRut(rutBeforeName[1], page.page, 98);
+        addName(rutBeforeName[2], page.page, 98);
+      }
+
+      const nameBeforeRut = line.match(
+        /(?:Nombre\s+(?:del\s+)?Pac[ií1l]ente|Pac[ií1l]ente)\s*:\s*(.+?)\s+Rut\s+(?:del\s+)?Pac[ií1l]ente\s*:\s*((?:\d{1,2}(?:[.\s]\d{3}){2}|\d{7,8})\s*-\s*[\dkK])/i,
+      );
+      if (nameBeforeRut) {
+        addName(nameBeforeRut[1], page.page, 98);
+        addRut(nameBeforeRut[2], page.page, 98);
+      }
+
+      const labeledRut = line.match(
+        /Rut\s+(?:del\s+)?Pac[ií1l]ente\s*[:#-]?\s*((?:\d{1,2}(?:[.\s]\d{3}){2}|\d{7,8})\s*-\s*[\dkK])/i,
+      );
+      if (labeledRut) addRut(labeledRut[1], page.page, 96);
+
+      const labeledName = line.match(
+        /(Nombre\s+(?:del\s+)?Pac[ií1l]ente|Pac[ií1l]ente|Beneficiario)\s*[:#-]\s*(.*)$/i,
+      );
+      if (labeledName) {
+        const label = labeledName[1];
+        const confidence = /^Beneficiario$/i.test(label) ? 86 : /Nombre/i.test(label) ? 94 : 91;
+        addName(labeledName[2] || nextLine, page.page, confidence);
+      }
+    }
+  }
+
+  const bestName = names.sort((left, right) => right.confidence - left.confidence || left.page - right.page)[0];
+  const bestRut = ruts.sort((left, right) => right.confidence - left.confidence || left.page - right.page)[0];
+  return compact([
+    bestName && { key: "patient", label: "Paciente", ...bestName },
+    bestRut && { key: "patient_rut", label: "RUT del paciente", ...bestRut },
+  ] satisfies Array<ExtractionField | undefined>);
+}
+
 export function parseClinicalAccount(pages: TextPage[]): StructuredExtraction {
+  const identityFields = patientIdentityFields(pages);
   const fields = compact([
     findField(pages, "provider", "Prestador", [
       /Empresa\s+Emisora\s*:\s*([^\n]{3,70})/i,
       /Empresa\s+Rut\s+(?:\d{1,3}(?:\.\d{3}){2}|\d{7,8})-[\dkK]\s+([^\n]{3,70})/i,
+      /Empresa\s*:\s*([^\n]{3,70})/i,
       /(?:cl[ií]nica|hospital|prestador)\s*[:-]?\s*([^\n]{3,70})/i,
     ], 82),
-    findField(pages, "patient", "Paciente", [
-      /Nombre\s+Paciente\s+Rut\s*:\s*(?:\d{1,3}(?:\.\d{3}){2}|\d{7,8})-[\dkK]\s+(.+?)\s+Cuenta\b/i,
-      /Nombre\s+Paciente\s+Rut\s*:\s*(?:\d{1,3}(?:\.\d{3}){2}|\d{7,8})-[\dkK]\s+([^\n]{3,100})/i,
-      /Paciente\s*:\s*(.+?)\s+Rut\s+Paciente/i,
-      /(?:paciente|nombre)\s*[:-]\s*([^\n]{3,80})/i,
-    ]),
-    findField(pages, "patient_rut", "RUT del paciente", [
-      /Nombre\s+Paciente\s+Rut\s*:\s*((?:\d{1,3}(?:\.\d{3}){2}|\d{7,8})-[\dkK])/i,
-      /Rut\s+(?:del\s+)?Paciente\s*[:#-]?\s*((?:\d{1,3}(?:\.\d{3}){2}|\d{7,8})-[\dkK])/i,
-    ]),
+    ...identityFields,
     findField(pages, "account_number", "Número de cuenta", [/Id\.?\s*Ingreso\s*:\s*([0-9.\s-]+)/i, /(?:n[°ºo]\s*)?(?:cuenta|folio)\s*[:-]?\s*([A-Z0-9.-]{4,})/i]),
     findField(pages, "admission_date", "Fecha de ingreso", [/(?:fecha\s+de\s+)?ingreso\s*[:-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})/i]),
     findField(pages, "discharge_date", "Fecha de alta", [/(?:fecha\s+(?:de\s+)?(?:alta|egreso))\s*[:-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})/i]),
