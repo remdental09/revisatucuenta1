@@ -64,6 +64,29 @@ test("extracts Clínica Alemana rows and Vida Tres bonos", () => {
   assert.equal(pam.pam?.fields.find((field) => field.key === "bonus")?.value, "200.721");
 });
 
+test("extracts Clínica Alemana patient identity without confusing the company RUT", () => {
+  const result = structureDocument(
+    [{
+      page: 1,
+      text: [
+        "Informe de Cuentas al Paciente",
+        "Empresa Rut 96770100-9 Clínica Alemana de Santiago S.A.",
+        "Previsión ISAPRE BANMEDICA S.A.",
+        "Sucursal Vitacura",
+        "Nombre Paciente Rut: 00000000-0 PACIENTE EJEMPLO PRUEBA Cuenta 1305597 - 1 Cerrada",
+        "Fecha Ingreso 16/06/2023 22:08 Cama Actual/Egreso 237ES Fecha de Alta 22/06/2023 18:42",
+      ].join("\n"),
+    }],
+    "account",
+    false,
+  );
+
+  assert.equal(result.account?.fields.find((field) => field.key === "provider")?.value, "Clínica Alemana de Santiago S.A.");
+  assert.equal(result.account?.fields.find((field) => field.key === "patient")?.value, "PACIENTE EJEMPLO PRUEBA");
+  assert.equal(result.account?.fields.find((field) => field.key === "patient_rut")?.value, "00000000-0");
+  assert.equal(result.account?.fields.find((field) => field.key === "account_number")?.value, "1305597");
+});
+
 test("extracts Clínica Santa María rows, glued dates, and returns", () => {
   const result = structureDocument(
     [{

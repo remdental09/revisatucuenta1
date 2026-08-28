@@ -257,9 +257,20 @@ function compact<T>(values: Array<T | undefined>): T[] {
 
 export function parseClinicalAccount(pages: TextPage[]): StructuredExtraction {
   const fields = compact([
-    findField(pages, "provider", "Prestador", [/Empresa\s+Emisora\s*:\s*([^\n]{3,70})/i, /(?:cl[ií]nica|hospital|prestador)\s*[:-]?\s*([^\n]{3,70})/i], 82),
-    findField(pages, "patient", "Paciente", [/Paciente\s*:\s*(.+?)\s+Rut\s+Paciente/i, /(?:paciente|nombre)\s*[:-]\s*([^\n]{3,80})/i]),
-    findField(pages, "patient_rut", "RUT del paciente", [/(?:RUT|Rut)\s*(?:Paciente)?\s*[:#-]?\s*((?:\d{1,3}\.){2}\d{3}-[\dkK]|\d{7,8}-[\dkK])/i]),
+    findField(pages, "provider", "Prestador", [
+      /Empresa\s+Emisora\s*:\s*([^\n]{3,70})/i,
+      /Empresa\s+Rut\s+(?:\d{1,3}(?:\.\d{3}){2}|\d{7,8})-[\dkK]\s+([^\n]{3,70})/i,
+      /(?:cl[ií]nica|hospital|prestador)\s*[:-]?\s*([^\n]{3,70})/i,
+    ], 82),
+    findField(pages, "patient", "Paciente", [
+      /Nombre\s+Paciente\s+Rut\s*:\s*(?:\d{1,3}(?:\.\d{3}){2}|\d{7,8})-[\dkK]\s+(.+?)\s+Cuenta\b/i,
+      /Paciente\s*:\s*(.+?)\s+Rut\s+Paciente/i,
+      /(?:paciente|nombre)\s*[:-]\s*([^\n]{3,80})/i,
+    ]),
+    findField(pages, "patient_rut", "RUT del paciente", [
+      /Nombre\s+Paciente\s+Rut\s*:\s*((?:\d{1,3}(?:\.\d{3}){2}|\d{7,8})-[\dkK])/i,
+      /Rut\s+(?:del\s+)?Paciente\s*[:#-]?\s*((?:\d{1,3}(?:\.\d{3}){2}|\d{7,8})-[\dkK])/i,
+    ]),
     findField(pages, "account_number", "Número de cuenta", [/Id\.?\s*Ingreso\s*:\s*([0-9.\s-]+)/i, /(?:n[°ºo]\s*)?(?:cuenta|folio)\s*[:-]?\s*([A-Z0-9.-]{4,})/i]),
     findField(pages, "admission_date", "Fecha de ingreso", [/(?:fecha\s+de\s+)?ingreso\s*[:-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})/i]),
     findField(pages, "discharge_date", "Fecha de alta", [/(?:fecha\s+(?:de\s+)?(?:alta|egreso))\s*[:-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})/i]),
