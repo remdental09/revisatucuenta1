@@ -45,6 +45,7 @@ function findField(
           value: normalize(match[1]),
           page: page.page,
           confidence,
+          sourceText: normalize(match[0]),
         };
       }
     }
@@ -100,7 +101,10 @@ function separateReceiptMarker(tokens: string[]) {
   const match = last.match(/^(-?(?:\d+(?:[.,]\d+)?))(\d)$/);
   if (!match || !/[12]/.test(match[2])) return tokens;
   const amountPart = match[1].replace(/,$/, "");
-  if (amountPart.replace(/[^0-9]/g, "").length < 3) return tokens;
+  // A receipt marker can be glued to the last amount by OCR (for example
+  // 1.6411 = 1.641 + marker 1). Do not split ordinary Chilean thousands
+  // amounts such as 4.022, 5.512 or 1.432.
+  if (!/^\d{3,}$/.test(amountPart) && !/^\d{1,3}(?:[.,]\d{3})+$/.test(amountPart)) return tokens;
   return [...tokens.slice(0, -1), amountPart, match[2]];
 }
 
@@ -120,16 +124,19 @@ function accountTableLine(line: string, page: number, section?: string, provider
     ? tokens.slice(quantityIndex + 1).find((token) => /^\$?[\d.]+(?:,\d+)?$/.test(token))
     : undefined;
   const numericValues = tokens.map(numericToken).filter((value): value is number => value !== undefined);
+  const lastToken = tokens[tokens.length - 1] ?? "";
+  const previousToken = tokens[tokens.length - 2] ?? "";
+  const hasReceiptMarker = (/^[12]$/.test(lastToken)) ||
+    (lastToken === "*" && /^[12]$/.test(previousToken));
 
   // Some providers print the full account row as:
   // quantity, unit value, exento, afecto, neto, IVA, total, receipt marker.
   // OCR often changes the separators or turns the final marker into a star,
   // so the total is read from the seventh numeric column when available.
-  if (!values && quantityIndex < 0 && numericValues.length >= 7) {
+  if (!values && quantityIndex < 0 && numericValues.length >= 6) {
     const quantity = numericValues[0];
     const unitAmount = numericValues[1];
-    const hasReceiptMarker = [1, 2].includes(numericValues[numericValues.length - 1]);
-    const totalIndex = numericValues.length >= 8 ? 6 : hasReceiptMarker ? 5 : 6;
+    const totalIndex = numericValues.length - (hasReceiptMarker ? 2 : 1);
     const total = numericValues[totalIndex];
     if (Number.isFinite(quantity) && Number.isFinite(unitAmount) && Number.isFinite(total)) {
       return {
@@ -142,6 +149,8 @@ function accountTableLine(line: string, page: number, section?: string, provider
         section,
         providerId,
         page,
+        confidence: 92,
+        sourceText: normalize(line),
       };
     }
   }
@@ -165,6 +174,8 @@ function accountTableLine(line: string, page: number, section?: string, provider
     section,
     providerId,
     page,
+    confidence: values ? 94 : 86,
+    sourceText: normalize(line),
   };
 }
 
@@ -184,6 +195,8 @@ function pamTableLine(line: string, page: number, neighborDescription = "", prov
     amount: value,
     providerId,
     page,
+    confidence: 90,
+    sourceText: normalize(line),
   };
 }
 
@@ -207,7 +220,11 @@ function sectionFromLine(line: string, current?: string) {
 }
 
 function isAccountMetadataLine(value: string) {
-  return /^(?:empresa|sucursal|id\.?\s*(?:ingreso|liquidaci[oó]n)|rut\b|paciente\b|direcci[oó]n\b|localidad\b|tel[eé]fono\b|diagn[oó]stico\b|m[eé]dico tratante\b|tipo de cobro\b|fecha(?:_?ingreso|\s+alta|\s+corte)\b|oficina\b|emisor\b|folio\s+pam\b|documento asociado\b|num\.?\s*ficha\b)/i.test(value.trim());
+  return /^(?:empresa|sucursal|id\.?\s*(?:ingreso|liquidaci[oó]n)|rut\b|paciente\b|nombre\s+del\s+paciente\b|direcci[oó]n\b|localidad\b|tel[eé]fono\b|diagn[oó]stico\b|m[eé]dico tratante\b|tipo de cobro\b|fecha(?:_?ingreso|\s+alta|\s+corte)\b|oficina\b|emisor\b|folio\s+pam\b|documento asociado\b|num\.?\s*ficha\b|santiago\b|red\s+oncosalud\b|estado\s+cuenta\b|epicrisis\b|hip[oó]tesis\b|evoluci[oó]n\b)/i.test(value.trim());
+}
+
+function isAccountSummaryLine(value: string) {
+  return /^(?:total(?:\s|$)|subtotal\b|total\s+por\s+consumo\b|atenci[oó]n\s+(?:abierta|cerrada)\b|ex[aá]menes?\b|imagenolog[ií]a\b|insumos?\b|medicamentos?\b|recetario\b|servicios\s+varios\b|resonancia\s+magnetica\b|consultas?\b|honorarios?\b|procedimientos?\b|pabell[oó]n\b|d[ií]a\s+cama\b)/i.test(value.trim());
 }
 
 function monetaryLines(pages: TextPage[], kind: "account" | "pam"): ExtractedLine[] {
@@ -241,11 +258,12 @@ function monetaryLines(pages: TextPage[], kind: "account" | "pam"): ExtractedLin
       if (!match) continue;
       if (kind === "pam") continue;
       if (isAccountMetadataLine(match[1])) continue;
+      if (isAccountSummaryLine(match[1])) continue;
       if (/^(?:total|subtotal|bonif|valor|cl[ií]nica\b|servicios\s+m[eé]dicos\b|asociaci[oó]n\s+m[eé]dica\b|[\d.$])/i.test(match[1].trim())) continue;
       if (!/[.$]/.test(match[2]) && normalize(match[1]).split(/\s+/).length <= 2) continue;
       const parsed = amount(match[2]);
       if (!Number.isFinite(parsed)) continue;
-      results.push({ description: normalize(match[1]), amount: parsed, page: page.page, providerId });
+      results.push({ description: normalize(match[1]), amount: parsed, page: page.page, providerId, confidence: 72, sourceText: normalize(line), sourceRegion: `line:${index + 1}` });
     }
   }
   return results.slice(0, 5000);
@@ -269,13 +287,76 @@ function normalizePatientRut(value: string) {
 
 function cleanPatientName(value: string) {
   return normalize(value)
-    .replace(/^[\s:;,.\-]+/, "")
+    .replace(/^[\s:;,.-]+/, "")
     .replace(
-      /\s+(?:Rut\s+(?:del\s+)?Pac[ií1l]ente|Cuenta|Id\.?\s*(?:de\s+)?Ingreso|Fecha(?:\s+de)?\s+(?:Ingreso|Alta|Egreso)|Previsi[oó]n|Direcci[oó]n|Tel[eé]fono|Edad|C[oó]digo\s+de\s+Carga|Titular)\b.*$/i,
+      /\s+(?:Rut\s+(?:del\s+)?Pac[ií1l]ente|Cuenta|Id\.?\s*(?:de\s+)?Ingreso|Fecha(?:\s+de)?\s+(?:Ingreso|Alta|Egreso)|Previsi[oó]n|Plan|Direcci[oó]n|Tel[eé]fono|Edad|C[oó]digo\s+de\s+Carga|Titular)\b.*$/i,
       "",
     )
-    .replace(/[\s:;,.\-]+$/, "")
+    .replace(/[\s:;,.-]+$/, "")
     .trim();
+}
+
+function cleanProviderName(value: string) {
+  return normalize(value)
+    .replace(/\s+\*{2,}.*$/i, "")
+    .replace(/\s+(?:Fecha|Copia)\s*:?.*$/i, "")
+    .replace(/\s+COPIA\s+.*$/i, "")
+    .replace(/[\s:;,]+$/, "")
+    .trim();
+}
+
+function providerField(pages: TextPage[]) {
+  const patterns = [
+    /Empresa\s+Emisora\s*:\s*([^\n]{3,100})/i,
+    /Empresa\s+Rut\s+(?:\d{1,3}(?:\.\d{3}){2}|\d{7,8})-[\dkK]\s+([^\n]{3,100})/i,
+    /Empresa\s*:\s*([^\n]{3,100})/i,
+    /(?:cl[ií]nica|hospital|prestador)\s*[:-]?\s*([^\n]{3,100})/i,
+  ];
+  const candidates: ExtractionField[] = [];
+  for (const page of pages) {
+    for (const pattern of patterns) {
+      const match = page.text.match(pattern);
+      if (match?.[1]) {
+        candidates.push({
+          key: "provider",
+          label: "Prestador",
+          value: normalize(match[1]),
+          page: page.page,
+          confidence: 82,
+          sourceText: normalize(match[0]),
+        });
+      }
+    }
+  }
+  const field = candidates
+    .map((candidate) => ({ ...candidate, value: cleanProviderName(candidate.value) }))
+    .filter((candidate) => candidate.value.length >= 3 && !/^(?:ee|empresa|prestador)$/i.test(candidate.value))
+    .sort((left, right) => right.value.length - left.value.length || left.page - right.page)[0];
+  if (!field) return;
+  return field;
+}
+
+function accountTotalField(pages: TextPage[]) {
+  for (const page of pages) {
+    for (const rawLine of page.text.split(/\r?\n/)) {
+      const line = normalize(rawLine);
+      if (!/^total\s+genera(?:l)?\b/i.test(line)) continue;
+      const values = line.match(/\$?\s*-?\d[\d.,]*/g) ?? [];
+      const value = values.at(-1)?.trim().replace(/^\$\s*/, "");
+      if (!value || !Number.isFinite(parseNumber(value))) continue;
+      return {
+        key: "total",
+        label: "Total cuenta clínica",
+        value,
+        page: page.page,
+        confidence: 96,
+        sourceText: line,
+      } satisfies ExtractionField;
+    }
+  }
+  return findField(pages, "total", "Total cuenta clínica", [
+    /(?:total\s+(?:cuenta|general)|total\s+a\s+pagar)\s*[:-]?\s*\$?\s*([0-9.]+(?:,\d{1,2})?)/i,
+  ], 94);
 }
 
 function looksLikePatientName(value: string) {
@@ -348,17 +429,12 @@ function patientIdentityFields(pages: TextPage[]) {
 export function parseClinicalAccount(pages: TextPage[]): StructuredExtraction {
   const identityFields = patientIdentityFields(pages);
   const fields = compact([
-    findField(pages, "provider", "Prestador", [
-      /Empresa\s+Emisora\s*:\s*([^\n]{3,70})/i,
-      /Empresa\s+Rut\s+(?:\d{1,3}(?:\.\d{3}){2}|\d{7,8})-[\dkK]\s+([^\n]{3,70})/i,
-      /Empresa\s*:\s*([^\n]{3,70})/i,
-      /(?:cl[ií]nica|hospital|prestador)\s*[:-]?\s*([^\n]{3,70})/i,
-    ], 82),
+    providerField(pages),
     ...identityFields,
     findField(pages, "account_number", "Número de cuenta", [/Id\.?\s*Ingreso\s*:\s*([0-9.\s-]+)/i, /(?:n[°ºo]\s*)?(?:cuenta|folio)\s*[:-]?\s*([A-Z0-9.-]{4,})/i]),
     findField(pages, "admission_date", "Fecha de ingreso", [/(?:fecha\s+de\s+)?ingreso\s*[:-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})/i]),
     findField(pages, "discharge_date", "Fecha de alta", [/(?:fecha\s+(?:de\s+)?(?:alta|egreso))\s*[:-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})/i]),
-    findField(pages, "total", "Total cuenta clínica", [/(?:total\s+(?:cuenta|general)|total\s+a\s+pagar)\s*[:-]?\s*\$?\s*([0-9.]+(?:,\d{1,2})?)/i], 94),
+    accountTotalField(pages),
   ]);
   return {
     type: "account",
@@ -400,6 +476,7 @@ export function structureDocument(
   pages: TextPage[],
   expected: "account" | "pam" | "mixed" | "unknown",
   usedOcr: boolean,
+  ocrPages: number[] = [],
 ): DocumentExtraction {
   let accountPages: TextPage[] = [];
   let pamPages: TextPage[] = [];
@@ -419,6 +496,7 @@ export function structureDocument(
   return {
     pageCount: pages.length,
     usedOcr,
+    ocrPages,
     account: accountPages.length ? parseClinicalAccount(accountPages) : undefined,
     pam: pamPages.length ? parsePam(pamPages) : undefined,
   };

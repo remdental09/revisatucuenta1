@@ -21,6 +21,10 @@ type CaseDocument = {
   byteSize: number;
   classification: string;
   confidence: number;
+  processingStatus?: string;
+  processingError?: string;
+  sourceExpiresAt?: string;
+  sourceDeletedAt?: string;
   createdAt: string;
   extraction?: DocumentExtraction;
 };
@@ -35,11 +39,55 @@ type Snapshot = {
   corpusStatus?: "pending_review" | "validated" | "rejected";
 };
 type CaseRow = { id: string; patient_name: string; episode_label: string; status: string; document_count: number };
+type SessionUser = { id: string; email: string; displayName: string; source: "chatgpt" | "email" | "development" };
 
 const money = (value: number) => `$${Math.round(value || 0).toLocaleString("es-CL")}`;
 
 function errorMessage(value: unknown, fallback: string) {
   return value instanceof Error ? value.message : fallback;
+}
+
+function useAuthSession() {
+  const [user, setUser] = useState<SessionUser>();
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let active = true;
+    fetch("/api/auth/session", { cache: "no-store" })
+      .then(async (response) => response.ok ? response.json() : { authenticated: false })
+      .then((payload) => { if (active) setUser(payload.authenticated ? payload.user : undefined); })
+      .catch(() => { if (active) setUser(undefined); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, []);
+  return { user, loading };
+}
+
+function signOutHref(user: SessionUser) {
+  return user.source === "chatgpt" ? "/signout-with-chatgpt?return_to=%2F" : "/api/auth/logout";
+}
+
+function AuthenticationLoading() {
+  return <main className="patient-login"><section className="patient-login-card"><div className="portal-brand"><span>R</span> RevisaTuCuenta</div><h1>Verificando acceso…</h1><p>Estamos protegiendo el acceso a tus expedientes.</p></section></main>;
+}
+
+function EmailAccess({ returnTo }: { returnTo: string }) {
+  const [email, setEmail] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [developmentVerifyUrl, setDevelopmentVerifyUrl] = useState("");
+  async function submit(event: React.FormEvent) {
+    event.preventDefault(); setBusy(true); setError(""); setMessage(""); setDevelopmentVerifyUrl("");
+    try {
+      const response = await fetch("/api/auth/email/start", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email, returnTo }) });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "No se pudo enviar el enlace de acceso");
+      setMessage(payload.message || "Revisa tu correo para continuar.");
+      setDevelopmentVerifyUrl(payload.developmentVerifyUrl || "");
+    } catch (reason) { setError(errorMessage(reason, "No se pudo verificar el correo")); }
+    finally { setBusy(false); }
+  }
+  return <main className="patient-login"><form className="patient-login-card" onSubmit={submit}><div className="portal-brand"><span>R</span> RevisaTuCuenta</div><div className="login-seal">⌁</div><p className="portal-kicker">ACCESO PROTEGIDO</p><h1>Ingresa a tu expediente.</h1><p>Te enviaremos un enlace para verificar tu correo. Así nadie más podrá consultar tus documentos ni resultados.</p><input aria-label="Correo electrónico" type="email" required autoComplete="email" placeholder="Tu correo electrónico" value={email} onChange={(event) => setEmail(event.target.value)} />{message && <p className="patient-analysis-notice">{message}</p>}{error && <p className="developer-empty-error">{error}</p>}<button className="portal-button portal-button-primary" disabled={busy}>{busy ? "Enviando enlace…" : "Enviar enlace de acceso"}</button>{developmentVerifyUrl && <a className="portal-button portal-button-secondary" href={developmentVerifyUrl}>Abrir enlace local de prueba</a>}<p className="patient-contact-note">El enlace vence en 15 minutos. Tu sesión queda protegida y sólo muestra los expedientes asociados a este correo verificado.</p><a className="back-link" href="/">← Volver</a></form></main>;
 }
 
 async function getSnapshot(caseId: string) {
@@ -202,6 +250,16 @@ function expectedKind(classification: string): "account" | "pam" | "unknown" {
   return "unknown";
 }
 
+function processingLabel(document?: CaseDocument) {
+  if (!document) return "Pendiente";
+  if (document.processingStatus === "failed") return `Falló la lectura${document.processingError ? `: ${document.processingError}` : ""}`;
+  if (document.processingStatus === "review_required") return "Lectura pendiente de revisión humana";
+  if (document.processingStatus === "extracting") return "Extracción en curso";
+  if (document.processingStatus === "ready" && document.sourceDeletedAt) return "Extraído · original eliminado";
+  if (document.processingStatus === "ready" || document.extraction) return "Extraído";
+  return "Pendiente";
+}
+
 async function uploadDocument(caseId: string, file: File, classification: string, onProgress?: (value: number) => void) {
   const documentId = crypto.randomUUID();
   const body = new FormData();
@@ -212,45 +270,44 @@ async function uploadDocument(caseId: string, file: File, classification: string
   body.append("file", file);
   const upload = await fetch("/api/documents", { method: "POST", body });
   if (!upload.ok) throw new Error((await upload.json().catch(() => ({}))).error || "No se pudo guardar el documento");
-  const extracted = await extractHealthcareDocument(file, expectedKind(classification), onProgress);
-  const extraction: DocumentExtraction = {
-    ...extracted,
-    readerAssessment: assessExtractionQuality(extracted, expectedKind(classification)),
-  };
-  const saved = await fetch("/api/extractions", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ documentId, extraction }),
-  });
-  if (!saved.ok) throw new Error("El documento se guardó, pero la extracción no pudo persistirse");
-  const sourceKind = /pam|liquid/i.test(classification)
-    ? "pam"
-    : /cuenta|mixto/i.test(classification)
-      ? "account"
-      : undefined;
-  let corpusRegistered = false;
-  const sourceLines = sourceKind
-    ? (extraction[sourceKind]?.lines ?? []).map((line, index) => ({
-        ...line,
-        id: `${documentId}-${index}`,
-        documentId,
-      }))
-    : [];
-  if (sourceKind && sourceLines.length) {
-    const corpusResponse = await fetch("/api/corpus", {
+  try {
+    const extracted = await extractHealthcareDocument(file, expectedKind(classification), onProgress);
+    const extraction: DocumentExtraction = {
+      ...extracted,
+      readerAssessment: assessExtractionQuality(extracted, expectedKind(classification)),
+    };
+    const saved = await fetch("/api/extractions", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        caseId,
-        sourceKind,
-        sourceDocumentId: documentId,
-        episodeClass: classification,
-        lines: sourceLines,
-      }),
+      body: JSON.stringify({ documentId, extraction }),
     });
-    corpusRegistered = corpusResponse.ok;
+    if (!saved.ok) throw new Error((await saved.json().catch(() => ({}))).error || "El documento se guardó, pero la extracción no pudo persistirse");
+    const sourceKind = /pam|liquid/i.test(classification)
+      ? "pam"
+      : /cuenta|mixto/i.test(classification)
+        ? "account"
+        : undefined;
+    let corpusRegistered = false;
+    const sourceLines = sourceKind
+      ? (extraction[sourceKind]?.lines ?? []).map((line, index) => ({ ...line, id: `${documentId}-${index}`, documentId }))
+      : [];
+    if (sourceKind && sourceLines.length) {
+      const corpusResponse = await fetch("/api/corpus", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ caseId, sourceKind, sourceDocumentId: documentId, episodeClass: classification, lines: sourceLines }),
+      });
+      corpusRegistered = corpusResponse.ok;
+    }
+    return { documentId, extraction, corpusRegistered };
+  } catch (reason) {
+    await fetch("/api/documents", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ caseId, documentId, status: "failed", error: errorMessage(reason, "Falló la extracción") }),
+    }).catch(() => undefined);
+    throw reason;
   }
-  return { documentId, extraction, corpusRegistered };
 }
 
 async function analyzeCase(caseId: string, document?: CaseDocument, episodeLabel?: string) {
@@ -525,9 +582,8 @@ export function PortalEntry() {
   );
 }
 
-function PatientStart({ onCreated }: { onCreated: (caseId: string) => void }) {
+function PatientStart({ userEmail, onCreated }: { userEmail: string; onCreated: (caseId: string) => void }) {
   const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
   const [episode, setEpisode] = useState("Revisión de cuenta clínica");
   const [file, setFile] = useState<File>();
   const [busy, setBusy] = useState(false);
@@ -539,7 +595,7 @@ function PatientStart({ onCreated }: { onCreated: (caseId: string) => void }) {
     setError("");
     const id = crypto.randomUUID();
     try {
-      const created = await fetch("/api/cases", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id, patientName: name || "Paciente", contactEmail: email, requireContact: true, episodeLabel: episode }) });
+      const created = await fetch("/api/cases", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id, patientName: name || "Paciente", episodeLabel: episode }) });
       const payload = await created.json().catch(() => ({}));
       if (!created.ok) throw new Error(payload.error || "No se pudo crear el expediente");
       if (file) await uploadDocument(id, file, "Cuenta clínica");
@@ -551,10 +607,17 @@ function PatientStart({ onCreated }: { onCreated: (caseId: string) => void }) {
     }
   }
 
-  return <main className="patient-login"><form className="patient-login-card" onSubmit={submit}><div className="portal-brand"><span>R</span> RevisaTuCuenta</div><div className="login-seal">⌁</div><p className="portal-kicker">Nuevo expediente</p><h1>Comienza tu revisión.</h1><p>Antes de cargar la cuenta, deja un correo para identificar el expediente y avisarte de sus actualizaciones.</p><input aria-label="Correo electrónico" type="email" required placeholder="Tu correo electrónico" value={email} onChange={(event) => setEmail(event.target.value)} /><input aria-label="Nombre" placeholder="Nombre para identificar el caso" value={name} onChange={(event) => setName(event.target.value)} /><input aria-label="Episodio" placeholder="Episodio o atención" value={episode} onChange={(event) => setEpisode(event.target.value)} /><label className="portal-button portal-button-secondary"><input type="file" accept="application/pdf,image/jpeg,image/png" hidden onChange={(event) => setFile(event.target.files?.[0])} />{file ? file.name : "Cargar cuenta clínica"}</label>{error && <p className="patient-analysis-notice">{error}</p>}<button className="portal-button portal-button-primary" disabled={busy}>{busy ? "Creando expediente…" : "Crear expediente"}</button><p className="patient-contact-note">Usaremos este correo sólo para identificar el expediente y avisarte de sus actualizaciones. La cuenta clínica no se almacena de forma permanente en este entorno.</p><a className="back-link" href="/">← Volver</a></form></main>;
+  return <main className="patient-login"><form className="patient-login-card" onSubmit={submit}><div className="portal-brand"><span>R</span> RevisaTuCuenta</div><div className="login-seal">⌁</div><p className="portal-kicker">Nuevo expediente</p><h1>Comienza tu revisión.</h1><p>Tu expediente quedará asociado al correo verificado.</p><div className="patient-verified-email"><span>Correo verificado</span><strong>{userEmail}</strong></div><input aria-label="Nombre" placeholder="Nombre para identificar el caso" value={name} onChange={(event) => setName(event.target.value)} /><input aria-label="Episodio" placeholder="Episodio o atención" value={episode} onChange={(event) => setEpisode(event.target.value)} /><label className="portal-button portal-button-secondary"><input type="file" accept="application/pdf,image/jpeg,image/png" hidden onChange={(event) => setFile(event.target.files?.[0])} />{file ? file.name : "Cargar cuenta clínica"}</label>{error && <p className="patient-analysis-notice">{error}</p>}<button className="portal-button portal-button-primary" disabled={busy}>{busy ? "Creando expediente…" : "Crear expediente"}</button><p className="patient-contact-note">El documento original se cifra mientras se procesa. Si la lectura queda completa, se elimina; si requiere revisión humana, vence automáticamente dentro de 72 horas.</p><a className="back-link" href="/">← Volver</a></form></main>;
 }
 
 export function PatientPortal({ initialCaseId = "" }: { initialCaseId?: string }) {
+  const auth = useAuthSession();
+  if (auth.loading) return <AuthenticationLoading />;
+  if (!auth.user) return <EmailAccess returnTo={`/?view=patient${initialCaseId ? `&case=${encodeURIComponent(initialCaseId)}` : ""}`} />;
+  return <AuthenticatedPatientPortal initialCaseId={initialCaseId} user={auth.user} />;
+}
+
+function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseId?: string; user: SessionUser }) {
   const [caseId, setCaseId] = useState(initialCaseId);
   const [snapshot, setSnapshot] = useState<Snapshot>();
   const [tab, setTab] = useState<"Resumen" | "Documentos" | "Actividad">("Resumen");
@@ -640,7 +703,7 @@ export function PatientPortal({ initialCaseId = "" }: { initialCaseId?: string }
     } finally { setBusy(false); setDeletingDocumentId(""); }
   }
 
-  if (!caseId) return <PatientStart onCreated={setCaseId} />;
+  if (!caseId) return <PatientStart userEmail={user.email} onCreated={setCaseId} />;
   if (error && !snapshot) return <main className="patient-portal"><section className="patient-card patient-main"><h2>No se pudo abrir el expediente</h2><p>{error}</p><button className="portal-button portal-button-primary" onClick={() => void refresh()}>Reintentar</button></section></main>;
   if (!snapshot) return <main className="patient-portal"><section className="patient-card patient-main"><h2>Cargando expediente…</h2></section></main>;
 
@@ -648,10 +711,10 @@ export function PatientPortal({ initialCaseId = "" }: { initialCaseId?: string }
   const readerAssessment = account?.extraction?.readerAssessment;
   const firstName = snapshot.case.patientName.split(" ")[0];
   return <main className="patient-portal">
-    <header className="patient-topbar"><a className="portal-brand" href="/"><span>R</span> RevisaTuCuenta</a><div className="patient-topbar-right"><span className="surface-pill patient-pill">Vista paciente</span><span className="avatar">{snapshot.case.patientName.slice(0, 2).toUpperCase()}</span><span className="patient-email">{snapshot.case.contactEmail || snapshot.case.patientName}</span><a className="patient-signout-button" href="/signout-with-chatgpt?return_to=%2F" aria-label="Cerrar sesión">Cerrar sesión</a></div></header>
+    <header className="patient-topbar"><a className="portal-brand" href="/"><span>R</span> RevisaTuCuenta</a><div className="patient-topbar-right"><span className="surface-pill patient-pill">Vista paciente</span><span className="avatar">{snapshot.case.patientName.slice(0, 2).toUpperCase()}</span><span className="patient-email">{user.email}</span><a className="patient-signout-button" href={signOutHref(user)} aria-label="Cerrar sesión">Cerrar sesión</a></div></header>
     <div className="patient-layout"><aside className="patient-sidebar"><div className="case-mini"><span className="case-icon">⌁</span><div><small>CASO ACTIVO</small><b>{snapshot.case.patientName}</b><span>Expediente {caseId.slice(0, 8)}</span></div></div><nav className="patient-nav">{(["Resumen", "Documentos", "Actividad"] as const).map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item}</button>)}</nav><div className="patient-sidebar-help"><span>?</span><div><b>¿Necesitas ayuda?</b><small>Escríbenos sobre tu caso.</small></div></div></aside>
       <section className="patient-main"><div className="patient-heading"><div><p className="portal-kicker">Mi expediente</p><h1>Hola, {firstName}.</h1><p>{snapshot.case.episodeLabel}</p></div><span className="case-status"><i /> En análisis</span></div>
-         {tab === "Resumen" && <PatientSummary account={account} pam={pam} reviewAmount={possibleDisputeAmount(snapshot.analysis)} analysisAvailable={Boolean(snapshot.analysis)} analysisRunning={status === "running"} progress={progress} stage={stage} authorized={Boolean(snapshot.authorization?.authorized)} busy={busy} readerReviewRequired={Boolean(readerAssessment && readerAssessment.status !== "ready")} readerChangeNeeded={readerAssessment?.status === "reader_change_needed"} onAccount={() => accountInputRef.current?.click()} onPam={() => inputRef.current?.click()} onAnalyze={() => void runAnalysis()} onAuthorize={() => void authorize()} />}
+         {tab === "Resumen" && <PatientSummary account={account} pam={pam} reviewAmount={possibleDisputeAmount(snapshot.analysis)} analysisAvailable={Boolean(snapshot.analysis)} analysisRunning={status === "running"} progress={progress} stage={stage} authorized={Boolean(snapshot.authorization?.authorized)} busy={busy} readerReviewRequired={Boolean(account?.processingStatus === "failed" || account?.processingStatus === "review_required" || (readerAssessment && readerAssessment.status !== "ready"))} readerChangeNeeded={Boolean(account?.processingStatus === "failed" || account?.processingStatus === "review_required" || readerAssessment?.status === "reader_change_needed")} onAccount={() => accountInputRef.current?.click()} onPam={() => inputRef.current?.click()} onAnalyze={() => void runAnalysis()} onAuthorize={() => void authorize()} />}
         {tab === "Documentos" && <PatientDocuments snapshot={snapshot} deletingDocumentId={deletingDocumentId} onAccount={() => accountInputRef.current?.click()} onPam={() => inputRef.current?.click()} onDelete={(document) => void removeDocument(document)} />}
         {tab === "Actividad" && <PatientActivity activities={snapshot.activities} />}
       </section></div>
@@ -672,10 +735,11 @@ function PatientSummary({ account, pam, reviewAmount, analysisAvailable, analysi
   return <><section className="patient-card patient-review-status-card"><span className="card-kicker">ESTADO DEL EXPEDIENTE</span><h2>{summaryTitle}</h2><p>{summaryCopy}</p><div className="patient-review-status"><span><i /> {accountReceived ? "Revisión de cuenta en curso" : pamReceived ? "Cobertura recibida; cuenta pendiente" : "Esperando documentos"}</span><small>El PAM no determina por sí solo una desfragmentación.</small>{readerReviewRequired && <small>Estamos revisando el formato de la cuenta para asegurar una lectura completa.</small>}</div><div className="patient-review-flow" aria-label="Estado general del expediente"><div className={accountReceived ? "complete" : ""}><i>1</i><span>{accountReceived ? "Cuenta clínica recibida" : "Cuenta clínica pendiente"}</span></div><div className={analysisAvailable ? "complete" : accountReceived ? "current" : ""}><i>2</i><span>{analysisAvailable ? "Análisis de cuenta listo" : accountReceived ? "Análisis de cuenta" : "Análisis pendiente"}</span></div><div className={pamReceived ? "complete" : ""}><i>3</i><span>{pamReceived ? "Cobertura PAM recibida" : "PAM / cobertura opcional"}</span></div></div>{account && !analysisAvailable && readerChangeNeeded && <section className="patient-analysis-pending"><div><span className="card-kicker">REVISIÓN EN CURSO</span><h3>Estamos preparando la lectura de tu cuenta</h3><p>Recibimos el documento, pero necesitamos revisar su formato antes de entregar un resultado preliminar. Te informaremos cuando exista una actualización.</p></div></section>}{account && !analysisAvailable && !readerChangeNeeded && <section className="patient-analysis-launch"><div><span className="card-kicker">REVISIÓN PRELIMINAR</span><h3>{analysisRunning ? stage : "Analiza tu cuenta"}</h3><p>{analysisRunning ? "Estamos ordenando la información para estimar el monto sujeto a revisión." : "Ejecuta una revisión preliminar para conocer si existen cargos que conviene aclarar."}</p></div>{analysisRunning ? <div className="patient-analysis-progress-wrap"><div className="patient-analysis-progress-label"><span>{progress}%</span><b>Procesando</b></div><div className="patient-analysis-progress-bar"><i style={{ width: `${progress}%` }} /></div></div> : <button className="patient-analyze-button" onClick={onAnalyze} disabled={busy}>Analizar cuenta →</button>}</section>}{analysisAvailable && reviewAmount > 0 && <><div className="patient-review-amount"><div><span className="card-kicker">MONTO APROXIMADO BAJO REVISIÓN</span><strong>{money(reviewAmount)}</strong></div><p>Existen montos que requieren revisión por posibles devoluciones o errores de facturación. Algunos podrían ser recuperables, pero esto debe confirmarse al revisar el caso; no constituye una devolución garantizada.</p></div><section className="patient-advisory-card"><div><span className="card-kicker">ASESORÍA INICIAL GRATUITA</span><h3>Revisemos si existen montos recuperables</h3><p>La asesoría inicial es gratuita. Si la revisión identifica montos con posibilidad de recuperación, nuestro equipo se pondrá en contacto contigo para explicarte los antecedentes y los pasos siguientes. La eventual recuperación dependerá de la revisión y del reclamo correspondiente.</p></div>{authorized ? <div className="patient-advisory-confirmed"><b>Solicitud de asesoría registrada</b><small>Nuestro equipo se pondrá en contacto contigo.</small></div> : <button className="portal-button portal-button-primary" onClick={onAuthorize} disabled={busy}>{busy ? "Registrando…" : "Solicitar asesoría inicial gratis"} →</button>}</section></>}<div className="patient-review-actions"><button className="portal-button portal-button-secondary" onClick={onAccount} disabled={busy}>{account ? "Reemplazar cuenta" : "Agregar cuenta clínica"}</button><button className="portal-button portal-button-primary" onClick={onPam} disabled={busy}>{pam ? "Reemplazar PAM" : "Agregar PAM / liquidación"}</button></div></section><section className="patient-card next-card"><span className="card-kicker">SIGUIENTE PASO</span><h2>{analysisAvailable ? "Revisión interna" : accountReceived ? "Analiza la cuenta clínica" : pamReceived ? "Falta la cuenta clínica" : "Completa tus documentos"}</h2><p>{analysisAvailable ? "La cuenta clínica ya tiene un análisis preliminar. El PAM podrá contrastarse después, sin alterar ese resultado." : documentsReceived ? "La cuenta clínica y el PAM se mantienen como fuentes distintas. Carga la cuenta para iniciar el análisis." : "Carga los documentos disponibles para completar el expediente."}</p></section></>;
 }
 
-function PatientDocuments({ snapshot, deletingDocumentId, onAccount, onPam, onDelete }: { snapshot: Snapshot; deletingDocumentId: string; onAccount: () => void; onPam: () => void; onDelete: (document: CaseDocument) => void }) { return <section className="patient-card documents-view"><div className="card-heading"><div><span className="card-kicker">DOCUMENTOS DEL CASO</span><h2>Fuentes cargadas</h2></div><div className="document-actions"><button className="portal-button portal-button-secondary" onClick={onAccount}>Agregar cuenta +</button><button className="portal-button portal-button-primary" onClick={onPam}>Agregar PAM +</button></div></div><div className="document-list">{snapshot.documents.map((doc) => <article className="patient-document clinic" key={doc.id}><span className="file-mark">PDF</span><div><span>{doc.classification}</span><b>{doc.name}</b><small>{doc.extraction?.pageCount || "-"} páginas · {doc.extraction ? "Extraído" : "Pendiente"}</small></div><div className="document-status"><em>Disponible</em><button className="patient-document-delete" onClick={() => onDelete(doc)} disabled={Boolean(deletingDocumentId)}>{deletingDocumentId === doc.id ? "Borrando…" : "Borrar documento"}</button></div></article>)}</div><div className="document-tip"><span>i</span><p>La cuenta muestra los cargos del prestador y el PAM la liquidación de cobertura. Cada documento mantiene su origen.</p></div></section>; }
+function PatientDocuments({ snapshot, deletingDocumentId, onAccount, onPam, onDelete }: { snapshot: Snapshot; deletingDocumentId: string; onAccount: () => void; onPam: () => void; onDelete: (document: CaseDocument) => void }) {
+  return <section className="patient-card documents-view"><div className="card-heading"><div><span className="card-kicker">DOCUMENTOS DEL CASO</span><h2>Fuentes cargadas</h2></div><div className="document-actions"><button className="portal-button portal-button-secondary" onClick={onAccount}>Agregar cuenta +</button><button className="portal-button portal-button-primary" onClick={onPam}>Agregar PAM +</button></div></div><div className="document-list">{snapshot.documents.map((doc) => <article className="patient-document clinic" key={doc.id}><span className="file-mark">PDF</span><div><span>{doc.classification}</span><b>{doc.name}</b><small>{doc.extraction?.pageCount || "-"} páginas · {processingLabel(doc)}</small>{doc.processingStatus === "review_required" && doc.sourceExpiresAt && <small>Original cifrado disponible temporalmente hasta {new Date(doc.sourceExpiresAt).toLocaleString("es-CL")}</small>}</div><div className="document-status"><em>{doc.processingStatus === "failed" ? "Requiere atención" : "Protegido"}</em><button className="patient-document-delete" onClick={() => onDelete(doc)} disabled={Boolean(deletingDocumentId)}>{deletingDocumentId === doc.id ? "Borrando…" : "Borrar documento"}</button></div></article>)}</div><div className="document-tip"><span>i</span><p>La cuenta muestra los cargos del prestador y el PAM la liquidación de cobertura. Cada documento mantiene su origen y estado de procesamiento.</p></div></section>;
+}
 function PatientActivity({ activities }: { activities: Activity[] }) {
-  const latestDate = activities.length ? new Date(activities[activities.length - 1].date).toLocaleString("es-CL") : "Ahora";
-  return <section className="patient-card activity-view"><span className="card-kicker">ACTIVIDAD</span><h2>Movimientos del expediente</h2><div className="activity-list"><div className="activity-item pending"><span className="activity-dot" /><div><small>{latestDate}</small><b>Revisión en curso</b><p>Tu expediente permanece en análisis. Te informaremos cuando exista una actualización.</p></div></div></div></section>;
+  return <section className="patient-card activity-view"><span className="card-kicker">ACTIVIDAD</span><h2>Movimientos del expediente</h2><div className="activity-list">{activities.length ? activities.slice(0, 20).map((activity) => <div className={`activity-item ${activity.pending ? "pending" : ""}`} key={activity.id}><span className="activity-dot" /><div><small>{new Date(activity.date).toLocaleString("es-CL")}</small><b>{activity.title}</b><p>{activity.detail}</p></div></div>) : <div className="activity-item pending"><span className="activity-dot" /><div><small>Ahora</small><b>Esperando documentos</b><p>Los movimientos de carga, extracción, revisión y análisis aparecerán aquí.</p></div></div>}</div></section>;
 }
 
 function useCases() {
@@ -747,6 +811,13 @@ function DeveloperEmpty({ error, onCreated }: { error?: string; onCreated: (case
 }
 
 export function DeveloperPortal({ initialCaseId = "" }: { initialCaseId?: string }) {
+  const auth = useAuthSession();
+  if (auth.loading) return <AuthenticationLoading />;
+  if (!auth.user) return <EmailAccess returnTo={`/?view=developer${initialCaseId ? `&case=${encodeURIComponent(initialCaseId)}` : ""}`} />;
+  return <AuthenticatedDeveloperPortal initialCaseId={initialCaseId} user={auth.user} />;
+}
+
+function AuthenticatedDeveloperPortal({ initialCaseId = "", user }: { initialCaseId?: string; user: SessionUser }) {
   const { cases, error: casesError, refresh: refreshCases } = useCases();
   const [selectedId, setSelectedId] = useState(initialCaseId);
   const [snapshot, setSnapshot] = useState<Snapshot>(); const [tab, setTab] = useState<"overview" | "traceability" | "documents">("documents"); const [query, setQuery] = useState(""); const [busy, setBusy] = useState(false); const [notice, setNotice] = useState("");
@@ -773,7 +844,7 @@ export function DeveloperPortal({ initialCaseId = "" }: { initialCaseId?: string
   const visibleCases = useMemo(() => cases.filter((item) => `${item.patient_name} ${item.id} ${item.episode_label}`.toLowerCase().includes(query.toLowerCase())), [cases, query]);
   if (!selected) return <DeveloperEmpty error={casesError} onCreated={async (id) => { setSelectedId(id); await refreshCases(); }} />;
   const account = accountDoc(snapshot); const pam = pamDoc(snapshot); const total = totalFrom(account, "account");
-  return <main className="developer-portal"><aside className="developer-sidebar"><a className="portal-brand dev-brand" href="/"><span>R</span> RevisaTuCuenta</a><div className="dev-workspace-label">ESPACIO DE TRABAJO</div><nav className="dev-nav"><a className="active" href="/?view=developer"><span>▦</span> Expedientes <em>{cases.length}</em></a><a href="#rules"><span>◌</span> Reglas del motor</a><a href="#corpus"><span>⌁</span> Corpus observado</a></nav><div className="dev-sidebar-bottom"><a href={`/?view=patient&case=${encodeURIComponent(selected)}`} target="_blank" rel="noreferrer"><span>↗</span> Vista paciente</a><div className="dev-user"><span className="avatar">DEV</span><div><b>Desarrollador</b><small>Expedientes operativos</small></div></div></div></aside><section className="developer-main"><header className="developer-header"><div><p className="portal-kicker">CONSOLA DE DESARROLLO</p><h1>Expedientes</h1><p>Revisión técnica sobre los documentos persistidos del caso seleccionado.</p></div><div className="developer-header-actions"><span className="surface-pill developer-pill">Vista desarrollador</span><a className="portal-button portal-button-secondary" href={`/?view=patient&case=${encodeURIComponent(selected)}`} target="_blank" rel="noreferrer">Abrir vista paciente ↗</a></div></header><div className="developer-body"><section className="case-queue"><div className="queue-header"><div><span className="card-kicker">BANDEJA DE CASOS</span><h2>Casos recientes <em>{cases.length}</em></h2></div></div><div className="queue-search">⌕ <input placeholder="Buscar paciente, cuenta o episodio" value={query} onChange={(event) => setQuery(event.target.value)} /></div><div className="queue-list">{visibleCases.map((item) => <button key={item.id} onClick={() => setSelectedId(item.id)} className={`dev-case-row ${selected === item.id ? "active" : ""}`}><span className="avatar">{item.patient_name.slice(0, 2).toUpperCase()}</span><div><b>{selected === item.id && snapshot ? patientNameForDeveloper(snapshot) : item.patient_name}</b><small>{item.id} · {item.document_count} documentos</small></div><em className={item.status.includes("analysis") ? "green" : "blue"}>{item.status}</em></button>)}</div></section><section className="case-detail"><div className="case-detail-head"><div><span className="case-breadcrumb">EXPEDIENTE / {selected}</span><h2>{snapshot ? patientNameForDeveloper(snapshot) : "Cargando…"}</h2><p>{snapshot?.case.episodeLabel || ""}</p></div><span className="case-state"><i /> {snapshot?.case.status || "Cargando"}</span></div>{snapshot && <><div className="dev-summary-metrics"><DevMetric label="Cuenta clínica" value={money(total)} detail="Documento base"/><DevMetric label="Desfragmentación" value={snapshot.analysis ? `${snapshot.analysis.lineAssessments.length} líneas` : "Pendiente"} detail="Hipótesis técnicas" pending={!snapshot.analysis}/><DevMetric label="Contexto PAM" value={pam ? "Recibido" : "Pendiente"} detail="Se conserva separado" pending={!pam}/><DevMetric label="Autorización" value={snapshot.authorization?.authorized ? "Otorgada" : "Pendiente"} detail="Gestión de reclamos" pending={!snapshot.authorization?.authorized}/><DevMetric label="Documentos" value={String(snapshot.documents.length)} detail="Fuentes del caso"/></div><div className="dev-tabs">{(["overview", "traceability", "documents"] as const).map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item === "overview" ? "Resumen" : item === "traceability" ? "Matriz de trazabilidad" : "Documentos"}</button>)}</div>{notice && <p className="patient-analysis-notice">{notice}</p>}{tab === "overview" && <DeveloperOverview snapshot={snapshot} total={total} busy={busy} onAnalyze={() => void onAnalyze()} onExport={() => downloadJson(`${selected}-preinforme.json`, snapshot)} onClaimDraft={() => downloadClaim(`${selected}-solicitud-aclaracion.md`, snapshot)} onCorpusStatus={onCorpusStatus} />}{tab === "traceability" && <DeveloperTraceability snapshot={snapshot} onExport={() => downloadJson(`${selected}-matriz.json`, snapshot.analysis)} onExportMarkdown={() => snapshot.analysis && downloadMarkdown(`${selected}-matriz.md`, snapshot.analysis)} />}{tab === "documents" && <DeveloperDocuments snapshot={snapshot} busy={busy} onFile={(file, kind) => void onFile(file, kind)} onAnalyze={() => void onAnalyze()} />}</>}</section></div></section></main>;
+  return <main className="developer-portal"><aside className="developer-sidebar"><a className="portal-brand dev-brand" href="/"><span>R</span> RevisaTuCuenta</a><div className="dev-workspace-label">ESPACIO DE TRABAJO</div><nav className="dev-nav"><a className="active" href="/?view=developer"><span>▦</span> Expedientes <em>{cases.length}</em></a><a href="#rules"><span>◌</span> Reglas del motor</a><a href="#corpus"><span>⌁</span> Corpus observado</a></nav><div className="dev-sidebar-bottom"><a href={`/?view=patient&case=${encodeURIComponent(selected)}`} target="_blank" rel="noreferrer"><span>↗</span> Vista paciente</a><div className="dev-user"><span className="avatar">DEV</span><div><b>Desarrollador</b><small>{user.email}</small></div></div></div></aside><section className="developer-main"><header className="developer-header"><div><p className="portal-kicker">CONSOLA DE DESARROLLO</p><h1>Expedientes</h1><p>Revisión técnica sobre documentos protegidos y asociados a su propietario.</p></div><div className="developer-header-actions"><span className="surface-pill developer-pill">Vista desarrollador</span><a className="portal-button portal-button-secondary" href={`/?view=patient&case=${encodeURIComponent(selected)}`} target="_blank" rel="noreferrer">Abrir vista paciente ↗</a><a className="patient-signout-button" href={signOutHref(user)}>Cerrar sesión</a></div></header><div className="developer-body"><section className="case-queue"><div className="queue-header"><div><span className="card-kicker">BANDEJA DE CASOS</span><h2>Casos recientes <em>{cases.length}</em></h2></div></div><div className="queue-search">⌕ <input placeholder="Buscar paciente, cuenta o episodio" value={query} onChange={(event) => setQuery(event.target.value)} /></div><div className="queue-list">{visibleCases.map((item) => <button key={item.id} onClick={() => setSelectedId(item.id)} className={`dev-case-row ${selected === item.id ? "active" : ""}`}><span className="avatar">{item.patient_name.slice(0, 2).toUpperCase()}</span><div><b>{selected === item.id && snapshot ? patientNameForDeveloper(snapshot) : item.patient_name}</b><small>{item.id} · {item.document_count} documentos</small></div><em className={item.status.includes("analysis") ? "green" : "blue"}>{item.status}</em></button>)}</div></section><section className="case-detail"><div className="case-detail-head"><div><span className="case-breadcrumb">EXPEDIENTE / {selected}</span><h2>{snapshot ? patientNameForDeveloper(snapshot) : "Cargando…"}</h2><p>{snapshot?.case.episodeLabel || ""}</p></div><span className="case-state"><i /> {snapshot?.case.status || "Cargando"}</span></div>{snapshot && <><div className="dev-summary-metrics"><DevMetric label="Cuenta clínica" value={money(total)} detail="Documento base"/><DevMetric label="Desfragmentación" value={snapshot.analysis ? `${snapshot.analysis.lineAssessments.length} líneas` : "Pendiente"} detail="Hipótesis técnicas" pending={!snapshot.analysis}/><DevMetric label="Contexto PAM" value={pam ? "Recibido" : "Pendiente"} detail="Se conserva separado" pending={!pam}/><DevMetric label="Autorización" value={snapshot.authorization?.authorized ? "Otorgada" : "Pendiente"} detail="Gestión de reclamos" pending={!snapshot.authorization?.authorized}/><DevMetric label="Documentos" value={String(snapshot.documents.length)} detail="Fuentes del caso"/></div><div className="dev-tabs">{(["overview", "traceability", "documents"] as const).map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item === "overview" ? "Resumen" : item === "traceability" ? "Matriz de trazabilidad" : "Documentos"}</button>)}</div>{notice && <p className="patient-analysis-notice">{notice}</p>}{tab === "overview" && <DeveloperOverview snapshot={snapshot} total={total} busy={busy} onAnalyze={() => void onAnalyze()} onExport={() => downloadJson(`${selected}-preinforme.json`, snapshot)} onClaimDraft={() => downloadClaim(`${selected}-solicitud-aclaracion.md`, snapshot)} onCorpusStatus={onCorpusStatus} />}{tab === "traceability" && <DeveloperTraceability snapshot={snapshot} onExport={() => downloadJson(`${selected}-matriz.json`, snapshot.analysis)} onExportMarkdown={() => snapshot.analysis && downloadMarkdown(`${selected}-matriz.md`, snapshot.analysis)} />}{tab === "documents" && <DeveloperDocuments snapshot={snapshot} busy={busy} onFile={(file, kind) => void onFile(file, kind)} onAnalyze={() => void onAnalyze()} />}</>}</section></div></section></main>;
 }
 
 function DeveloperCaseIdentity({ snapshot }: { snapshot: Snapshot }) {
@@ -868,7 +939,10 @@ function AccountStructurePanel({ analysis }: { analysis: ClinicalAccountAnalysis
   return <section className="account-structure-panel"><div className="precedent-projection-head"><div><span className="card-kicker">ESTRUCTURA DE LA CUENTA</span><h3>Paquetes, valores cero y trazabilidad</h3><p>Señales contables para solicitar composición, uso y fundamento del cobro separado.</p></div><div className="developer-analysis-badges"><span>{signals.length} señales</span><span>{signals.filter((signal) => signal.severity === "high").length} prioritarias</span></div></div><div className="functional-equivalence-summary"><strong>Cómo leerlas</strong><p>Un valor cero puede indicar inclusión en un paquete; una señal de itemización selectiva no prueba intención ni devolución.</p></div><div className="account-structure-list">{signals.slice(0, 18).map((signal) => <article key={signal.id}><div><span className={`functional-alert-level ${signal.severity === "high" ? "high" : signal.severity === "review" ? "medium" : "context"}`}>{signal.severity === "high" ? "Prioritaria" : signal.severity === "review" ? "Revisar" : "Informativa"}</span><b>{signal.title}</b></div><p>{signal.summary}</p><small><strong>Evidencia:</strong> {signal.evidenceToRequest.join(" · ")}</small></article>)}</div>{signals.length > 18 && <p className="developer-detail-foot">Se muestran 18 señales; la exportación conserva todas.</p>}</section>;
 }
 
-function DeveloperAnalysisDetail({ analysis }: { analysis: ClinicalAccountAnalysis }) { const rows = analysis.lineAssessments.filter((item) => !/bonificacion|copago|liquidacion|pam|ajuste/i.test(`${item.line.description} ${item.line.section || ""}`)); return <section className="developer-analysis-detail"><div className="developer-analysis-detail-head"><div><span className="card-kicker">ANÁLISIS DEL PRESTADOR</span><h3>Hipótesis técnicas trazables</h3><p>Estos resultados requieren contraste contractual y documental.</p></div><div className="developer-analysis-badges"><span>{rows.length} líneas en foco</span><span>{analysis.functionalEquivalenceAlerts?.length ?? 0} alertas funcionales</span></div></div><div className="developer-detail-metrics"><article><b>{rows.length}</b><small>Líneas en foco</small></article><article><b>{rows.filter((item) => item.candidates.length).length}</b><small>Con hipótesis</small></article><article><b>{money(rows.filter((item) => item.candidates.length).reduce((sum, item) => sum + item.line.amount, 0))}</b><small>Valor bajo hipótesis</small></article><article><b>{analysis.anomalies.length}</b><small>Señales</small></article></div><DeveloperBreakdownPanel analysis={analysis}/><AccountStructurePanel analysis={analysis}/><OperatingRoomScopePanel analysis={analysis}/><PrecedentProjectionPanel analysis={analysis} rows={rows}/><FunctionalEquivalencePanel analysis={analysis}/><ReasoningControlPanel analysis={analysis}/><div className="developer-line-table"><div className="developer-line-head"><span>Línea / origen</span><span>Hipótesis</span><span>Valor</span></div>{rows.map((item) => { const candidate = [...item.candidates].sort((left, right) => right.probability - left.probability)[0]; const precedent = item.precedentComparisons?.[0]; return <article key={item.line.id}><div><b>{item.line.description}</b><small>{item.line.section || "Sin sección"} · pág. {item.line.page}{item.line.code ? ` · código ${item.line.code}` : ""}</small></div><div><strong>{candidate ? `${Math.round(candidate.probability * 100)}%` : "Sin hipótesis"}</strong><small>{candidate?.reasons[0] || "Requiere clasificación adicional"}{precedent ? ` · Antecedente ${Math.round(precedent.comparability * 100)}% comparable` : ""}{candidate?.missingEvidence?.length ? ` · Falta: ${candidate.missingEvidence.join("; ")}` : ""}</small></div><b>{money(item.line.amount)}</b></article>; })}</div></section>; }
+function DeveloperAnalysisDetail({ analysis }: { analysis: ClinicalAccountAnalysis }) {
+  const rows = analysis.lineAssessments.filter((item) => !/bonificacion|copago|liquidacion|pam|ajuste/i.test(`${item.line.description} ${item.line.section || ""}`));
+  return <section className="developer-analysis-detail"><div className="developer-analysis-detail-head"><div><span className="card-kicker">ANÁLISIS DEL PRESTADOR</span><h3>Hipótesis técnicas trazables</h3><p>Estos resultados requieren contraste contractual y documental.</p></div><div className="developer-analysis-badges"><span>{rows.length} líneas en foco</span><span>{analysis.functionalEquivalenceAlerts?.length ?? 0} alertas funcionales</span></div></div><div className="developer-detail-metrics"><article><b>{rows.length}</b><small>Líneas en foco</small></article><article><b>{rows.filter((item) => item.candidates.length).length}</b><small>Con hipótesis</small></article><article><b>{money(rows.filter((item) => item.candidates.length).reduce((sum, item) => sum + item.line.amount, 0))}</b><small>Valor bajo hipótesis</small></article><article><b>{analysis.anomalies.length}</b><small>Señales</small></article></div><DeveloperBreakdownPanel analysis={analysis}/><AccountStructurePanel analysis={analysis}/><OperatingRoomScopePanel analysis={analysis}/><PrecedentProjectionPanel analysis={analysis} rows={rows}/><FunctionalEquivalencePanel analysis={analysis}/><ReasoningControlPanel analysis={analysis}/><div className="developer-line-table"><div className="developer-line-head"><span>Línea / origen</span><span>Hipótesis</span><span>Valor</span></div>{rows.map((item) => { const candidate = [...item.candidates].sort((left, right) => right.probability - left.probability)[0]; const precedent = item.precedentComparisons?.[0]; return <article key={item.line.id}><div><b>{item.line.description}</b><small>{item.line.section || "Sin sección"} · pág. {item.line.page}{item.line.code ? ` · código ${item.line.code}` : ""}{item.line.confidence ? ` · lectura ${item.line.confidence}%` : ""}</small>{item.line.sourceText && <small><strong>Texto original:</strong> {item.line.sourceText}</small>}</div><div><strong>{candidate ? `${Math.round(candidate.probability * 100)}%` : "Sin hipótesis"}</strong><small>{candidate?.reasons[0] || "Requiere clasificación adicional"}{precedent ? ` · Antecedente ${Math.round(precedent.comparability * 100)}% comparable` : ""}{candidate?.missingEvidence?.length ? ` · Falta: ${candidate.missingEvidence.join("; ")}` : ""}</small></div><b>{money(item.line.amount)}</b></article>; })}</div></section>;
+}
 function FlowStep({ number, title, state, detail }: { number: string; title: string; state: "complete" | "current" | "pending"; detail: string }) { return <div className={state}><span>{number}</span><b>{title}</b><small>{detail}</small></div>; }
 
 function readerStatusLabel(status: NonNullable<DocumentExtraction["readerAssessment"]>["status"]) {
@@ -880,8 +954,14 @@ function ReaderQualityPanel({ document: sourceDocument }: { document: CaseDocume
   if (!assessment) return null;
   const proposal = buildReaderChangeProposal(assessment, sourceDocument.name);
   const technicalAlert = assessment.status === "reader_change_needed";
-  return <section className={`reader-quality-panel ${assessment.status}`}><div className="reader-quality-head"><div><span className="card-kicker">CONTROL DE LECTURA</span><h3>{technicalAlert ? "Este formato requiere revisión del lector" : "Calidad de lectura del documento"}</h3><p>{technicalAlert ? "La cuenta fue recibida, pero el motor no debe tratarla como completamente leída hasta revisar el formato o los renglones no reconocidos." : "La extracción está disponible para revisión; las alertas de lectura no son conclusiones sobre coberturas ni devoluciones."}</p></div><span className={`reader-quality-status ${assessment.status}`}>{readerStatusLabel(assessment.status)}</span></div><div className="reader-quality-metrics"><article><b>{Math.round(assessment.confidence * 100)}%</b><small>Confianza de lectura</small></article><article><b>{assessment.parserMode === "direct_pdf" ? "PDF" : "OCR"}</b><small>Ruta utilizada</small></article><article><b>{assessment.unknownItems.length}</b><small>Elementos dudosos</small></article><article><b>{assessment.lowConfidencePages.length || "—"}</b><small>Páginas a revisar</small></article></div><div className="reader-quality-signals"><b>Señales del lector</b>{assessment.signals.map((signal) => <span key={signal}>{signal}</span>)}</div>{assessment.unknownItems.length > 0 && <div className="reader-quality-unknown"><b>Elementos que no deben ocultarse</b>{assessment.unknownItems.slice(0, 8).map((item, index) => <div key={`${item.page}-${index}`}><span>Pág. {item.page}</span><strong>{item.value}</strong><small>{item.reason}</small></div>)}</div>}<div className="reader-quality-actions"><button className="portal-button portal-button-secondary" onClick={() => downloadJson(`${sourceDocument.id}-propuesta-lector.json`, proposal)}>Descargar propuesta JSON</button><button className="portal-button portal-button-primary" onClick={() => downloadReaderProposal(`${sourceDocument.id}-propuesta-lector.md`, sourceDocument)}>Descargar propuesta MD</button><small>LLM asistivo: punto de integración preparado ({assessment.llmAssist.status}). Ninguna sugerencia cambia código o despliega automáticamente.</small></div><p className="reader-quality-next"><b>Siguiente acción:</b> {assessment.nextAction}</p></section>;
+  const numericIssues = assessment.numericIssues ?? [];
+  const issueCount = assessment.unknownItems.length + numericIssues.length;
+  return <section className={`reader-quality-panel ${assessment.status}`}><div className="reader-quality-head"><div><span className="card-kicker">CONTROL DE LECTURA</span><h3>{technicalAlert ? "Este formato requiere revisión del lector" : "Calidad de lectura del documento"}</h3><p>{technicalAlert ? "La cuenta fue recibida, pero el motor no debe tratarla como completamente leída hasta revisar el formato o los renglones no reconocidos." : "La extracción está disponible para revisión; las alertas de lectura no son conclusiones sobre coberturas ni devoluciones."}</p></div><span className={`reader-quality-status ${assessment.status}`}>{readerStatusLabel(assessment.status)}</span></div><div className="reader-quality-metrics"><article><b>{Math.round(assessment.confidence * 100)}%</b><small>Confianza de lectura</small></article><article><b>{assessment.parserMode === "direct_pdf" ? "PDF" : assessment.parserMode === "mixed" ? "Mixto" : "OCR"}</b><small>Ruta utilizada</small></article><article><b>{issueCount}</b><small>Alertas de lectura</small></article><article><b>{assessment.lowConfidencePages.length || "—"}</b><small>Páginas a revisar</small></article></div><div className="reader-quality-signals"><b>Señales del lector</b>{assessment.signals.map((signal) => <span key={signal}>{signal}</span>)}</div>{assessment.unknownItems.length > 0 && <div className="reader-quality-unknown"><b>Elementos que no deben ocultarse</b>{assessment.unknownItems.slice(0, 8).map((item, index) => <div key={`${item.page}-${index}`}><span>Pág. {item.page}</span><strong>{item.value}</strong><small>{item.reason}</small></div>)}</div>}{numericIssues.length > 0 && <div className="reader-quality-unknown"><b>Inconsistencias numéricas detectadas</b>{numericIssues.slice(0, 8).map((item, index) => <div key={`numeric-${item.page}-${index}`}><span>Pág. {item.page}</span><strong>{item.value}</strong><small>{item.reason}</small></div>)}</div>}<div className="reader-quality-actions"><button className="portal-button portal-button-secondary" onClick={() => downloadJson(`${sourceDocument.id}-propuesta-lector.json`, proposal)}>Descargar propuesta JSON</button><button className="portal-button portal-button-primary" onClick={() => downloadReaderProposal(`${sourceDocument.id}-propuesta-lector.md`, sourceDocument)}>Descargar propuesta MD</button><small>LLM asistivo: punto de integración preparado ({assessment.llmAssist.status}). Ninguna sugerencia cambia código o despliega automáticamente.</small></div><p className="reader-quality-next"><b>Siguiente acción:</b> {assessment.nextAction}</p></section>;
 }
 
 function DeveloperDocuments({ snapshot, busy, onFile, onAnalyze }: { snapshot: Snapshot; busy: boolean; onFile: (file: File, classification: string) => void; onAnalyze: () => void }) { const account = accountDoc(snapshot); return <div className="developer-documents"><DeveloperCaseIdentity snapshot={snapshot}/><div className="traceability-toolbar"><div><span className="card-kicker">DOCUMENTOS DEL CASO</span><h3>Fuentes cargadas</h3></div><span className="document-replacement-note">Los archivos nuevos quedan vinculados al caso</span></div>{account && <ReaderQualityPanel document={account}/>}<div className="dev-document-grid"><OperationalDoc type="Cuenta clínica" document={account} classification="Cuenta clínica" busy={busy} onFile={onFile} analysisAvailable={Boolean(snapshot.analysis)} onAnalyze={onAnalyze}/><OperationalDoc type="PAM / liquidación" document={pamDoc(snapshot)} classification="PAM / liquidación" busy={busy} onFile={onFile}/><OperationalDoc type="Contrato / plan" document={snapshot.documents.find((doc) => /contrato|plan/i.test(doc.classification))} classification="Contrato" busy={busy} onFile={onFile}/></div></div>; }
-function OperationalDoc({ type, document, classification, busy, onFile, onAnalyze, analysisAvailable }: { type: string; document?: CaseDocument; classification: string; busy: boolean; onFile: (file: File, classification: string) => void; onAnalyze?: () => void; analysisAvailable?: boolean }) { const input = useRef<HTMLInputElement>(null); return <article className={`dev-doc ${document ? "" : "pending"}`}><span className="file-mark">{document ? "PDF" : "+"}</span><div><span>{type}</span><b>{document?.name || "Esperando archivo"}</b><small>{document ? `${document.extraction?.pageCount || "-"} páginas · extraído` : "Pendiente"}</small></div><div className="dev-doc-actions"><button onClick={() => input.current?.click()} disabled={busy}>{document ? "Reemplazar" : "Cargar"}</button>{onAnalyze && <button className="dev-doc-analyze" onClick={onAnalyze} disabled={busy || !document}>{busy ? "Procesando…" : analysisAvailable ? "Actualizar análisis" : "Analizar cuenta"} →</button>}</div><input ref={input} hidden type="file" accept="application/pdf,image/jpeg,image/png" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) onFile(file, classification); }} /></article>; }
+function OperationalDoc({ type, document, classification, busy, onFile, onAnalyze, analysisAvailable }: { type: string; document?: CaseDocument; classification: string; busy: boolean; onFile: (file: File, classification: string) => void; onAnalyze?: () => void; analysisAvailable?: boolean }) {
+  const input = useRef<HTMLInputElement>(null);
+  const cannotAnalyze = !document || document.processingStatus === "failed" || document.processingStatus === "review_required";
+  return <article className={`dev-doc ${document ? "" : "pending"}`}><span className="file-mark">{document ? "PDF" : "+"}</span><div><span>{type}</span><b>{document?.name || "Esperando archivo"}</b><small>{document ? `${document.extraction?.pageCount || "-"} páginas · ${processingLabel(document)}` : "Pendiente"}</small></div><div className="dev-doc-actions"><button onClick={() => input.current?.click()} disabled={busy}>{document ? "Reemplazar" : "Cargar"}</button>{document?.processingStatus === "review_required" && !document.sourceDeletedAt && <a href={`/api/documents?caseId=${encodeURIComponent(document.caseId)}&documentId=${encodeURIComponent(document.id)}&download=source`}>Descargar original temporal</a>}{onAnalyze && <button className="dev-doc-analyze" onClick={onAnalyze} disabled={busy || cannotAnalyze}>{busy ? "Procesando…" : analysisAvailable ? "Actualizar análisis" : "Analizar cuenta"} →</button>}</div><input ref={input} hidden type="file" accept="application/pdf,image/jpeg,image/png" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) onFile(file, classification); }} /></article>;
+}

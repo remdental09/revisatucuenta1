@@ -171,11 +171,11 @@ test("registers a confidently extracted patient name in a placeholder case", () 
   const patientField = extractedPatientField(extraction);
   assert.ok(patientField);
 
-  localCreateCase({ id: caseId, patientName: "Paciente", episodeLabel: "Revisión de cuenta clínica" });
+  localCreateCase({ id: caseId, ownerUserId: "test-owner", ownerEmail: "test@example.com", patientName: "Paciente", episodeLabel: "Revisión de cuenta clínica" });
   localSaveDocument({ id: documentId, caseId, name: "cuenta-ejemplo.pdf", mimeType: "application/pdf", byteSize: 100, classification: "Cuenta clinica", confidence: 95 });
   localSaveExtraction(documentId, extraction, extraction.account?.fields.length ?? 0, patientField.value);
 
-  assert.equal(localGetCase(caseId)?.case.patientName, "PERSONA REGISTRADA EJEMPLO");
+  assert.equal(localGetCase(caseId, "test-owner")?.case.patientName, "PERSONA REGISTRADA EJEMPLO");
 });
 
 test("separa códigos pegados a la glosa y conserva la sección entre páginas", () => {
@@ -298,6 +298,45 @@ test("reconoce filas OCR de cuenta clínica con columnas completas", () => {
       },
     ],
   );
+});
+
+test("conserva montos chilenos de miles y toma el último total oficial", () => {
+  const result = structureDocument(
+    [{
+      page: 8,
+      text: [
+        "ESTADO CUENTA PACIENTE DETALLADA",
+        "SERVICIOS MEDICOS TABANCURA S.P.A.",
+        "11024037 SUERO FISIOLOGICO X 1000ML 15/01/2020 1 4.022 0 3.380 642 4.022",
+        "11024038 SUERO FISIOLOGICO X 20ML 15/01/2020 6 1.076 0 5.424 1.032 6.456",
+        "TOTAL GENERA : 1.755.602 3.871.683 735.630 6.362.915",
+      ].join("\n"),
+    }],
+    "account",
+    false,
+  );
+
+  assert.deepEqual(result.account?.lines.map((line) => ({ quantity: line.quantity, unitAmount: line.unitAmount, amount: line.amount })), [
+    { quantity: 1, unitAmount: 4022, amount: 4022 },
+    { quantity: 6, unitAmount: 1076, amount: 6456 },
+  ]);
+  assert.equal(result.account?.fields.find((field) => field.key === "total")?.value, "6.362.915");
+});
+
+test("diagnostica una inconsistencia numérica en vez de ocultarla", () => {
+  const extraction = structureDocument(
+    [{
+      page: 1,
+      text: "MATERIALES CLINICOS\n11024037 SUERO FISIOLOGICO 15/01/2020 2 4.022 0 8.044 1.528 7.000",
+    }],
+    "account",
+    false,
+  );
+  const assessment = assessExtractionQuality(extraction, "account");
+  assert.equal(assessment.numericIssues.length, 1);
+  assert.equal(assessment.status, "review_required");
+  assert.equal(assessment.codeChangeNeeded, false);
+  assert.match(assessment.signals.join(" "), /inconsistencias/i);
 });
 
 test("marca un formato sin líneas y prepara una propuesta sin cambiar el código", () => {

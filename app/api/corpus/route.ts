@@ -6,6 +6,8 @@ import {
   type CorpusSourceKind,
 } from "../../../lib/server/observed-corpus-store.ts";
 import type { ChileanBillingLine } from "../../../lib/rules/chilean-account.ts";
+import { requireApiUser } from "../../../lib/server/auth.ts";
+import { caseAccessResponse, developerAccessResponse } from "../../../lib/server/case-access.ts";
 
 type CorpusObservationRequest = {
   caseId?: string;
@@ -32,6 +34,10 @@ function isBillingLine(value: unknown): value is ChileanBillingLine {
 }
 
 export async function GET(request: Request) {
+  const auth = await requireApiUser(request);
+  if ("response" in auth) return auth.response;
+  const denied = developerAccessResponse(auth.user);
+  if (denied) return denied;
   const env = await getCloudflareEnv();
   const requestedKind = new URL(request.url).searchParams.get("sourceKind");
   const sourceKind: CorpusSourceKind = requestedKind === "pam" ? "pam" : "account";
@@ -54,6 +60,8 @@ export async function GET(request: Request) {
  * active corpus until a human validates the case.
  */
 export async function POST(request: Request) {
+  const auth = await requireApiUser(request);
+  if ("response" in auth) return auth.response;
   const body = await request.json().catch(() => ({})) as CorpusObservationRequest;
   if (!body.caseId || !body.sourceKind || !["account", "pam"].includes(body.sourceKind)) {
     return Response.json({ error: "Se requiere caso y tipo de fuente account o pam" }, { status: 422 });
@@ -62,6 +70,8 @@ export async function POST(request: Request) {
     return Response.json({ error: "La observación requiere líneas extraídas con id, monto y página" }, { status: 422 });
   }
   const env = await getCloudflareEnv();
+  const denied = await caseAccessResponse(env, body.caseId, auth.user);
+  if (denied) return denied;
   const contribution = buildCorpusContribution({
     caseId: body.caseId,
     episodeClass: body.episodeClass || (body.sourceKind === "pam" ? "PAM / liquidación" : "Cuenta clínica"),

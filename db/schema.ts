@@ -3,12 +3,15 @@ import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 export const cases = sqliteTable("cases", {
   id: text("id").primaryKey(),
+  ownerUserId: text("owner_user_id").notNull().default(""),
+  ownerEmail: text("owner_email").notNull().default(""),
   patientName: text("patient_name").notNull(),
+  contactEmail: text("contact_email").notNull().default(""),
   episodeLabel: text("episode_label").notNull(),
   status: text("status").notNull().default("collecting"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
-});
+}, (table) => [index("idx_cases_owner_updated").on(table.ownerUserId, table.updatedAt)]);
 
 export const documents = sqliteTable("documents", {
   id: text("id").primaryKey(),
@@ -19,6 +22,10 @@ export const documents = sqliteTable("documents", {
   byteSize: integer("byte_size").notNull(),
   classification: text("classification").notNull(),
   classificationConfidence: integer("classification_confidence").notNull(),
+  processingStatus: text("processing_status").notNull().default("uploaded"),
+  processingError: text("processing_error"),
+  sourceExpiresAt: text("source_expires_at"),
+  sourceDeletedAt: text("source_deleted_at"),
   pageFrom: integer("page_from"),
   pageTo: integer("page_to"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
@@ -31,6 +38,7 @@ export const extractedFields = sqliteTable("extracted_fields", {
   fieldValue: text("field_value").notNull(),
   sourcePage: integer("source_page").notNull(),
   sourceRegion: text("source_region"),
+  sourceText: text("source_text"),
   confidence: integer("confidence").notNull(),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 }, (table) => [index("idx_extracted_fields_document_id").on(table.documentId)]);

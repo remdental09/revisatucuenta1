@@ -9,6 +9,8 @@ import {
   getObservedCorpusSnapshot,
   registerCorpusContribution,
 } from "../../../lib/server/observed-corpus-store.ts";
+import { requireApiUser } from "../../../lib/server/auth.ts";
+import { caseAccessResponse } from "../../../lib/server/case-access.ts";
 
 type AnalysisRequest = { caseId?: string; episodeLabel?: string; lines?: unknown };
 
@@ -34,6 +36,8 @@ function isBillingLine(value: unknown): value is ChileanBillingLine {
  * its source page and the original document identifier.
  */
 export async function POST(request: Request) {
+  const auth = await requireApiUser(request);
+  if ("response" in auth) return auth.response;
   let body: AnalysisRequest;
   try {
     body = (await request.json()) as AnalysisRequest;
@@ -55,6 +59,10 @@ export async function POST(request: Request) {
   }
 
   const env = await getCloudflareEnv();
+  if (body.caseId) {
+    const denied = await caseAccessResponse(env, body.caseId, auth.user);
+    if (denied) return denied;
+  }
   // Account hypotheses are evaluated only against the validated account corpus.
   // PAM observations remain a separate coverage source for a later reconciliation.
   const corpusSnapshot = await getObservedCorpusSnapshot(env, "account");

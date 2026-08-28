@@ -58,6 +58,31 @@ function unknownItems(extraction: DocumentExtraction, lines: Array<{ description
   return items.slice(0, 30);
 }
 
+function numericIssues(lines: Array<{
+  description: string;
+  page: number;
+  quantity?: number;
+  unitAmount?: number;
+  amount: number;
+}>) {
+  const items: ReaderUnknownItem[] = [];
+  for (const line of lines) {
+    if (!Number.isFinite(line.quantity) || !Number.isFinite(line.unitAmount) || !Number.isFinite(line.amount)) continue;
+    if ((line.quantity ?? 0) <= 0 || (line.unitAmount ?? 0) <= 0) continue;
+    const expected = Math.round((line.quantity ?? 0) * (line.unitAmount ?? 0));
+    const difference = Math.abs(Math.round(line.amount) - expected);
+    const tolerance = Math.max(1, Math.round(expected * 0.01));
+    if (difference <= tolerance) continue;
+    items.push({
+      value: `${line.description.slice(0, 90)} · total ${Math.round(line.amount)} vs. cantidad × unitario ${expected}`,
+      page: line.page,
+      reason: "La cantidad, el valor unitario y el total no concilian; puede existir una columna mal leída o un recargo que debe verificarse en el documento original.",
+      confidence: 0.22,
+    });
+  }
+  return items.slice(0, 30);
+}
+
 export function assessExtractionQuality(
   extraction: DocumentExtraction,
   expectedKind: ReaderKind,
@@ -68,14 +93,21 @@ export function assessExtractionQuality(
   const pages = source?.pages ?? [];
   const fields = source?.fields ?? [];
   const unknown = unknownItems(extraction, lines);
-  const lowConfidencePages = [...new Set(unknown.map((item) => item.page))].sort((left, right) => left - right);
+  const numeric = numericIssues(lines);
+  const lowConfidencePages = [...new Set([...unknown, ...numeric].map((item) => item.page))].sort((left, right) => left - right);
   const signals: string[] = [];
+  const parserMode = extraction.usedOcr
+    ? extraction.ocrPages && extraction.ocrPages.length > 0 && extraction.ocrPages.length < extraction.pageCount
+      ? "mixed"
+      : "ocr"
+    : "direct_pdf";
 
   if (!extraction.pageCount) signals.push("El archivo no informó páginas legibles.");
   if (extraction.usedOcr) signals.push("Se utilizó OCR porque el PDF no entregó texto suficiente.");
   if (!source) signals.push(`No se identificó una estructura de ${kind === "unknown" ? "cuenta o PAM" : kind}.`);
   if (!lines.length) signals.push("No se reconocieron líneas monetarias analizables.");
   if (unknown.length && lines.length) signals.push("Existen glosas que requieren revisión del lector.");
+  if (numeric.length) signals.push("Se detectaron inconsistencias entre cantidad, valor unitario y total; el diagnóstico no debe darse por válido sin revisar esas filas.");
   if (kind === "account" && lines.length > 0 && !fields.some((field) => field.key === "total")) {
     signals.push("No se encontró un total explícito; el total no debe inferirse sin revisión.");
   }
@@ -90,10 +122,11 @@ export function assessExtractionQuality(
   if (fields.length > 0) confidence += Math.min(0.12, fields.length * 0.025);
   if (extraction.usedOcr) confidence -= 0.1;
   confidence -= Math.min(0.25, unknown.length * 0.06);
+  confidence -= Math.min(0.25, numeric.length * 0.05);
   if (kind === "account" && lines.length > 0 && !fields.some((field) => field.key === "total")) confidence -= 0.08;
   confidence = Math.max(0.05, Math.min(0.98, confidence));
 
-  const codeChangeNeeded = !source || !lines.length || unknown.length >= 3 || (extraction.pageCount > 1 && pages.length < extraction.pageCount);
+  const codeChangeNeeded = !source || !lines.length || unknown.length >= 3 || numeric.length >= 2 || (extraction.pageCount > 1 && pages.length < extraction.pageCount);
   const status = codeChangeNeeded
     ? "reader_change_needed"
     : signals.length || extraction.usedOcr || unknown.length
@@ -102,7 +135,7 @@ export function assessExtractionQuality(
   const fingerprintInput = [
     kind,
     extraction.pageCount,
-    extraction.usedOcr ? "ocr" : "direct",
+    parserMode,
     pages.length,
     lines.length,
     fields.map((field) => field.key).sort().join(","),
@@ -111,10 +144,11 @@ export function assessExtractionQuality(
 
   return {
     status,
-    parserMode: extraction.usedOcr ? "ocr" : "direct_pdf",
+    parserMode,
     confidence: Number(confidence.toFixed(2)),
     templateFingerprint: `shape-${stableHash(fingerprintInput)}`,
     unknownItems: unknown,
+    numericIssues: numeric,
     lowConfidencePages,
     signals: signals.length ? signals : ["La estructura produjo líneas y campos utilizables para una revisión preliminar."],
     nextAction: codeChangeNeeded
@@ -138,11 +172,13 @@ export type ReaderChangeProposal = {
   reason: string;
   proposedChanges: Array<{ area: string; change: string; acceptanceTest: string }>;
   unknownItems: ReaderUnknownItem[];
+  numericIssues: ReaderUnknownItem[];
   llmAssist: ReaderAssessment["llmAssist"];
   safetyBoundary: string;
 };
 
 export function buildReaderChangeProposal(assessment: ReaderAssessment, documentName: string): ReaderChangeProposal {
+  const numeric = assessment.numericIssues ?? [];
   return {
     proposalVersion: CONTRACT_VERSION,
     status: "pending_human_review",
@@ -168,6 +204,7 @@ export function buildReaderChangeProposal(assessment: ReaderAssessment, document
       },
     ],
     unknownItems: assessment.unknownItems,
+    numericIssues: numeric,
     llmAssist: assessment.llmAssist,
     safetyBoundary: "Esta propuesta no es una conclusión legal, no modifica el lector y no se despliega automáticamente.",
   };
@@ -197,6 +234,12 @@ export function readerChangeProposalToMarkdown(proposal: ReaderChangeProposal) {
     ...(proposal.unknownItems.length
       ? proposal.unknownItems.map((item) => `- Página ${item.page}: ${item.value} — ${item.reason}`)
       : ["- No se detectaron elementos puntuales; la propuesta puede responder a una baja cobertura del formato."]),
+    "",
+    "## Inconsistencias numéricas",
+    "",
+    ...(proposal.numericIssues.length
+      ? proposal.numericIssues.map((item) => `- Página ${item.page}: ${item.value} — ${item.reason}`)
+      : ["- No se detectaron diferencias entre cantidad, valor unitario y total."]),
     "",
     "## LLM",
     "",

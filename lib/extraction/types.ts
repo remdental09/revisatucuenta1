@@ -4,6 +4,8 @@ export type ExtractionField = {
   value: string;
   page: number;
   confidence: number;
+  sourceText?: string;
+  sourceRegion?: string;
 };
 
 export type ExtractedLine = {
@@ -17,6 +19,9 @@ export type ExtractedLine = {
   providerId?: string;
   quantity?: number;
   unitAmount?: number;
+  confidence?: number;
+  sourceText?: string;
+  sourceRegion?: string;
 };
 
 export type StructuredExtraction = {
@@ -42,6 +47,7 @@ export type ReaderAssessment = {
   confidence: number;
   templateFingerprint: string;
   unknownItems: ReaderUnknownItem[];
+  numericIssues: ReaderUnknownItem[];
   lowConfidencePages: number[];
   signals: string[];
   nextAction: string;
@@ -56,6 +62,7 @@ export type ReaderAssessment = {
 export type DocumentExtraction = {
   pageCount: number;
   usedOcr: boolean;
+  ocrPages?: number[];
   readerAssessment?: ReaderAssessment;
   account?: StructuredExtraction;
   pam?: StructuredExtraction;

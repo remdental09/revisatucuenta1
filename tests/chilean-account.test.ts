@@ -211,6 +211,15 @@ test("no activa full pabellón sin un ancla quirúrgica", () => {
   assert.equal(assessment?.functionalEquivalenceAlerts.some((alert) => alert.familyId === "full_operating_room_scope"), false);
 });
 
+test("no confunde una glosa de apoyo diagnóstico con un pabellón realizado", () => {
+  const result = analyzeClinicalAccount([
+    { ...base, id: "room", description: "ATENCION CERRADA", section: "Hospitalización", amount: 120000 },
+    { ...base, id: "study", description: "ECO APOYO CIRUGIA O PROCED", section: "Exámenes y procedimientos", amount: 25000 },
+    { ...base, id: "syringe", description: "JERINGA DESECHABLE", section: "Materiales clínicos", amount: 900 },
+  ]);
+  assert.equal(result.lineAssessments.find(({ line }) => line.id === "syringe")?.candidates.some(({ bundle }) => bundle === "operating_room"), false);
+});
+
 test("distingue anestésicos incluidos de honorarios del anestesiólogo", () => {
   const result = analyzeClinicalAccount([
     { ...base, id: "pab", description: "Derecho de pabellón", section: "Pabellón", amount: 900000 },

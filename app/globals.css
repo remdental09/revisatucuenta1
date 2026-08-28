@@ -500,6 +500,7 @@ button { cursor:pointer; }
   .patient-document .document-status { width:100%; padding-left:48px; text-align:left; }
 }
 .dev-doc-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:6px; flex:0 0 auto !important; }
+.dev-doc-actions a { padding:6px 9px; display:inline-flex; align-items:center; border:1px solid #d7e4e8; border-radius:5px; background:#fff; color:#3d7890; font-size:8px; font-weight:800; text-decoration:none; }
 .dev-doc button:disabled { cursor:not-allowed; opacity:.55; }
 .dev-doc .dev-doc-analyze { border-color:#b9524e; background:#b9524e; color:#fff; }
 .dev-doc .dev-doc-analyze:hover:not(:disabled) { background:#983f3c; border-color:#983f3c; }
@@ -536,6 +537,10 @@ button { cursor:pointer; }
 .patient-analysis-pending h3 { margin:6px 0 0; color:#6e5939; font:500 19px Georgia,serif; }
 .patient-analysis-pending p { max-width:620px; margin:7px 0 0; color:#806f53; font-size:10px; line-height:1.55; }
 .patient-contact-note { margin:0; color:#7e9187; font-size:9px; line-height:1.45; }
+.patient-verified-email { margin:0 0 14px; padding:11px 13px; border:1px solid #cde5d8; border-radius:9px; background:#f2faf6; text-align:left; }
+.patient-verified-email span,.patient-verified-email strong { display:block; }
+.patient-verified-email span { color:#6f887b; font-size:9px; font-weight:800; letter-spacing:.5px; text-transform:uppercase; }
+.patient-verified-email strong { margin-top:4px; color:#245d47; font-size:12px; overflow:hidden; text-overflow:ellipsis; }
 @media (max-width: 700px) { .reader-quality-head { flex-direction:column; }.reader-quality-metrics { grid-template-columns:repeat(2,1fr); }.reader-quality-actions .portal-button { flex:1 1 100%; }.reader-quality-unknown>div { grid-template-columns:48px 1fr; } }
 
 .developer-identity-panel { margin:18px 0 0; padding:17px; border:1px solid #d8e6ec; border-left:3px solid #3f829d; border-radius:10px; background:#f7fbfc; }

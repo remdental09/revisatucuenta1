@@ -53,6 +53,9 @@ export type ChileanBillingLine = {
   quantity?: number;
   unitAmount?: number;
   factor?: number;
+  confidence?: number;
+  sourceText?: string;
+  sourceRegion?: string;
 };
 
 export type InclusionKnowledge = {
@@ -150,7 +153,7 @@ export type ClinicalAccountAnalysis = {
     validatedContributionCount?: number;
   };
   corpusLearning?: {
-    status: "not_registered" | "pending_review" | "validated";
+    status: "not_registered" | "pending_review" | "validated" | "rejected";
     message: string;
   };
   limitations: string[];
@@ -634,7 +637,6 @@ const OPERATING_ROOM_ANCHORS = [
   "neurectomia",
   "cesarea",
   "amigdalectomia",
-  "cirugia",
 ];
 
 const HOSPITAL_NURSING_CONTEXT_RULES = new Set([
@@ -793,6 +795,10 @@ function scoreLine(
     `${line.section ?? ""} ${line.subgroup ?? ""}`,
     HOSPITAL_STAY_ANCHORS,
   );
+  const lineHasOperatingRoomAnchor = includesAnchor(
+    `${line.section ?? ""} ${line.subgroup ?? ""} ${line.description}`,
+    OPERATING_ROOM_ANCHORS,
+  );
   const evidence = knowledge.filter(
     (entry) =>
       entry.status !== "contradicted" &&
@@ -800,6 +806,16 @@ function scoreLine(
       !(
         entry.id === "CL-PAB-CIRCULAR43-FULL-001" &&
         (!context.hasOperatingRoom || professionalCharge)
+      ) &&
+      // A generic item such as a syringe, dressing or needle is not enough
+      // to move a hospital-only episode into the operating-room bundle. The
+      // episode needs an operating-room anchor, unless the line itself names
+      // the surgical context. This keeps the alert probabilistic without
+      // turning context-free materials into a categorical diagnosis.
+      !(
+        entry.bundle === "operating_room" &&
+        !context.hasOperatingRoom &&
+        !lineHasOperatingRoomAnchor
       ) &&
       (!strongAdjudicatedBundle || entry.bundle === strongAdjudicatedBundle) &&
       !(
@@ -1126,7 +1142,7 @@ export function analyzeClinicalAccount(
     accountSignals,
     anomalies: detectAnomalies(lines),
     reasoningFindings: buildReasoningFindings(lines),
-    providerIds: unique(lines.map((line) => line.providerId).filter(Boolean)),
+    providerIds: unique(lines.map((line) => line.providerId).filter((value): value is string => Boolean(value))),
     observedCorpus: {
       version: corpus.version,
       caseCount: corpus.caseCount,

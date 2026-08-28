@@ -59,6 +59,7 @@ async function extractPdf(file: File, onProgress?: (progress: number) => void) {
   }
   const pdf = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise;
   const pages: TextPage[] = [];
+  const ocrPages: number[] = [];
   let usedOcr = false;
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
     const page = await pdf.getPage(pageNumber);
@@ -70,6 +71,7 @@ async function extractPdf(file: File, onProgress?: (progress: number) => void) {
     );
     if (text.replace(/\s/g, "").length < 60) {
       usedOcr = true;
+      ocrPages.push(pageNumber);
       // Account rows are dense and their totals often differ only by a
       // thousands separator. A larger render materially improves OCR of the
       // unit, tax and total columns without changing the extracted layout.
@@ -86,7 +88,7 @@ async function extractPdf(file: File, onProgress?: (progress: number) => void) {
     pages.push({ page: pageNumber, text });
     onProgress?.(Math.round((pageNumber / pdf.numPages) * 100));
   }
-  return { pages, usedOcr };
+  return { pages, usedOcr, ocrPages };
 }
 
 export async function extractHealthcareDocument(
@@ -95,8 +97,8 @@ export async function extractHealthcareDocument(
   onProgress?: (progress: number) => void,
 ): Promise<DocumentExtraction> {
   if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
-    const { pages, usedOcr } = await extractPdf(file, onProgress);
-    return structureDocument(pages, expected, usedOcr);
+    const { pages, usedOcr, ocrPages } = await extractPdf(file, onProgress);
+    return structureDocument(pages, expected, usedOcr, ocrPages);
   }
   if (file.type.startsWith("image/")) {
     const text = await recognizeImage(file);
