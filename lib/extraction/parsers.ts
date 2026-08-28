@@ -264,6 +264,7 @@ export function parseClinicalAccount(pages: TextPage[]): StructuredExtraction {
     ], 82),
     findField(pages, "patient", "Paciente", [
       /Nombre\s+Paciente\s+Rut\s*:\s*(?:\d{1,3}(?:\.\d{3}){2}|\d{7,8})-[\dkK]\s+(.+?)\s+Cuenta\b/i,
+      /Nombre\s+Paciente\s+Rut\s*:\s*(?:\d{1,3}(?:\.\d{3}){2}|\d{7,8})-[\dkK]\s+([^\n]{3,100})/i,
       /Paciente\s*:\s*(.+?)\s+Rut\s+Paciente/i,
       /(?:paciente|nombre)\s*[:-]\s*([^\n]{3,80})/i,
     ]),
