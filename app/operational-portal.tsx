@@ -54,7 +54,7 @@ function useAuthSession() {
   useEffect(() => {
     let active = true;
     fetch("/api/auth/session", { cache: "no-store" })
-      .then(async (response) => response.ok ? response.json() : { authenticated: false })
+      .then(async (response) => response.json().catch(() => ({ authenticated: false })))
       .then((payload) => { if (active) { setUser(payload.authenticated ? payload.user : undefined); setPilotAvailable(Boolean(payload.pilotAvailable)); } })
       .catch(() => { if (active) { setUser(undefined); setPilotAvailable(false); } })
       .finally(() => { if (active) setLoading(false); });
