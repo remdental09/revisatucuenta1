@@ -317,7 +317,10 @@ async function uploadDocument(caseId: string, file: File, classification: string
   body.append("file", file);
   const upload = await fetch("/api/documents", { method: "POST", body });
   if (!upload.ok) throw new Error((await upload.json().catch(() => ({}))).error || "No se pudo guardar el documento");
-  onProgress?.(0);
+  // Keep a visible non-zero state while the PDF/OCR reader is initializing.
+  // Scanned PDFs can spend several seconds here before Tesseract emits its
+  // first page-level progress event.
+  onProgress?.(2);
   try {
     const extracted = await extractHealthcareDocument(file, expectedKind(classification), onProgress);
     const extraction: DocumentExtraction = {
@@ -938,14 +941,24 @@ function AuthenticatedDeveloperPortal({ initialCaseId = "", user }: { initialCas
     const previousAccount = /cuenta|mixto/i.test(classification) ? accountDoc(snapshot) : undefined;
     setBusy(true);
     setPendingUpload({ name: file.name, classification });
-    setUploadProgress(0);
-    setUploadStage(/pam|liquid/i.test(classification) ? "Guardando PAM / liquidación" : /contrato|plan/i.test(classification) ? "Guardando contrato / plan" : "Guardando cuenta clínica");
+    setUploadProgress(2);
+    setUploadStage(/pam|liquid/i.test(classification) ? "Preparando lectura del PAM / liquidación" : /contrato|plan/i.test(classification) ? "Preparando lectura del contrato / plan" : "Preparando lector PDF / OCR");
     setAnalysisStatus("idle");
     setReaderAssistResponse(undefined);
     setReaderAssistDocumentId("");
     try {
       const documentLabel = /pam|liquid/i.test(classification) ? "PAM / liquidación" : /contrato|plan/i.test(classification) ? "contrato / plan" : "cuenta clínica";
-      const updateProgress = (value: number) => { setUploadProgress(value); setUploadStage(`Leyendo ${documentLabel} · ${value}%`); };
+      const updateProgress = (value: number) => {
+        const bounded = Math.max(2, Math.min(100, Math.round(value)));
+        setUploadProgress(bounded);
+        setUploadStage(
+          bounded <= 2
+            ? `Preparando lector PDF / OCR`
+            : bounded >= 100
+              ? `Lectura de ${documentLabel} completada`
+              : `Leyendo ${documentLabel}`,
+        );
+      };
       const result = previousAccount
         ? await replaceAccountDocument(selected, previousAccount, file, updateProgress)
         : await uploadDocument(selected, file, classification, updateProgress);
