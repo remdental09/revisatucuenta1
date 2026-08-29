@@ -502,13 +502,13 @@ export function parsePam(pages: TextPage[]): StructuredExtraction {
 function pageKind(text: string): "account" | "pam" | "unknown" {
   const normalized = text.toLowerCase();
   const pamStrong = /programa\s+de\s+atenci[oó]n\s+m[eé]dica|documentos\s+valorizados|folio\s+p\.?\s*a\.?\s*m\.?|bono\s+debe\s+ser\s+cobrado|prestaci[oó]n\s+clasif|copago\s+en\s+cl[ií]nica|detalle\s+de\s+cobros\s+duplicados|norma\s+t[eé]cnica\s+convenida/i.test(normalized);
-  const accountStrong = /estado\s+cuenta\s+paciente|medicamentos\s+y\s+materiales|farmacia\s+en\s+pabell[oó]n|d[ií]as?\s+cama|tipo\s+de\s+cobro|c[oó]digo\s+descripci[oó]n/i.test(normalized);
+  const accountStrong = /estado\s+cuenta\s+paciente|informe\s+de\s+cuentas?\s+al\s+paciente|c[oó]digo\s+descripci[oó]n\s+fecha|cod\.?\s+fonasa|n[°ºo]\s+docto|cant\.?\s+precio\s+valor|total\s+criterio|total\s+por\s+consumo|cuenta\s+[a-z0-9.-]+\s+cerrada|id\.?\s+ingreso|tipo\s+de\s+cobro/i.test(normalized);
   // PAM duplicate-detail pages also print a “Código / Descripción” header and
   // mention Día Cama. The structural account anchors below are therefore
   // deliberately limited to the provider's own account sections.
-  const accountStructural = /estado\s+cuenta\s+paciente|medicamentos\s+y\s+materiales|farmacia\s+en\s+pabell[oó]n|tipo\s+de\s+cobro/i.test(normalized);
-  const pamScore = ["pam", "bono hospitalario", "bonificación", "bonificacion", "copago", "isapre", "liquidación", "liquidacion"].filter((term) => normalized.includes(term)).length;
-  const accountScore = ["cuenta clínica", "cuenta clinica", "día cama", "dia cama", "pabellón", "pabellon", "insumos", "farmacia"].filter((term) => normalized.includes(term)).length;
+  const accountStructural = /estado\s+cuenta\s+paciente|informe\s+de\s+cuentas?\s+al\s+paciente|cod\.?\s+fonasa|n[°ºo]\s+docto|cant\.?\s+precio\s+valor|total\s+criterio|total\s+por\s+consumo|cuenta\s+[a-z0-9.-]+\s+cerrada|id\.?\s+ingreso|tipo\s+de\s+cobro/i.test(normalized);
+  const pamScore = ["pam", "programa de atención médica", "programa de atencion medica", "bono hospitalario", "bonificación", "bonificacion", "copago", "liquidación", "liquidacion"].filter((term) => normalized.includes(term)).length;
+  const accountScore = ["cuenta clínica", "cuenta clinica", "informe de cuentas al paciente", "estado cuenta paciente", "cod. fonasa", "día cama", "dia cama", "pabellón", "pabellon", "insumos", "farmacia"].filter((term) => normalized.includes(term)).length;
   if (pamStrong && !accountStructural) return "pam";
   if (accountStrong && !pamStrong) return "account";
   if (pamScore > accountScore && pamScore > 0) return "pam";

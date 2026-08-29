@@ -51,6 +51,17 @@ test("extrae filas PAM escaneadas aunque el OCR pierda los símbolos de moneda",
   ]);
 });
 
+test("no clasifica como PAM una página de cuenta que repite Isapre y farmacia", () => {
+  const result = structureDocument([
+    { page: 1, text: "Informe de Cuentas al Paciente\nEmpresa Rut 96770100-9 Clínica Alemana\nPrevisión ISAPRE BANMEDICA\nId. Ingreso: 1305597\nCódigo Descripción Fecha Cant. Precio Valor\n500508140 FISIOLOGICO 0.9% 100 ML 17/06/2023 1 1.134 1.134 0 1.134" },
+    { page: 2, text: "Informe de Cuentas al Paciente\nPrevisión ISAPRE BANMEDICA\nCódigo Descripción Fecha Cant. Precio Valor\n500507248 PROPOFOL INYECTABLE 17/06/2023 1 43.350 43.350 0 43.350\nFarmacia" },
+    { page: 3, text: "PROGRAMA DE ATENCION MEDICA\nFolio PAM: 7000\nCódigo Prestación Cantidad Valor Bonificación Copago\n0201101 DIA CAMA 1 452075 452075" },
+  ], "account", false);
+
+  assert.deepEqual(result.account?.pages, [1, 2]);
+  assert.deepEqual(result.pam?.pages, [3]);
+});
+
 test("preserves PDF table rows using text coordinates", () => {
   const text = textItemsToLines([
     { str: "600510115", transform: [1, 0, 0, 1, 10, 500] },
