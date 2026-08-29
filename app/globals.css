@@ -543,6 +543,34 @@ button { cursor:pointer; }
 .reader-failure-message { display:grid; gap:5px; margin-top:13px; padding:11px 12px; border-radius:7px; background:#fff; color:#8c5c57; font-size:9px; line-height:1.45; }
 .reader-failure-message b { color:#713f3b; font-size:9px; }
 .reader-failure-message span { overflow-wrap:anywhere; }
+.reader-assist-panel { margin:18px 0 0; padding:17px; border:1px solid #cfe3ec; border-left:3px solid #4287a0; border-radius:9px; background:#f4fafc; }
+.reader-assist-head { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; }
+.reader-assist-head h3 { margin:6px 0 0; color:#2f5262; font:500 18px Georgia,serif; }
+.reader-assist-head p { max-width:650px; margin:7px 0 0; color:#78909a; font-size:9px; line-height:1.55; }
+.reader-assist-badge { padding:6px 8px; border-radius:99px; background:#e0f0f5; color:#3e7890; font-size:8px; font-weight:850; white-space:nowrap; }
+.reader-assist-summary { display:flex; gap:9px; margin-top:13px; padding:10px 11px; border-radius:7px; background:#e8f4f7; color:#66818c; }
+.reader-assist-summary>span { width:18px; height:18px; display:grid; place-items:center; flex:0 0 18px; border-radius:50%; background:#d1e9ef; color:#3f7d94; font-size:9px; font-weight:900; }
+.reader-assist-summary p { margin:0; font-size:9px; line-height:1.5; }
+.reader-assist-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:13px; }
+.reader-assist-actions .portal-button { min-height:35px; font-size:9px; }
+.reader-assist-actions small { flex:1 1 260px; color:#82959d; font-size:8px; line-height:1.4; }
+.reader-assist-result { margin-top:14px; padding:13px; border:1px solid #cfe3d8; border-radius:8px; background:#fff; }
+.reader-assist-result.insufficient_evidence { border-color:#eadfbd; background:#fffdf8; }
+.reader-assist-result-head { display:flex; justify-content:space-between; gap:12px; align-items:center; }
+.reader-assist-result-head b { color:#2f7357; font-size:10px; }
+.reader-assist-result.insufficient_evidence .reader-assist-result-head b { color:#8a6826; }
+.reader-assist-result-head span { color:#8a9ba2; font-size:8px; }
+.reader-assist-result>p { margin:7px 0 0; color:#6f858e; font-size:9px; line-height:1.5; }
+.reader-assist-list { margin-top:12px; padding-top:10px; border-top:1px solid #e7eeeb; }
+.reader-assist-list>strong { color:#55736a; font-size:9px; }
+.reader-assist-list article { display:grid; grid-template-columns:120px 1fr; gap:3px 8px; padding:8px 0; border-top:1px solid #eef2f0; }
+.reader-assist-list article:first-of-type { margin-top:5px; }
+.reader-assist-list article b { color:#517468; font-size:8px; }
+.reader-assist-list article span { color:#425f58; font-size:9px; }
+.reader-assist-list article small,.reader-assist-list article em { grid-column:2; color:#82938d; font-size:8px; line-height:1.4; }
+.reader-assist-list article em { color:#5e7c71; font-style:normal; }
+.reader-assist-notes { display:grid; gap:4px; margin-top:10px; color:#83948d; font-size:8px; line-height:1.4; }
+.reader-assist-warning { display:block; margin-top:5px; color:#8a6b2b; font-size:8px; line-height:1.4; }
 .patient-analysis-pending { margin-top:12px; padding:16px; border:1px solid #e7d7b4; border-radius:9px; background:#fffaf0; }
 .patient-analysis-pending h3 { margin:6px 0 0; color:#6e5939; font:500 19px Georgia,serif; }
 .patient-analysis-pending p { max-width:620px; margin:7px 0 0; color:#806f53; font-size:10px; line-height:1.55; }
@@ -552,6 +580,7 @@ button { cursor:pointer; }
 .patient-verified-email span { color:#6f887b; font-size:9px; font-weight:800; letter-spacing:.5px; text-transform:uppercase; }
 .patient-verified-email strong { margin-top:4px; color:#245d47; font-size:12px; overflow:hidden; text-overflow:ellipsis; }
 @media (max-width: 700px) { .reader-quality-head { flex-direction:column; }.reader-quality-metrics { grid-template-columns:repeat(2,1fr); }.reader-quality-actions .portal-button { flex:1 1 100%; }.reader-quality-unknown>div { grid-template-columns:48px 1fr; } }
+@media (max-width: 700px) { .reader-assist-head { flex-direction:column; }.reader-assist-actions .portal-button { flex:1 1 100%; }.reader-assist-list article { grid-template-columns:1fr; }.reader-assist-list article small,.reader-assist-list article em { grid-column:1; } }
 
 .developer-identity-panel { margin:18px 0 0; padding:17px; border:1px solid #d8e6ec; border-left:3px solid #3f829d; border-radius:10px; background:#f7fbfc; }
 .developer-identity-head { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; }

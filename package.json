@@ -10,7 +10,7 @@
     "dev:all": "vinext dev",
     "build": "vinext build",
     "start": "vinext start",
-    "test": "npm run build && node --test tests/rendered-html.test.mjs tests/chilean-account.test.ts tests/extraction.test.ts tests/auth.test.ts",
+    "test": "npm run build && node --test tests/rendered-html.test.mjs tests/chilean-account.test.ts tests/extraction.test.ts tests/auth.test.ts tests/reader-assist.test.ts",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"
   },

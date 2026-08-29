@@ -95,6 +95,20 @@ entrada sin correo en un entorno de prueba, configura
 emite una sesión de desarrollo para `?view=developer`; la vista paciente sigue
 requiriendo correo verificado o identidad de ChatGPT.
 
+## Asistencia LLM para formatos no reconocidos
+
+El modo desarrollador dispone de `/api/reader-assist` como lector secundario
+cuando la extracción determinista marca una cuenta para revisión. Configura en
+Railway la variable secreta `OPENAI_API_KEY`; opcionalmente puedes definir
+`OPENAI_READER_MODEL` y, si no lo haces, se usa `gpt-5.4-mini`.
+
+La asistencia recibe sólo evidencia estructurada limitada (campos, renglones,
+páginas y texto de origen acotado) y no el PDF original. Devuelve propuestas
+con evidencia, página y confianza. No modifica la matriz, el corpus, el código
+ni los resultados del paciente: la aceptación de cada corrección queda a cargo
+de un revisor humano. Si no hay líneas extraídas, el sistema informa que se
+requiere OCR adicional o revisión humana del documento original.
+
 ## Useful Commands
 
 - `npm run dev`: start local development

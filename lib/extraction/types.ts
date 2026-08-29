@@ -63,6 +63,52 @@ export type ReaderAssessment = {
   };
 };
 
+export type ReaderAssistFieldProposal = {
+  key: string;
+  label: string;
+  value: string;
+  page: number;
+  evidence: string;
+  confidence: number;
+};
+
+export type ReaderAssistLineCorrection = {
+  index: number;
+  page: number;
+  description: string;
+  code: string | null;
+  quantity: number | null;
+  unitAmount: number | null;
+  amount: number | null;
+  evidence: string;
+  confidence: number;
+  reason: string;
+};
+
+export type ReaderAssistUnknownItem = {
+  value: string;
+  page: number;
+  evidence: string;
+  reason: string;
+  confidence: number;
+};
+
+export type ReaderAssistResult = {
+  status: "assisted" | "insufficient_evidence";
+  summary: string;
+  fields: ReaderAssistFieldProposal[];
+  lineCorrections: ReaderAssistLineCorrection[];
+  unknownItems: ReaderAssistUnknownItem[];
+  safetyNotes: string[];
+};
+
+export type ReaderAssistResponse = {
+  status: "ready_for_review" | "insufficient_evidence";
+  model: string;
+  result: ReaderAssistResult;
+  warnings: string[];
+};
+
 export type DocumentExtraction = {
   readerVersion?: string;
   pageCount: number;
