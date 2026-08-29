@@ -343,7 +343,7 @@ function accountTotalField(pages: TextPage[]) {
       const line = normalize(rawLine);
       if (!/^total\s+genera(?:l)?\b/i.test(line)) continue;
       const values = line.match(/\$?\s*-?\d[\d.,]*/g) ?? [];
-      const value = values.at(-1)?.trim().replace(/^\$\s*/, "");
+      const value = values.length ? values[values.length - 1]?.trim().replace(/^\$\s*/, "") : undefined;
       if (!value || !Number.isFinite(parseNumber(value))) continue;
       return {
         key: "total",
