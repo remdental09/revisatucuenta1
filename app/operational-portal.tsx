@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
-import { extractHealthcareDocument } from "../lib/extraction/client";
+import { extractHealthcareDocument, extractionErrorMessage } from "../lib/extraction/client";
 import { CURRENT_READER_VERSION, type DocumentExtraction, type ReaderAssistResponse } from "../lib/extraction/types";
 import { assessExtractionQuality, buildReaderChangeProposal, buildReaderReviewPackage, readerChangeProposalToMarkdown, readerReviewPackageToMarkdown } from "../lib/extraction/reader-quality";
 import type { ClinicalAccountAnalysis, ChileanBillingLine } from "../lib/rules/chilean-account";
@@ -337,7 +337,7 @@ async function uploadDocument(caseId: string, file: File, classification: string
     await fetch("/api/documents", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ caseId, documentId, status: "failed", error: errorMessage(reason, "Falló la extracción") }),
+      body: JSON.stringify({ caseId, documentId, status: "failed", error: extractionErrorMessage(reason) }),
     }).catch(() => undefined);
     throw reason;
   }

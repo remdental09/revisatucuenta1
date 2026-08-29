@@ -1,7 +1,8 @@
 import { structureDocument, type TextPage } from "./parsers.ts";
+import { installPromiseWithResolversPolyfill } from "./promise-compat.ts";
 import type { DocumentExtraction } from "./types.ts";
 
-const pdfWorkerUrl = "/pdf.worker.min.mjs";
+const pdfWorkerUrl = "/pdf-worker-bootstrap.mjs";
 
 type ExpectedKind = "account" | "pam" | "mixed" | "unknown";
 
@@ -84,6 +85,7 @@ async function recognizeImage(image: File | HTMLCanvasElement, onProgress?: (pro
 }
 
 async function extractPdf(file: File, onProgress?: (progress: number) => void) {
+  installPromiseWithResolversPolyfill();
   const pdfjs = await import("pdfjs-dist");
   pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
   if (!pdfjs.GlobalWorkerOptions.workerPort) {
@@ -146,4 +148,12 @@ export async function extractHealthcareDocument(
     return structureDocument([{ page: 1, text }], expected, true);
   }
   throw new Error("El formato no permite extracción automática");
+}
+
+export function extractionErrorMessage(reason: unknown) {
+  const raw = reason instanceof Error ? reason.message : String(reason ?? "");
+  if (/undefined is not a function|withResolvers/i.test(raw)) {
+    return "Este dispositivo no era compatible con el lector PDF. Se activó el modo compatible; vuelve a cargar la cuenta.";
+  }
+  return raw || "Falló la extracción automática";
 }
