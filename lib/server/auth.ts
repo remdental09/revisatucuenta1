@@ -2,7 +2,7 @@ export type AuthenticatedUser = {
   id: string;
   email: string;
   displayName: string;
-  source: "chatgpt" | "email" | "development" | "pilot";
+  source: "chatgpt" | "email" | "development";
 };
 
 type SignedTokenPurpose = "magic_link" | "session";
@@ -103,10 +103,6 @@ export function emailAuthenticationConfigured() {
   return Boolean(authSessionSecret() && runtimeEnv("RESEND_API_KEY") && runtimeEnv("AUTH_EMAIL_FROM"));
 }
 
-export function pilotAuthenticationConfigured() {
-  return Boolean(authSessionSecret() && runtimeEnv("REVISA_PILOT_ACCESS_KEY"));
-}
-
 export function developmentAuthenticationEnabled() {
   return runtimeEnv("NODE_ENV") !== "production" && runtimeEnv("REVISA_AUTH_DEV_MODE") === "true";
 }
@@ -176,18 +172,6 @@ function safeEqual(left: string, right: string) {
   return difference === 0;
 }
 
-export async function pilotUser(accessKey: string): Promise<AuthenticatedUser | undefined> {
-  const configuredKey = runtimeEnv("REVISA_PILOT_ACCESS_KEY");
-  if (!configuredKey || !authSessionSecret() || !safeEqual(accessKey.trim(), configuredKey)) return;
-  const email = normalizeEmail(runtimeEnv("REVISA_AUTH_DEV_EMAIL") || "piloto@revisatucuenta.local");
-  return {
-    id: `pilot:${(await emailUserId(email)).slice("email:".length)}`,
-    email,
-    displayName: "Piloto RevisaTuCuenta",
-    source: "pilot",
-  };
-}
-
 export async function createSessionToken(user: AuthenticatedUser) {
   const secret = authSessionSecret();
   if (!secret) throw new Error("La sesión no está configurada");
@@ -250,7 +234,7 @@ export async function requireApiUser(request: Request) {
   if (user) return { user } as const;
   return {
     response: Response.json(
-      { error: "Debes verificar tu correo o usar la clave de piloto para acceder al expediente", code: "authentication_required" },
+      { error: "Debes verificar tu correo para acceder al expediente", code: "authentication_required" },
       { status: 401 },
     ),
   } as const;
@@ -258,7 +242,6 @@ export async function requireApiUser(request: Request) {
 
 export function isDeveloperUser(user: AuthenticatedUser) {
   if (user.source === "development" && developerOpenAccessEnabled()) return true;
-  if (user.source === "pilot" && pilotAuthenticationConfigured()) return true;
   const allowed = (runtimeEnv("REVISA_DEVELOPER_EMAILS") || "")
     .split(",")
     .map(normalizeEmail)
