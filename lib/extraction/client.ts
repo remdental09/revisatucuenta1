@@ -2,7 +2,6 @@ import { structureDocument, type TextPage } from "./parsers.ts";
 import { installPromiseWithResolversPolyfill } from "./promise-compat.ts";
 import type { DocumentExtraction } from "./types.ts";
 
-const pdfWorkerUrl = "/pdf-worker-bootstrap.mjs";
 // Keep the Spanish OCR model on the same origin so mobile deployments do not
 // hang waiting for a third-party CDN during worker initialization.
 const ocrLanguagePath = "/";
@@ -120,15 +119,16 @@ async function recognizeImage(image: File | HTMLCanvasElement, onProgress?: (pro
 
 async function extractPdf(file: File, onProgress?: (progress: number) => void) {
   installPromiseWithResolversPolyfill();
+  onProgress?.(3);
   const pdfjs = await import("pdfjs-dist");
-  pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
-  if (!pdfjs.GlobalWorkerOptions.workerPort) {
-    pdfjs.GlobalWorkerOptions.workerPort = new Worker(pdfWorkerUrl, {
-      type: "module",
-      name: "revisatucuenta-pdf",
-    });
-  }
-  const loadingTask = pdfjs.getDocument({ data: await file.arrayBuffer() });
+  onProgress?.(4);
+  // Some mobile and embedded browsers load the PDF worker but never answer
+  // its first message. Reading in the main thread is slower, but it gives
+  // the pilot a deterministic fallback for scanned accounts and lets the
+  // OCR progress continue instead of remaining at 2% indefinitely.
+  const pdfOptions = { data: await file.arrayBuffer(), disableWorker: true };
+  onProgress?.(5);
+  const loadingTask = pdfjs.getDocument(pdfOptions);
   let pdf;
   try {
     pdf = await withTimeout(
@@ -136,6 +136,7 @@ async function extractPdf(file: File, onProgress?: (progress: number) => void) {
       PDF_LOAD_TIMEOUT_MS,
       "El lector PDF no respondió a tiempo. Vuelve a cargar la cuenta o conserva el original para revisión humana/LLM.",
     );
+    onProgress?.(6);
   } catch (reason) {
     await loadingTask.destroy().catch(() => undefined);
     throw reason;
