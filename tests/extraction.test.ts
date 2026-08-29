@@ -181,6 +181,20 @@ test("extracts patient identity from an OCR-style Indisa account", () => {
   assert.equal(result.account?.fields.find((field) => field.key === "patient_rut")?.value, "00000000-0");
 });
 
+test("prioriza empresa e ingreso explícitos en una cuenta Indisa escaneada", () => {
+  const result = structureDocument([{
+    page: 1,
+    text: [
+      "Empresa : CLINICA INDISA Fecha: 26-09-2025 Hora: 15:51",
+      "Id. Ingreso 1 611.915 - 8 Num. Ficha: 2047264",
+      "Paciente : MUÑOZ VILUGRON DAYSI ESTER",
+    ].join("\n"),
+  }], "account", true, [1]);
+
+  assert.equal(result.account?.fields.find((field) => field.key === "provider")?.value, "CLINICA INDISA");
+  assert.equal(result.account?.fields.find((field) => field.key === "account_number")?.value, "611.915 - 8");
+});
+
 test("extracts a patient name placed on the line after its OCR label", () => {
   const result = structureDocument(
     [{

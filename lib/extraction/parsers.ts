@@ -335,22 +335,22 @@ function cleanPatientName(value: string) {
 function cleanProviderName(value: string) {
   return normalize(value)
     .replace(/\s+\*{2,}.*$/i, "")
-    .replace(/\s+(?:Fecha|Copia)\s*:?.*$/i, "")
+    .replace(/\s+(?:Fecha|Hora|Página|Pagina|Sucursal|Copia)\s*:?.*$/i, "")
     .replace(/\s+COPIA\s+.*$/i, "")
     .replace(/[\s:;,]+$/, "")
     .trim();
 }
 
 function providerField(pages: TextPage[]) {
-  const patterns = [
-    /Empresa\s+Emisora\s*:\s*([^\n]{3,100})/i,
-    /Empresa\s+Rut\s+(?:\d{1,3}(?:\.\d{3}){2}|\d{7,8})-[\dkK]\s+([^\n]{3,100})/i,
-    /Empresa\s*:\s*([^\n]{3,100})/i,
-    /(?:cl[ií]nica|hospital|prestador)\s*[:-]?\s*([^\n]{3,100})/i,
+  const patterns: Array<{ pattern: RegExp; confidence: number }> = [
+    { pattern: /Empresa\s+Emisora\s*:\s*([^\n]{3,100})/i, confidence: 98 },
+    { pattern: /Empresa\s+Rut\s+(?:\d{1,3}(?:\.\d{3}){2}|\d{7,8})-[\dkK]\s+([^\n]{3,100})/i, confidence: 97 },
+    { pattern: /Empresa\s*:\s*([^\n]{3,100})/i, confidence: 96 },
+    { pattern: /(?:cl[ií]nica|hospital|prestador)\s*[:-]?\s*([^\n]{3,100})/i, confidence: 78 },
   ];
   const candidates: ExtractionField[] = [];
   for (const page of pages) {
-    for (const pattern of patterns) {
+    for (const { pattern, confidence } of patterns) {
       const match = page.text.match(pattern);
       if (match?.[1]) {
         candidates.push({
@@ -358,7 +358,7 @@ function providerField(pages: TextPage[]) {
           label: "Prestador",
           value: normalize(match[1]),
           page: page.page,
-          confidence: 82,
+          confidence,
           sourceText: normalize(match[0]),
         });
       }
@@ -367,7 +367,7 @@ function providerField(pages: TextPage[]) {
   const field = candidates
     .map((candidate) => ({ ...candidate, value: cleanProviderName(candidate.value) }))
     .filter((candidate) => candidate.value.length >= 3 && !/^(?:ee|empresa|prestador)$/i.test(candidate.value))
-    .sort((left, right) => right.value.length - left.value.length || left.page - right.page)[0];
+    .sort((left, right) => right.confidence - left.confidence || left.page - right.page || right.value.length - left.value.length)[0];
   if (!field) return;
   return field;
 }
@@ -467,7 +467,11 @@ export function parseClinicalAccount(pages: TextPage[]): StructuredExtraction {
   const fields = compact([
     providerField(pages),
     ...identityFields,
-    findField(pages, "account_number", "Número de cuenta", [/Id\.?\s*Ingreso\s*:\s*([0-9.\s-]+)/i, /(?:n[°ºo]\s*)?(?:cuenta|folio)\s*[:-]?\s*([A-Z0-9.-]{4,})/i]),
+    findField(pages, "account_number", "Número de cuenta", [
+      /Id\.?\s*Ingreso\s*:?\s*(?:\d\s+)?((?:\d{1,3}(?:[.\s]\d{3})+|\d{6,8})\s*-\s*[\dkK])/i,
+      /(?:^|\n)\s*Cuenta\s+(?:N[°ºo]\s*)?[:-]?\s*([0-9][0-9.]{3,})\b/im,
+      /\bFolio\s*[:-]?\s*([A-Z0-9.-]{4,})/i,
+    ]),
     findField(pages, "admission_date", "Fecha de ingreso", [/(?:fecha\s+de\s+)?ingreso\s*[:-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})/i]),
     findField(pages, "discharge_date", "Fecha de alta", [/(?:fecha\s+(?:de\s+)?(?:alta|egreso))\s*[:-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})/i]),
     accountTotalField(pages),
