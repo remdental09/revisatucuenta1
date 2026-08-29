@@ -5,6 +5,12 @@ import { requireApiUser } from "../../../lib/server/auth.ts";
 import { caseAccessResponse, developerAccessResponse } from "../../../lib/server/case-access.ts";
 import { purgeExpiredDocumentSources } from "../../../lib/server/source-retention.ts";
 
+function sourceKindForClassification(classification: string): "account" | "pam" | undefined {
+  if (/pam|liquid/i.test(classification)) return "pam";
+  if (/cuenta|mixto/i.test(classification)) return "account";
+  return undefined;
+}
+
 export async function GET(request: Request) {
   const auth = await requireApiUser(request);
   if ("response" in auth) return auth.response;
@@ -111,25 +117,28 @@ export async function DELETE(request: Request) {
   if (!env?.DB) {
     const deleted = localDeleteDocument(documentId, caseId);
     if (!deleted) return Response.json({ error: "Documento no encontrado" }, { status: 404 });
-    await removePendingCorpusContribution(env, caseId);
+    await removePendingCorpusContribution(env, caseId, sourceKindForClassification(deleted.classification));
     return Response.json({ documentId, deleted: true, name: deleted.name });
   }
 
   await ensureCaseSchema(env.DB);
   const document = await env.DB.prepare(
-    `SELECT id, original_name, storage_key FROM documents WHERE id = ? AND case_id = ?`,
-  ).bind(documentId, caseId).first() as { id?: string; original_name?: string; storage_key?: string } | null;
+    `SELECT id, original_name, storage_key, classification FROM documents WHERE id = ? AND case_id = ?`,
+  ).bind(documentId, caseId).first() as { id?: string; original_name?: string; storage_key?: string; classification?: string } | null;
   if (!document) return Response.json({ error: "Documento no encontrado" }, { status: 404 });
 
   await env.DB.prepare(`DELETE FROM extracted_fields WHERE document_id = ?`).bind(documentId).run();
   await env.DB.prepare(`DELETE FROM document_extractions WHERE document_id = ?`).bind(documentId).run();
-  await env.DB.prepare(`DELETE FROM case_analyses WHERE case_id = ?`).bind(caseId).run();
+  if (/cuenta|mixto/i.test(String(document.classification || ""))) {
+    await env.DB.prepare(`DELETE FROM case_analyses WHERE case_id = ?`).bind(caseId).run();
+  }
   await env.DB.prepare(`DELETE FROM documents WHERE id = ? AND case_id = ?`).bind(documentId, caseId).run();
-  await removePendingCorpusContribution(env, caseId);
 
   if (env.DOCUMENTS && document.storage_key) {
     try { await env.DOCUMENTS.delete(String(document.storage_key)); } catch { /* The database record is the source of truth for the UI. */ }
   }
+
+  await removePendingCorpusContribution(env, caseId, sourceKindForClassification(String(document.classification || "")));
 
   const remaining = await env.DB.prepare(`SELECT COUNT(*) AS count FROM documents WHERE case_id = ?`).bind(caseId).first();
   const nextStatus = Number(remaining?.count || 0) > 0 ? "under_review" : "collecting";

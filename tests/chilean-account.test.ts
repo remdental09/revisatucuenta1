@@ -16,6 +16,12 @@ import {
   OBSERVED_CHILEAN_ACCOUNT_CORPUS,
 } from "../lib/rules/observed-corpus.ts";
 import {
+  buildCorpusContribution,
+  getObservedCorpusSnapshot,
+  registerCorpusContribution,
+  removePendingCorpusContribution,
+} from "../lib/server/observed-corpus-store.ts";
+import {
   analyzeInstitutionalConduct,
   APPENDICITIS_CONDUCT_EVIDENCE,
 } from "../lib/rules/institutional-conduct.ts";
@@ -445,6 +451,29 @@ test("la repetición histórica no se convierte sola en fragmentación", () => {
   ]);
   assert.ok(analysis.lineAssessments[0]!.observedEquivalents.length > 0);
   assert.equal(analysis.lineAssessments[0]!.candidates.length, 0);
+});
+
+test("al retirar una cuenta pendiente conserva el PAM asociado", async () => {
+  const caseId = `source-cleanup-${randomUUID()}`;
+  await registerCorpusContribution(null, caseId, buildCorpusContribution({
+    caseId,
+    sourceKind: "account",
+    sourceDocumentId: "account-document",
+    lines: [{ ...base, id: "account-line", description: "Cuenta clínica de prueba", amount: 1200 }],
+  }));
+  await registerCorpusContribution(null, caseId, buildCorpusContribution({
+    caseId,
+    sourceKind: "pam",
+    sourceDocumentId: "pam-document",
+    lines: [{ ...base, id: "pam-line", description: "PAM de prueba", amount: 1200 }],
+  }));
+
+  await removePendingCorpusContribution(null, caseId, "account");
+  const accountSnapshot = await getObservedCorpusSnapshot(null, "account");
+  const pamSnapshot = await getObservedCorpusSnapshot(null, "pam");
+  assert.equal(accountSnapshot.pendingCount, 0);
+  assert.equal(pamSnapshot.pendingCount, 1);
+  assert.equal(pamSnapshot.corpus.observationCount, OBSERVED_CHILEAN_ACCOUNT_CORPUS.observationCount);
 });
 
 test("incorpora cuentas nuevas al corpus sólo después de validarlas", async () => {

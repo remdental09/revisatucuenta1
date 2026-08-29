@@ -191,14 +191,71 @@ export async function updateCorpusContributionStatus(
 }
 
 /** Removes unvalidated observations when their source document is deleted. */
-export async function removePendingCorpusContribution(env: any, caseId: string) {
+function removeSourceFromContribution(
+  contribution: ObservedCorpusContribution,
+  sourceKind: CorpusSourceKind,
+): ObservedCorpusContribution | undefined {
+  const taggedLines = contribution.lines.filter((line) => line.sourceKind);
+  const lines = contribution.lines.filter((line) => {
+    // Untagged legacy observations cannot be attributed safely to a source;
+    // retain them instead of deleting learning data on an ambiguous request.
+    if (!line.sourceKind) return true;
+    return line.sourceKind !== sourceKind;
+  });
+  if (!lines.length) return undefined;
+  const sourceKinds = Array.from(new Set(
+    lines.map((line) => line.sourceKind).filter((kind): kind is CorpusSourceKind => Boolean(kind)),
+  ));
+  return {
+    ...contribution,
+    sourceKinds: sourceKinds.length ? sourceKinds : contribution.sourceKinds,
+    sourceLineCount: lines.length,
+    observedLineCount: lines.length,
+    lines,
+  };
+}
+
+/** Removes unvalidated observations for the deleted source, preserving PAM/account siblings. */
+export async function removePendingCorpusContribution(
+  env: any,
+  caseId: string,
+  sourceKind?: CorpusSourceKind,
+) {
   if (!env?.DB) {
     const previous = localContributions.get(caseId);
-    if (previous?.status !== "validated") localContributions.delete(caseId);
+    if (!previous || previous.status === "validated") return;
+    if (!sourceKind) {
+      localContributions.delete(caseId);
+      return;
+    }
+    const contribution = removeSourceFromContribution(previous.contribution, sourceKind);
+    if (!contribution) localContributions.delete(caseId);
+    else localContributions.set(caseId, { ...previous, contribution, updatedAt: new Date().toISOString() });
     return;
   }
   await ensureCaseSchema(env.DB);
-  await env.DB.prepare(`DELETE FROM corpus_contributions WHERE case_id = ? AND status <> 'validated'`).bind(caseId).run();
+  const previous = await env.DB.prepare(
+    `SELECT status, contribution_json FROM corpus_contributions WHERE case_id = ?`,
+  ).bind(caseId).first();
+  if (!previous || String(previous.status) === "validated") return;
+  if (!sourceKind) {
+    await env.DB.prepare(`DELETE FROM corpus_contributions WHERE case_id = ? AND status <> 'validated'`).bind(caseId).run();
+    return;
+  }
+  const contribution = removeSourceFromContribution(parseContribution(previous.contribution_json) || {
+    caseKey: `runtime-${caseId}`,
+    episodeClass: "Cuenta clínica",
+    sourceLineCount: 0,
+    observedLineCount: 0,
+    lines: [],
+  }, sourceKind);
+  if (!contribution) {
+    await env.DB.prepare(`DELETE FROM corpus_contributions WHERE case_id = ? AND status <> 'validated'`).bind(caseId).run();
+    return;
+  }
+  await env.DB.prepare(
+    `UPDATE corpus_contributions SET contribution_json = ?, updated_at = CURRENT_TIMESTAMP WHERE case_id = ? AND status <> 'validated'`,
+  ).bind(JSON.stringify(contribution), caseId).run();
 }
 
 export async function getObservedCorpusSnapshot(

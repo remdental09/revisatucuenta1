@@ -116,12 +116,12 @@ export function localDeleteDocument(documentId: string, caseId: string) {
   if (!document || document.case_id !== caseId) return null;
   documents.delete(documentId);
   extractions.delete(documentId);
-  analyses.delete(caseId);
+  if (/cuenta|mixto/i.test(document.classification)) analyses.delete(caseId);
   addActivity(caseId, "Documento eliminado", `${document.original_name} fue retirado del expediente.`);
   const remaining = [...documents.values()].some((item) => item.case_id === caseId);
   const currentCase = cases.get(caseId);
   if (currentCase) cases.set(caseId, { ...currentCase, status: remaining ? "under_review" : "collecting", updated_at: now() });
-  return { id: document.id, name: document.original_name };
+  return { id: document.id, name: document.original_name, classification: document.classification };
 }
 
 export function localUpdateDocumentProcessing(documentId: string, status: string, error?: string) {

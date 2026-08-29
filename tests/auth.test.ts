@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { signAuthToken, verifyAuthToken } from "../lib/server/auth.ts";
-import { localCreateCase, localGetCase, localListCases } from "../lib/server/runtime-store.ts";
+import {
+  localCreateCase,
+  localDeleteDocument,
+  localGetCase,
+  localListCases,
+  localSaveAnalysis,
+  localSaveDocument,
+} from "../lib/server/runtime-store.ts";
+import { analyzeClinicalAccount } from "../lib/rules/chilean-account.ts";
 
 test("accepts a valid signed session and rejects tampering", async () => {
   const secret = "test-secret-with-more-than-thirty-two-characters";
@@ -35,3 +43,27 @@ test("isolates volatile cases by owner", () => {
   assert.equal(localListCases(ownerA, true).some((item) => item.id === caseB), true);
 });
 
+test("reemplazar una cuenta elimina la anterior y conserva los demás documentos", () => {
+  const suffix = crypto.randomUUID();
+  const owner = `replacement-owner-${suffix}`;
+  const caseId = `replacement-case-${suffix}`;
+  const oldAccountId = `old-account-${suffix}`;
+  const newAccountId = `new-account-${suffix}`;
+  const pamId = `pam-${suffix}`;
+
+  assert.equal(localCreateCase({ id: caseId, ownerUserId: owner, ownerEmail: "replacement@example.com", patientName: "Paciente de prueba", episodeLabel: "Cuenta clínica" }), true);
+  localSaveDocument({ id: oldAccountId, caseId, name: "cuenta-anterior.pdf", mimeType: "application/pdf", byteSize: 100, classification: "Cuenta clínica", confidence: 95 });
+  localSaveDocument({ id: pamId, caseId, name: "pam.pdf", mimeType: "application/pdf", byteSize: 100, classification: "PAM / liquidación", confidence: 95 });
+  localSaveDocument({ id: newAccountId, caseId, name: "cuenta-nueva.pdf", mimeType: "application/pdf", byteSize: 100, classification: "Cuenta clínica", confidence: 95 });
+  localSaveAnalysis(caseId, analyzeClinicalAccount([]));
+
+  const deleted = localDeleteDocument(oldAccountId, caseId);
+  const current = localGetCase(caseId, owner, true);
+  assert.equal(deleted?.classification, "Cuenta clínica");
+  assert.deepEqual(current?.documents.map((document) => document.id).sort(), [pamId, newAccountId].sort());
+  assert.equal(current?.analysis, undefined);
+
+  localSaveAnalysis(caseId, analyzeClinicalAccount([]));
+  localDeleteDocument(pamId, caseId);
+  assert.ok(localGetCase(caseId, owner, true)?.analysis);
+});
