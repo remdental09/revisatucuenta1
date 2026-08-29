@@ -121,7 +121,11 @@ async function recognizeImage(image: File | HTMLCanvasElement, onProgress?: (pro
 async function extractPdf(file: File, onProgress?: (progress: number) => void) {
   installPromiseWithResolversPolyfill();
   onProgress?.(3);
-  const pdfjs = await import("pdfjs-dist");
+  // The default PDF.js build targets Safari 18+. Clinical accounts are also
+  // uploaded from older iPhones and embedded mobile browsers, so always load
+  // the official legacy distribution instead of failing first and asking the
+  // user to upload the same private document again.
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   onProgress?.(4);
   // PDF.js still validates workerSrc even when worker execution is disabled.
   // Keep the local URL configured for that validation while using the
@@ -211,8 +215,8 @@ export async function extractHealthcareDocument(
 
 export function extractionErrorMessage(reason: unknown) {
   const raw = reason instanceof Error ? reason.message : String(reason ?? "");
-  if (/undefined is not a function|withResolvers|lector PDF no respondió/i.test(raw)) {
-    return "Este dispositivo no era compatible con el lector PDF. Se activó el modo compatible; vuelve a cargar la cuenta.";
+  if (/undefined is not a function|withResolvers|Promise\.try|lector PDF no respondió/i.test(raw)) {
+    return "El navegador no pudo completar el lector PDF compatible. El original quedó conservado para reintento o revisión asistida.";
   }
   return raw || "Falló la extracción automática";
 }

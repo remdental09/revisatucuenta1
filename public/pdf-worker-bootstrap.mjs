@@ -10,6 +10,12 @@ if (typeof Promise.withResolvers !== "function") {
   };
 }
 
+if (typeof Promise.try !== "function") {
+  Promise.try = function promiseTry(callback) {
+    return new Promise((resolve) => resolve(callback()));
+  };
+}
+
 // Some older module workers do not support top-level await. Queue incoming
 // PDF.js messages until the worker module has finished loading so those
 // browsers do not silently remain in a permanent "Procesando" state.
@@ -26,7 +32,7 @@ self.addEventListener = function addEventListener(type, listener, options) {
   }, options);
 };
 
-import("/pdf.worker.min.mjs").then(() => {
+import("/pdf.worker.legacy.min.mjs").then(() => {
   workerReady = true;
   for (const { listener, event } of pendingMessages.splice(0)) listener.call(self, event);
 }).catch((reason) => {

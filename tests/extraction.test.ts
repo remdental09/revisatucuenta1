@@ -3,6 +3,7 @@ import test from "node:test";
 import { structureDocument } from "../lib/extraction/parsers.ts";
 import { extractedPatientField } from "../lib/extraction/patient-identity.ts";
 import { extractionErrorMessage, textItemsToLines } from "../lib/extraction/client.ts";
+import { installPromiseWithResolversPolyfill } from "../lib/extraction/promise-compat.ts";
 import { assessExtractionQuality, buildReaderChangeProposal, buildReaderReviewPackage, readerReviewPackageToMarkdown } from "../lib/extraction/reader-quality.ts";
 import { localCreateCase, localGetCase, localSaveDocument, localSaveExtraction } from "../lib/server/runtime-store.ts";
 
@@ -86,8 +87,19 @@ test("preserves PDF table rows using text coordinates", () => {
 test("explica el fallo de lectura PDF sin dejar un error técnico crudo", () => {
   assert.match(
     extractionErrorMessage(new Error("undefined is not a function (near '...withResolvers...')")),
-    /modo compatible|vuelve a cargar/i,
+    /lector PDF compatible|original quedó conservado/i,
   );
+});
+
+test("instala las APIs de Promise requeridas por el lector PDF compatible", async () => {
+  installPromiseWithResolversPolyfill();
+  const compatiblePromise = Promise as typeof Promise & {
+    try?: <T>(callback: () => T | PromiseLike<T>) => Promise<Awaited<T>>;
+    withResolvers?: <T>() => { promise: Promise<T>; resolve: (value: T) => void; reject: (reason?: unknown) => void };
+  };
+  assert.equal(typeof compatiblePromise.withResolvers, "function");
+  assert.equal(typeof compatiblePromise.try, "function");
+  assert.equal(await compatiblePromise.try?.(() => 17), 17);
 });
 
 test("extracts Clínica Alemana rows and Vida Tres bonos", () => {
