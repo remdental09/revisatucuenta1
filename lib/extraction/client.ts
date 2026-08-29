@@ -10,6 +10,15 @@ type PositionedTextItem = {
   transform?: number[];
 };
 
+type OcrWorker = {
+  setParameters: (parameters: Record<string, string>) => Promise<unknown>;
+  recognize: (image: File | HTMLCanvasElement) => Promise<{ data: { text: string } }>;
+  terminate: () => Promise<unknown>;
+};
+
+let ocrWorkerPromise: Promise<OcrWorker> | undefined;
+let ocrProgressListener: ((progress: number) => void) | undefined;
+
 export function textItemsToLines(items: PositionedTextItem[]) {
   const rows: Array<{ y: number; cells: Array<{ x: number; text: string }> }> = [];
   for (const item of items) {
@@ -39,13 +48,39 @@ export function textItemsToLines(items: PositionedTextItem[]) {
     .join("\n");
 }
 
-async function recognizeImage(image: File | HTMLCanvasElement) {
-  const { recognize } = await import("tesseract.js");
-  const result = await recognize(image, "spa", {
-    preserve_interword_spaces: "1",
-    tessedit_pageseg_mode: "6",
-  });
-  return result.data.text;
+async function getOcrWorker() {
+  if (!ocrWorkerPromise) {
+    const { createWorker } = await import("tesseract.js");
+    const workerPromise = createWorker("spa", 1, {
+      logger: (message) => {
+        if (typeof message.progress === "number") ocrProgressListener?.(message.progress * 100);
+      },
+    }) as unknown as Promise<OcrWorker>;
+    ocrWorkerPromise = workerPromise
+      .then(async (worker) => {
+        await worker.setParameters({
+          preserve_interword_spaces: "1",
+          tessedit_pageseg_mode: "6",
+        });
+        return worker;
+      })
+      .catch((reason) => {
+        ocrWorkerPromise = undefined;
+        throw reason;
+      });
+  }
+  return ocrWorkerPromise;
+}
+
+async function recognizeImage(image: File | HTMLCanvasElement, onProgress?: (progress: number) => void) {
+  const worker = await getOcrWorker();
+  ocrProgressListener = onProgress;
+  try {
+    const result = await worker.recognize(image);
+    return result.data.text;
+  } finally {
+    if (ocrProgressListener === onProgress) ocrProgressListener = undefined;
+  }
 }
 
 async function extractPdf(file: File, onProgress?: (progress: number) => void) {
@@ -82,7 +117,12 @@ async function extractPdf(file: File, onProgress?: (progress: number) => void) {
       const context = canvas.getContext("2d");
       if (context) {
         await page.render({ canvas, canvasContext: context, viewport }).promise;
-        text = await recognizeImage(canvas);
+        const pageStart = ((pageNumber - 1) / pdf.numPages) * 100;
+        const pageWeight = 100 / pdf.numPages;
+        text = await recognizeImage(canvas, (ocrProgress) => {
+          const bounded = Math.max(0, Math.min(100, ocrProgress));
+          onProgress?.(Math.round(pageStart + pageWeight * (bounded / 100)));
+        });
       }
     }
     pages.push({ page: pageNumber, text });
@@ -101,7 +141,7 @@ export async function extractHealthcareDocument(
     return structureDocument(pages, expected, usedOcr, ocrPages);
   }
   if (file.type.startsWith("image/")) {
-    const text = await recognizeImage(file);
+    const text = await recognizeImage(file, onProgress);
     onProgress?.(100);
     return structureDocument([{ page: 1, text }], expected, true);
   }

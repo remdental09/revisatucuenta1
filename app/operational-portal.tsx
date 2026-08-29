@@ -316,6 +316,7 @@ async function uploadDocument(caseId: string, file: File, classification: string
   body.append("file", file);
   const upload = await fetch("/api/documents", { method: "POST", body });
   if (!upload.ok) throw new Error((await upload.json().catch(() => ({}))).error || "No se pudo guardar el documento");
+  onProgress?.(0);
   try {
     const extracted = await extractHealthcareDocument(file, expectedKind(classification), onProgress);
     const extraction: DocumentExtraction = {
@@ -699,8 +700,15 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
   async function handlePam(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]; event.target.value = ""; if (!file || !caseId) return;
     setBusy(true); setProgress(0); setStage("Guardando PAM / liquidación");
-    try { await uploadDocument(caseId, file, "PAM / liquidación", (value) => setProgress(value)); await refresh(); notify("PAM cargado y vinculado al expediente"); }
-    catch (reason) { notify(errorMessage(reason, "No se pudo cargar el PAM")); }
+    try {
+      await uploadDocument(caseId, file, "PAM / liquidación", (value) => { setProgress(value); setStage(value < 100 ? `Leyendo PAM / liquidación · ${value}%` : "Lectura del PAM completada"); });
+      await refresh();
+      notify("PAM cargado y vinculado al expediente");
+    }
+    catch (reason) {
+      notify(errorMessage(reason, "No se pudo cargar el PAM"));
+      await refresh();
+    }
     finally { setBusy(false); }
   }
 
@@ -709,9 +717,10 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
     const previousAccount = accountDoc(snapshot);
     setBusy(true); setProgress(0); setStage("Guardando cuenta clínica");
     try {
+      const updateProgress = (value: number) => { setProgress(value); setStage(value < 100 ? `Leyendo cuenta clínica · ${value}%` : "Lectura de la cuenta completada"); };
       const result = previousAccount
-        ? await replaceAccountDocument(caseId, previousAccount, file, (value) => setProgress(value))
-        : await uploadDocument(caseId, file, "Cuenta clinica", (value) => setProgress(value));
+        ? await replaceAccountDocument(caseId, previousAccount, file, updateProgress)
+        : await uploadDocument(caseId, file, "Cuenta clinica", updateProgress);
       await refresh();
       notify(previousAccount
         ? "Cuenta clínica anterior eliminada y reemplazada correctamente"
@@ -719,7 +728,10 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
           ? "Cuenta clínica cargada y vinculada al expediente"
           : "Cuenta clínica cargada; el aprendizaje quedó pendiente de sincronización");
     }
-    catch (reason) { notify(errorMessage(reason, "No se pudo cargar la cuenta clínica")); }
+    catch (reason) {
+      notify(errorMessage(reason, "No se pudo cargar la cuenta clínica"));
+      await refresh();
+    }
     finally { setBusy(false); }
   }
 
@@ -790,6 +802,10 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
 
 function AnalysisProgress({ progress, stage }: { progress: number; stage: string }) {
   return <section className="analysis-progress-card" aria-live="polite"><div className="analysis-progress-card-head"><div><span className="card-kicker">ANÁLISIS EN CURSO</span><b>{stage}</b></div><strong>{progress}%</strong></div><div className="analysis-progress-bar" role="progressbar" aria-label="Progreso del análisis" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><i style={{ width: `${progress}%` }} /></div><small>Estamos revisando la cuenta clínica. El resultado es preliminar y quedará sujeto a revisión humana.</small></section>;
+}
+
+function UploadProgress({ progress, stage }: { progress: number; stage: string }) {
+  return <section className="analysis-progress-card upload-progress-card" aria-live="polite"><div className="analysis-progress-card-head"><div><span className="card-kicker">LECTURA DE DOCUMENTO</span><b>{stage}</b></div><strong>{progress}%</strong></div><div className="analysis-progress-bar" role="progressbar" aria-label="Progreso de la lectura del documento" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><i style={{ width: `${progress}%` }} /></div><small>El documento se está guardando y leyendo. En cuentas escaneadas, esta etapa puede tardar algunos minutos.</small></section>;
 }
 
 function PatientSummary({ account, pam, reviewAmount, analysisAvailable, analysisRunning, progress, stage, authorized, busy, readerReviewRequired, readerChangeNeeded, onAccount, onPam, onAnalyze, onAuthorize }: { account?: CaseDocument; pam?: CaseDocument; reviewAmount: number; analysisAvailable: boolean; analysisRunning: boolean; progress: number; stage: string; authorized: boolean; busy: boolean; readerReviewRequired: boolean; readerChangeNeeded: boolean; onAccount: () => void; onPam: () => void; onAnalyze: () => void; onAuthorize: () => void }) {
@@ -891,6 +907,8 @@ function AuthenticatedDeveloperPortal({ initialCaseId = "", user }: { initialCas
   const { cases, error: casesError, refresh: refreshCases } = useCases();
   const [selectedId, setSelectedId] = useState(initialCaseId);
   const [snapshot, setSnapshot] = useState<Snapshot>(); const [tab, setTab] = useState<"overview" | "traceability" | "documents">("documents"); const [query, setQuery] = useState(""); const [busy, setBusy] = useState(false); const [notice, setNotice] = useState("");
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadStage, setUploadStage] = useState("");
   const [analysisStatus, setAnalysisStatus] = useState<"idle" | "running" | "complete" | "error">("idle");
   const [analysisProgress, setAnalysisProgress] = useState(0);
   const [analysisStage, setAnalysisStage] = useState("Esperando análisis");
@@ -901,11 +919,15 @@ function AuthenticatedDeveloperPortal({ initialCaseId = "", user }: { initialCas
     if (!selected) return;
     const previousAccount = /cuenta|mixto/i.test(classification) ? accountDoc(snapshot) : undefined;
     setBusy(true);
+    setUploadProgress(0);
+    setUploadStage(/pam|liquid/i.test(classification) ? "Guardando PAM / liquidación" : /contrato|plan/i.test(classification) ? "Guardando contrato / plan" : "Guardando cuenta clínica");
     setAnalysisStatus("idle");
     try {
+      const documentLabel = /pam|liquid/i.test(classification) ? "PAM / liquidación" : /contrato|plan/i.test(classification) ? "contrato / plan" : "cuenta clínica";
+      const updateProgress = (value: number) => { setUploadProgress(value); setUploadStage(`Leyendo ${documentLabel} · ${value}%`); };
       const result = previousAccount
-        ? await replaceAccountDocument(selected, previousAccount, file, (value) => setNotice(`Leyendo la nueva cuenta clínica: ${value}%`))
-        : await uploadDocument(selected, file, classification);
+        ? await replaceAccountDocument(selected, previousAccount, file, updateProgress)
+        : await uploadDocument(selected, file, classification, updateProgress);
       await refresh();
       await refreshCases();
       setNotice(previousAccount
@@ -913,8 +935,12 @@ function AuthenticatedDeveloperPortal({ initialCaseId = "", user }: { initialCas
         : result.corpusRegistered
           ? "Documento guardado, extraído y enviado a revisión de aprendizaje"
           : "Documento guardado y extraído; el aprendizaje quedó pendiente de sincronización");
-    } catch (reason) { setNotice(errorMessage(reason, "No se pudo procesar el documento")); }
-    finally { setBusy(false); }
+    } catch (reason) {
+      setNotice(errorMessage(reason, "No se pudo procesar el documento"));
+      await refresh();
+      await refreshCases();
+    }
+    finally { setBusy(false); setUploadStage(""); }
   }
   async function onAnalyze() {
     if (!snapshot) return;
@@ -947,7 +973,7 @@ function AuthenticatedDeveloperPortal({ initialCaseId = "", user }: { initialCas
   const visibleCases = useMemo(() => cases.filter((item) => `${item.patient_name} ${item.id} ${item.episode_label}`.toLowerCase().includes(query.toLowerCase())), [cases, query]);
   if (!selected) return <DeveloperEmpty error={casesError} onCreated={async (id) => { setSelectedId(id); await refreshCases(); }} />;
   const account = accountDoc(snapshot); const pam = pamDoc(snapshot); const total = totalFrom(account, "account");
-  return <main className="developer-portal"><aside className="developer-sidebar"><a className="portal-brand dev-brand" href="/"><span>R</span> RevisaTuCuenta</a><div className="dev-workspace-label">ESPACIO DE TRABAJO</div><nav className="dev-nav"><a className="active" href="/?view=developer"><span>▦</span> Expedientes <em>{cases.length}</em></a><a href="#rules"><span>◌</span> Reglas del motor</a><a href="#corpus"><span>⌁</span> Corpus observado</a></nav><div className="dev-sidebar-bottom"><a href={`/?view=patient&case=${encodeURIComponent(selected)}`} target="_blank" rel="noreferrer"><span>↗</span> Vista paciente</a><div className="dev-user"><span className="avatar">DEV</span><div><b>Desarrollador</b><small>{user.email}</small></div></div></div></aside><section className="developer-main"><header className="developer-header"><div><p className="portal-kicker">CONSOLA DE DESARROLLO</p><h1>Expedientes</h1><p>Revisión técnica sobre documentos protegidos y asociados a su propietario.</p></div><div className="developer-header-actions"><span className="surface-pill developer-pill">Vista desarrollador</span><a className="portal-button portal-button-secondary" href={`/?view=patient&case=${encodeURIComponent(selected)}`} target="_blank" rel="noreferrer">Abrir vista paciente ↗</a><a className="patient-signout-button" href={signOutHref(user)}>Cerrar sesión</a></div></header><div className="developer-body"><section className="case-queue"><div className="queue-header"><div><span className="card-kicker">BANDEJA DE CASOS</span><h2>Casos recientes <em>{cases.length}</em></h2></div></div><div className="queue-search">⌕ <input placeholder="Buscar paciente, cuenta o episodio" value={query} onChange={(event) => setQuery(event.target.value)} /></div><div className="queue-list">{visibleCases.map((item) => <button key={item.id} onClick={() => setSelectedId(item.id)} className={`dev-case-row ${selected === item.id ? "active" : ""}`}><span className="avatar">{item.patient_name.slice(0, 2).toUpperCase()}</span><div><b>{selected === item.id && snapshot ? patientNameForDeveloper(snapshot) : item.patient_name}</b><small>{item.id} · {item.document_count} documentos</small></div><em className={item.status.includes("analysis") ? "green" : "blue"}>{item.status}</em></button>)}</div></section><section className="case-detail"><div className="case-detail-head"><div><span className="case-breadcrumb">EXPEDIENTE / {selected}</span><h2>{snapshot ? patientNameForDeveloper(snapshot) : "Cargando…"}</h2><p>{snapshot?.case.episodeLabel || ""}</p></div><span className="case-state"><i /> {snapshot?.case.status || "Cargando"}</span></div>{snapshot && <><div className="dev-summary-metrics"><DevMetric label="Cuenta clínica" value={money(total)} detail="Documento base"/><DevMetric label="Desfragmentación" value={snapshot.analysis ? `${snapshot.analysis.lineAssessments.length} líneas` : "Pendiente"} detail="Hipótesis técnicas" pending={!snapshot.analysis}/><DevMetric label="Contexto PAM" value={pam ? "Recibido" : "Pendiente"} detail="Se conserva separado" pending={!pam}/><DevMetric label="Autorización" value={snapshot.authorization?.authorized ? "Otorgada" : "Pendiente"} detail="Gestión de reclamos" pending={!snapshot.authorization?.authorized}/><DevMetric label="Documentos" value={String(snapshot.documents.length)} detail="Fuentes del caso"/></div><div className="dev-tabs">{(["overview", "traceability", "documents"] as const).map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item === "overview" ? "Resumen" : item === "traceability" ? "Matriz de trazabilidad" : "Documentos"}</button>)}</div>{notice && <p className="patient-analysis-notice">{notice}</p>}{analysisStatus === "running" && <AnalysisProgress progress={analysisProgress} stage={analysisStage} />}{tab === "overview" && <DeveloperOverview snapshot={snapshot} total={total} busy={busy} onAnalyze={() => void onAnalyze()} onExport={() => downloadJson(`${selected}-preinforme.json`, snapshot)} onClaimDraft={() => downloadClaim(`${selected}-solicitud-aclaracion.md`, snapshot)} onCorpusStatus={onCorpusStatus} />}{tab === "traceability" && <DeveloperTraceability snapshot={snapshot} onExport={() => downloadJson(`${selected}-matriz.json`, snapshot.analysis)} onExportMarkdown={() => snapshot.analysis && downloadMarkdown(`${selected}-matriz.md`, snapshot.analysis)} />}{tab === "documents" && <DeveloperDocuments snapshot={snapshot} busy={busy} onFile={(file, kind) => void onFile(file, kind)} onAnalyze={() => void onAnalyze()} />}</>}</section></div></section></main>;
+  return <main className="developer-portal"><aside className="developer-sidebar"><a className="portal-brand dev-brand" href="/"><span>R</span> RevisaTuCuenta</a><div className="dev-workspace-label">ESPACIO DE TRABAJO</div><nav className="dev-nav"><a className="active" href="/?view=developer"><span>▦</span> Expedientes <em>{cases.length}</em></a><a href="#rules"><span>◌</span> Reglas del motor</a><a href="#corpus"><span>⌁</span> Corpus observado</a></nav><div className="dev-sidebar-bottom"><a href={`/?view=patient&case=${encodeURIComponent(selected)}`} target="_blank" rel="noreferrer"><span>↗</span> Vista paciente</a><div className="dev-user"><span className="avatar">DEV</span><div><b>Desarrollador</b><small>{user.email}</small></div></div></div></aside><section className="developer-main"><header className="developer-header"><div><p className="portal-kicker">CONSOLA DE DESARROLLO</p><h1>Expedientes</h1><p>Revisión técnica sobre documentos protegidos y asociados a su propietario.</p></div><div className="developer-header-actions"><span className="surface-pill developer-pill">Vista desarrollador</span><a className="portal-button portal-button-secondary" href={`/?view=patient&case=${encodeURIComponent(selected)}`} target="_blank" rel="noreferrer">Abrir vista paciente ↗</a><a className="patient-signout-button" href={signOutHref(user)}>Cerrar sesión</a></div></header><div className="developer-body"><section className="case-queue"><div className="queue-header"><div><span className="card-kicker">BANDEJA DE CASOS</span><h2>Casos recientes <em>{cases.length}</em></h2></div></div><div className="queue-search">⌕ <input placeholder="Buscar paciente, cuenta o episodio" value={query} onChange={(event) => setQuery(event.target.value)} /></div><div className="queue-list">{visibleCases.map((item) => <button key={item.id} onClick={() => setSelectedId(item.id)} className={`dev-case-row ${selected === item.id ? "active" : ""}`}><span className="avatar">{item.patient_name.slice(0, 2).toUpperCase()}</span><div><b>{selected === item.id && snapshot ? patientNameForDeveloper(snapshot) : item.patient_name}</b><small>{item.id} · {item.document_count} documentos</small></div><em className={item.status.includes("analysis") ? "green" : "blue"}>{item.status}</em></button>)}</div></section><section className="case-detail"><div className="case-detail-head"><div><span className="case-breadcrumb">EXPEDIENTE / {selected}</span><h2>{snapshot ? patientNameForDeveloper(snapshot) : "Cargando…"}</h2><p>{snapshot?.case.episodeLabel || ""}</p></div><span className="case-state"><i /> {snapshot?.case.status || "Cargando"}</span></div>{snapshot && <><div className="dev-summary-metrics"><DevMetric label="Cuenta clínica" value={money(total)} detail="Documento base"/><DevMetric label="Desfragmentación" value={snapshot.analysis ? `${snapshot.analysis.lineAssessments.length} líneas` : "Pendiente"} detail="Hipótesis técnicas" pending={!snapshot.analysis}/><DevMetric label="Contexto PAM" value={pam ? "Recibido" : "Pendiente"} detail="Se conserva separado" pending={!pam}/><DevMetric label="Autorización" value={snapshot.authorization?.authorized ? "Otorgada" : "Pendiente"} detail="Gestión de reclamos" pending={!snapshot.authorization?.authorized}/><DevMetric label="Documentos" value={String(snapshot.documents.length)} detail="Fuentes del caso"/></div><div className="dev-tabs">{(["overview", "traceability", "documents"] as const).map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item === "overview" ? "Resumen" : item === "traceability" ? "Matriz de trazabilidad" : "Documentos"}</button>)}</div>{notice && <p className="patient-analysis-notice">{notice}</p>}{uploadStage && <UploadProgress progress={uploadProgress} stage={uploadStage} />}{analysisStatus === "running" && <AnalysisProgress progress={analysisProgress} stage={analysisStage} />}{tab === "overview" && <DeveloperOverview snapshot={snapshot} total={total} busy={busy} onAnalyze={() => void onAnalyze()} onExport={() => downloadJson(`${selected}-preinforme.json`, snapshot)} onClaimDraft={() => downloadClaim(`${selected}-solicitud-aclaracion.md`, snapshot)} onCorpusStatus={onCorpusStatus} />}{tab === "traceability" && <DeveloperTraceability snapshot={snapshot} onExport={() => downloadJson(`${selected}-matriz.json`, snapshot.analysis)} onExportMarkdown={() => snapshot.analysis && downloadMarkdown(`${selected}-matriz.md`, snapshot.analysis)} />}{tab === "documents" && <DeveloperDocuments snapshot={snapshot} busy={busy} onFile={(file, kind) => void onFile(file, kind)} onAnalyze={() => void onAnalyze()} />}</>}</section></div></section></main>;
 }
 
 function DeveloperCaseIdentity({ snapshot }: { snapshot: Snapshot }) {
