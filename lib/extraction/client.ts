@@ -6,6 +6,8 @@ const pdfWorkerUrl = "/pdf-worker-bootstrap.mjs";
 // Keep the Spanish OCR model on the same origin so mobile deployments do not
 // hang waiting for a third-party CDN during worker initialization.
 const ocrLanguagePath = "/";
+const ocrWorkerPath = "/tesseract-worker.min.js";
+const ocrCorePath = "/tesseract-core-lstm.wasm.js";
 const PDF_LOAD_TIMEOUT_MS = 45_000;
 const OCR_INITIALIZATION_TIMEOUT_MS = 120_000;
 const OCR_PAGE_TIMEOUT_MS = 300_000;
@@ -69,6 +71,8 @@ async function getOcrWorker() {
   if (!ocrWorkerPromise) {
     const { createWorker } = await import("tesseract.js");
     const workerPromise = createWorker("spa", 1, {
+      workerPath: ocrWorkerPath,
+      corePath: ocrCorePath,
       langPath: ocrLanguagePath,
       logger: (message) => {
         if (typeof message.progress === "number") ocrProgressListener?.(message.progress * 100);
