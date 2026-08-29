@@ -2,6 +2,7 @@ import { structureDocument, type TextPage } from "./parsers.ts";
 import { installPromiseWithResolversPolyfill } from "./promise-compat.ts";
 import type { DocumentExtraction } from "./types.ts";
 
+const pdfWorkerUrl = "/pdf-worker-bootstrap.mjs";
 // Keep the Spanish OCR model on the same origin so mobile deployments do not
 // hang waiting for a third-party CDN during worker initialization.
 const ocrLanguagePath = "/";
@@ -122,6 +123,10 @@ async function extractPdf(file: File, onProgress?: (progress: number) => void) {
   onProgress?.(3);
   const pdfjs = await import("pdfjs-dist");
   onProgress?.(4);
+  // PDF.js still validates workerSrc even when worker execution is disabled.
+  // Keep the local URL configured for that validation while using the
+  // compatible main-thread fallback below.
+  pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
   // Some mobile and embedded browsers load the PDF worker but never answer
   // its first message. Reading in the main thread is slower, but it gives
   // the pilot a deterministic fallback for scanned accounts and lets the
