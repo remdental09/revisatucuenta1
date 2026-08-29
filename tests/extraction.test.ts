@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { structureDocument } from "../lib/extraction/parsers.ts";
 import { extractedPatientField } from "../lib/extraction/patient-identity.ts";
-import { textItemsToLines } from "../lib/extraction/client.ts";
+import { extractionErrorMessage, textItemsToLines } from "../lib/extraction/client.ts";
 import { assessExtractionQuality, buildReaderChangeProposal, buildReaderReviewPackage, readerReviewPackageToMarkdown } from "../lib/extraction/reader-quality.ts";
 import { localCreateCase, localGetCase, localSaveDocument, localSaveExtraction } from "../lib/server/runtime-store.ts";
 
@@ -73,6 +73,13 @@ test("preserves PDF table rows using text coordinates", () => {
   ]);
   assert.equal(text.split("\n").length, 2);
   assert.match(text, /^600510115 TERMOMETRO DIGITAL FLEXI/);
+});
+
+test("explica el fallo de lectura PDF sin dejar un error técnico crudo", () => {
+  assert.match(
+    extractionErrorMessage(new Error("undefined is not a function (near '...withResolvers...')")),
+    /modo compatible|vuelve a cargar/i,
+  );
 });
 
 test("extracts Clínica Alemana rows and Vida Tres bonos", () => {

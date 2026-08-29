@@ -3,6 +3,9 @@ import { installPromiseWithResolversPolyfill } from "./promise-compat.ts";
 import type { DocumentExtraction } from "./types.ts";
 
 const pdfWorkerUrl = "/pdf-worker-bootstrap.mjs";
+const PDF_LOAD_TIMEOUT_MS = 45_000;
+const OCR_INITIALIZATION_TIMEOUT_MS = 120_000;
+const OCR_PAGE_TIMEOUT_MS = 300_000;
 
 type ExpectedKind = "account" | "pam" | "mixed" | "unknown";
 
@@ -19,6 +22,16 @@ type OcrWorker = {
 
 let ocrWorkerPromise: Promise<OcrWorker> | undefined;
 let ocrProgressListener: ((progress: number) => void) | undefined;
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string) {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error(message)), timeoutMs);
+    promise.then(
+      (value) => { window.clearTimeout(timer); resolve(value); },
+      (reason) => { window.clearTimeout(timer); reject(reason); },
+    );
+  });
+}
 
 export function textItemsToLines(items: PositionedTextItem[]) {
   const rows: Array<{ y: number; cells: Array<{ x: number; text: string }> }> = [];
@@ -74,10 +87,18 @@ async function getOcrWorker() {
 }
 
 async function recognizeImage(image: File | HTMLCanvasElement, onProgress?: (progress: number) => void) {
-  const worker = await getOcrWorker();
+  const worker = await withTimeout(
+    getOcrWorker(),
+    OCR_INITIALIZATION_TIMEOUT_MS,
+    "El lector OCR no respondió a tiempo. Conserva el original para revisión humana o LLM externa.",
+  );
   ocrProgressListener = onProgress;
   try {
-    const result = await worker.recognize(image);
+    const result = await withTimeout(
+      worker.recognize(image),
+      OCR_PAGE_TIMEOUT_MS,
+      "El OCR no terminó esta página a tiempo. Conserva el original para revisión humana o LLM externa.",
+    );
     return result.data.text;
   } finally {
     if (ocrProgressListener === onProgress) ocrProgressListener = undefined;
@@ -94,13 +115,32 @@ async function extractPdf(file: File, onProgress?: (progress: number) => void) {
       name: "revisatucuenta-pdf",
     });
   }
-  const pdf = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise;
+  const loadingTask = pdfjs.getDocument({ data: await file.arrayBuffer() });
+  let pdf;
+  try {
+    pdf = await withTimeout(
+      loadingTask.promise,
+      PDF_LOAD_TIMEOUT_MS,
+      "El lector PDF no respondió a tiempo. Vuelve a cargar la cuenta o conserva el original para revisión humana/LLM.",
+    );
+  } catch (reason) {
+    await loadingTask.destroy().catch(() => undefined);
+    throw reason;
+  }
   const pages: TextPage[] = [];
   const ocrPages: number[] = [];
   let usedOcr = false;
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
-    const page = await pdf.getPage(pageNumber);
-    const content = await page.getTextContent();
+    const page = await withTimeout(
+      pdf.getPage(pageNumber),
+      PDF_LOAD_TIMEOUT_MS,
+      `El lector PDF no respondió al abrir la página ${pageNumber}. Conserva el original para revisión humana/LLM.`,
+    );
+    const content = await withTimeout(
+      page.getTextContent(),
+      PDF_LOAD_TIMEOUT_MS,
+      `El lector PDF no respondió al leer la página ${pageNumber}. Conserva el original para revisión humana/LLM.`,
+    );
     let text = textItemsToLines(
       content.items.map((item) =>
         "str" in item ? { str: item.str, transform: item.transform } : {},
@@ -152,7 +192,7 @@ export async function extractHealthcareDocument(
 
 export function extractionErrorMessage(reason: unknown) {
   const raw = reason instanceof Error ? reason.message : String(reason ?? "");
-  if (/undefined is not a function|withResolvers/i.test(raw)) {
+  if (/undefined is not a function|withResolvers|lector PDF no respondió/i.test(raw)) {
     return "Este dispositivo no era compatible con el lector PDF. Se activó el modo compatible; vuelve a cargar la cuenta.";
   }
   return raw || "Falló la extracción automática";
