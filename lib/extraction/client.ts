@@ -74,6 +74,11 @@ async function getOcrWorker() {
       workerPath: ocrWorkerPath,
       corePath: ocrCorePath,
       langPath: ocrLanguagePath,
+      // Use a direct worker URL. Some deployed browsers load the worker
+      // through the Blob wrapper but do not allow that wrapper to continue
+      // with importScripts, leaving OCR permanently at its initialization
+      // state without surfacing a page-level error.
+      workerBlobURL: false,
       logger: (message) => {
         if (typeof message.progress === "number") ocrProgressListener?.(message.progress * 100);
       },
