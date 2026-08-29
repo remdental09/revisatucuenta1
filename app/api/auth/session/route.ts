@@ -1,8 +1,31 @@
-import { getAuthenticatedUser, pilotAuthenticationConfigured } from "../../../../lib/server/auth.ts";
+import {
+  authSessionSecret,
+  createSessionToken,
+  developerOpenAccessEnabled,
+  developmentUser,
+  getAuthenticatedUser,
+  sessionCookie,
+} from "../../../../lib/server/auth.ts";
 
 export async function GET(request: Request) {
-  const user = await getAuthenticatedUser(request);
-  const pilotAvailable = pilotAuthenticationConfigured();
-  if (!user) return Response.json({ authenticated: false, pilotAvailable }, { status: 401 });
-  return Response.json({ authenticated: true, user, pilotAvailable });
+  let user = await getAuthenticatedUser(request);
+  const view = new URL(request.url).searchParams.get("view");
+  const headers = new Headers();
+
+  // The pilot console is intentionally passwordless. Issue the same signed
+  // session used by the protected APIs, but only after an explicit developer
+  // entry request and only when the deployment has opted into open dev mode.
+  if (!user && view === "developer" && developerOpenAccessEnabled()) {
+    if (!authSessionSecret()) {
+      return Response.json(
+        { error: "La consola de desarrollo está abierta, pero falta AUTH_SESSION_SECRET" },
+        { status: 503 },
+      );
+    }
+    user = await developmentUser();
+    headers.set("set-cookie", sessionCookie(await createSessionToken(user)));
+  }
+
+  if (!user) return Response.json({ authenticated: false, developerOpen: view === "developer" && developerOpenAccessEnabled() }, { status: 401 });
+  return Response.json({ authenticated: true, user, developerOpen: view === "developer" && developerOpenAccessEnabled() }, { headers });
 }

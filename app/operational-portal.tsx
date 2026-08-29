@@ -47,20 +47,19 @@ function errorMessage(value: unknown, fallback: string) {
   return value instanceof Error ? value.message : fallback;
 }
 
-function useAuthSession() {
+function useAuthSession(surface: "patient" | "developer") {
   const [user, setUser] = useState<SessionUser>();
-  const [pilotAvailable, setPilotAvailable] = useState(false);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
     let active = true;
-    fetch("/api/auth/session", { cache: "no-store" })
+    fetch(`/api/auth/session?view=${surface}`, { cache: "no-store" })
       .then(async (response) => response.json().catch(() => ({ authenticated: false })))
-      .then((payload) => { if (active) { setUser(payload.authenticated ? payload.user : undefined); setPilotAvailable(Boolean(payload.pilotAvailable)); } })
-      .catch(() => { if (active) { setUser(undefined); setPilotAvailable(false); } })
+      .then((payload) => { if (active) setUser(payload.authenticated ? payload.user : undefined); })
+      .catch(() => { if (active) setUser(undefined); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, []);
-  return { user, loading, pilotAvailable };
+  }, [surface]);
+  return { user, loading };
 }
 
 function signOutHref(user: SessionUser) {
@@ -71,22 +70,16 @@ function AuthenticationLoading() {
   return <main className="patient-login"><section className="patient-login-card"><div className="portal-brand"><span>R</span> RevisaTuCuenta</div><h1>Verificando acceso…</h1><p>Estamos protegiendo el acceso a tus expedientes.</p></section></main>;
 }
 
-function EmailAccess({ returnTo, pilotAvailable }: { returnTo: string; pilotAvailable: boolean }) {
-  const [pilotKey, setPilotKey] = useState("");
+function DeveloperAccessUnavailable() {
+  return <main className="patient-login"><section className="patient-login-card"><div className="portal-brand"><span>R</span> RevisaTuCuenta</div><div className="login-seal">⌁</div><p className="portal-kicker">CONSOLA DE DESARROLLO</p><h1>Acceso de desarrollo no habilitado.</h1><p>Esta consola no usa claves de piloto. Para abrirla durante el piloto, el entorno debe tener habilitado el modo de desarrollo abierto.</p><p className="patient-contact-note">Configuración requerida: <strong>REVISA_DEVELOPER_OPEN=true</strong></p><a className="back-link" href="/">← Volver</a></section></main>;
+}
+
+function EmailAccess({ returnTo }: { returnTo: string }) {
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [developmentVerifyUrl, setDevelopmentVerifyUrl] = useState("");
-  async function submitPilot(event: React.FormEvent) {
-    event.preventDefault(); setBusy(true); setError("");
-    try {
-      const response = await fetch("/api/auth/pilot", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ key: pilotKey }) });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.error || "No se pudo validar la clave de piloto");
-      window.location.assign(returnTo);
-    } catch (reason) { setError(errorMessage(reason, "No se pudo validar la clave de piloto")); setBusy(false); }
-  }
   async function submit(event: React.FormEvent) {
     event.preventDefault(); setBusy(true); setError(""); setMessage(""); setDevelopmentVerifyUrl("");
     try {
@@ -98,7 +91,7 @@ function EmailAccess({ returnTo, pilotAvailable }: { returnTo: string; pilotAvai
     } catch (reason) { setError(errorMessage(reason, "No se pudo verificar el correo")); }
     finally { setBusy(false); }
   }
-  return <main className="patient-login"><form className="patient-login-card" onSubmit={pilotAvailable ? submitPilot : submit}><div className="portal-brand"><span>R</span> RevisaTuCuenta</div><div className="login-seal">⌁</div><p className="portal-kicker">ACCESO PROTEGIDO</p><h1>{pilotAvailable ? "Ingresa al piloto." : "Ingresa a tu expediente."}</h1>{pilotAvailable ? <><p>Usa la clave de piloto para probar la carga y el análisis de cuentas sin configurar todavía el acceso por correo.</p><input aria-label="Clave de piloto" type="password" required autoComplete="off" placeholder="Clave de piloto" value={pilotKey} onChange={(event) => setPilotKey(event.target.value)} />{error && <p className="developer-empty-error">{error}</p>}<button className="portal-button portal-button-primary" disabled={busy}>{busy ? "Validando…" : "Entrar al piloto"}</button><p className="patient-contact-note">Este acceso es temporal para pruebas. No uses datos reales de pacientes durante el piloto.</p></> : <><p>Te enviaremos un enlace para verificar tu correo. Así nadie más podrá consultar tus documentos ni resultados.</p><input aria-label="Correo electrónico" type="email" required autoComplete="email" placeholder="Tu correo electrónico" value={email} onChange={(event) => setEmail(event.target.value)} />{message && <p className="patient-analysis-notice">{message}</p>}{error && <p className="developer-empty-error">{error}</p>}<button className="portal-button portal-button-primary" disabled={busy}>{busy ? "Enviando enlace…" : "Enviar enlace de acceso"}</button>{developmentVerifyUrl && <a className="portal-button portal-button-secondary" href={developmentVerifyUrl}>Abrir enlace local de prueba</a>}<p className="patient-contact-note">El enlace vence en 15 minutos. Tu sesión queda protegida y sólo muestra los expedientes asociados a este correo verificado.</p></>}<a className="back-link" href="/">← Volver</a></form></main>;
+  return <main className="patient-login"><form className="patient-login-card" onSubmit={submit}><div className="portal-brand"><span>R</span> RevisaTuCuenta</div><div className="login-seal">⌁</div><p className="portal-kicker">ACCESO PROTEGIDO</p><h1>Ingresa a tu expediente.</h1><p>Te enviaremos un enlace para verificar tu correo. Así nadie más podrá consultar tus documentos ni resultados.</p><input aria-label="Correo electrónico" type="email" required autoComplete="email" placeholder="Tu correo electrónico" value={email} onChange={(event) => setEmail(event.target.value)} />{message && <p className="patient-analysis-notice">{message}</p>}{error && <p className="developer-empty-error">{error}</p>}<button className="portal-button portal-button-primary" disabled={busy}>{busy ? "Enviando enlace…" : "Enviar enlace de acceso"}</button>{developmentVerifyUrl && <a className="portal-button portal-button-secondary" href={developmentVerifyUrl}>Abrir enlace local de prueba</a>}<p className="patient-contact-note">El enlace vence en 15 minutos. Tu sesión queda protegida y sólo muestra los expedientes asociados a este correo verificado.</p><a className="back-link" href="/">← Volver</a></form></main>;
 }
 
 async function getSnapshot(caseId: string) {
@@ -648,9 +641,9 @@ function PatientStart({ userEmail, onCreated }: { userEmail: string; onCreated: 
 }
 
 export function PatientPortal({ initialCaseId = "" }: { initialCaseId?: string }) {
-  const auth = useAuthSession();
+  const auth = useAuthSession("patient");
   if (auth.loading) return <AuthenticationLoading />;
-  if (!auth.user) return <EmailAccess returnTo={`/?view=patient${initialCaseId ? `&case=${encodeURIComponent(initialCaseId)}` : ""}`} pilotAvailable={auth.pilotAvailable} />;
+  if (!auth.user) return <EmailAccess returnTo={`/?view=patient${initialCaseId ? `&case=${encodeURIComponent(initialCaseId)}` : ""}`} />;
   return <AuthenticatedPatientPortal initialCaseId={initialCaseId} user={auth.user} />;
 }
 
@@ -849,9 +842,9 @@ function DeveloperEmpty({ error, onCreated }: { error?: string; onCreated: (case
 }
 
 export function DeveloperPortal({ initialCaseId = "" }: { initialCaseId?: string }) {
-  const auth = useAuthSession();
+  const auth = useAuthSession("developer");
   if (auth.loading) return <AuthenticationLoading />;
-  if (!auth.user) return <EmailAccess returnTo={`/?view=developer${initialCaseId ? `&case=${encodeURIComponent(initialCaseId)}` : ""}`} pilotAvailable={auth.pilotAvailable} />;
+  if (!auth.user) return <DeveloperAccessUnavailable />;
   return <AuthenticatedDeveloperPortal initialCaseId={initialCaseId} user={auth.user} />;
 }
 

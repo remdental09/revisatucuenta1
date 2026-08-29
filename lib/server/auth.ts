@@ -111,6 +111,20 @@ export function developmentAuthenticationEnabled() {
   return runtimeEnv("NODE_ENV") !== "production" && runtimeEnv("REVISA_AUTH_DEV_MODE") === "true";
 }
 
+/**
+ * Opens only the developer console for the pilot. Patient access continues to
+ * use verified email (or the ChatGPT identity when available).
+ *
+ * This is deliberately an explicit deployment setting so a production
+ * deployment cannot become public by accident. Local development keeps the
+ * existing REVISA_AUTH_DEV_MODE switch.
+ */
+export function developerOpenAccessEnabled() {
+  const explicitSetting = runtimeEnv("REVISA_DEVELOPER_OPEN");
+  if (explicitSetting !== undefined) return explicitSetting === "true";
+  return developmentAuthenticationEnabled();
+}
+
 function normalizeEmail(value: string) {
   return value.trim().toLowerCase();
 }
@@ -118,6 +132,11 @@ function normalizeEmail(value: string) {
 async function emailUserId(email: string) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(normalizeEmail(email)));
   return `email:${bytesToBase64Url(new Uint8Array(digest))}`;
+}
+
+export async function developmentUser(): Promise<AuthenticatedUser> {
+  const email = normalizeEmail(runtimeEnv("REVISA_AUTH_DEV_EMAIL") || "desarrollo@revisatucuenta.local");
+  return { id: await emailUserId(email), email, displayName: "Desarrollo local", source: "development" };
 }
 
 export async function createMagicLinkToken(email: string, displayName?: string) {
@@ -218,8 +237,7 @@ export async function getAuthenticatedUser(request: Request): Promise<Authentica
   }
 
   if (developmentAuthenticationEnabled()) {
-    const email = normalizeEmail(runtimeEnv("REVISA_AUTH_DEV_EMAIL") || "desarrollo@revisatucuenta.local");
-    return { id: await emailUserId(email), email, displayName: "Desarrollo local", source: "development" };
+    return developmentUser();
   }
 }
 
@@ -239,7 +257,7 @@ export async function requireApiUser(request: Request) {
 }
 
 export function isDeveloperUser(user: AuthenticatedUser) {
-  if (user.source === "development" && developmentAuthenticationEnabled()) return true;
+  if (user.source === "development" && developerOpenAccessEnabled()) return true;
   if (user.source === "pilot" && pilotAuthenticationConfigured()) return true;
   const allowed = (runtimeEnv("REVISA_DEVELOPER_EMAILS") || "")
     .split(",")

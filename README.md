@@ -87,6 +87,14 @@ or enforce explicit server-side membership or allowlist checks.
 Use SIWC for account pages, user-specific dashboards, saved records, and write
 actions tied to the current ChatGPT user. Leave public content anonymous.
 
+## Console de desarrollo durante el piloto
+
+La consola desarrollador no solicita una clave de piloto. Para habilitar su
+entrada sin correo en un entorno de prueba, configura
+`REVISA_DEVELOPER_OPEN=true` junto con `AUTH_SESSION_SECRET`. Esta opción sólo
+emite una sesión de desarrollo para `?view=developer`; la vista paciente sigue
+requiriendo correo verificado o identidad de ChatGPT.
+
 ## Useful Commands
 
 - `npm run dev`: start local development
