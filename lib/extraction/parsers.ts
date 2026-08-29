@@ -109,14 +109,34 @@ function separateReceiptMarker(tokens: string[]) {
   return [...tokens.slice(0, -1), amountPart, match[2]];
 }
 
-function accountTableLine(line: string, page: number, section?: string, providerId?: string): ExtractedLine | undefined {
+function reconciledOcrTotal(quantity: number, unitAmount: number, parsedTotal: number, allowReconciliation: boolean) {
+  const expected = Math.round(quantity * unitAmount);
+  if (!allowReconciliation || expected <= 0 || parsedTotal <= 0) {
+    return { amount: parsedTotal, reconciled: false };
+  }
+  const ratio = parsedTotal / expected;
+  // Only repair unmistakable OCR column loss or a digit glued to the receipt
+  // marker. Smaller differences may be real discounts/recargos and remain a
+  // quality issue for human review.
+  if (ratio >= 0.5 && ratio <= 2) return { amount: parsedTotal, reconciled: false };
+  return { amount: expected, reconciled: true };
+}
+
+function accountTableLine(
+  line: string,
+  page: number,
+  section?: string,
+  subgroup?: string,
+  providerId?: string,
+  allowOcrReconciliation = false,
+): ExtractedLine | undefined {
   const normalizedLine = normalizeAccountDateLine(line);
   const dateMatch = normalizedLine.match(accountDatePattern);
   if (!dateMatch || dateMatch.index === undefined) return;
   const prefix = splitAccountPrefix(normalizedLine.slice(0, dateMatch.index).trim());
   if (!prefix) return;
   const { code, description } = prefix;
-  if (description.length < 3 || /^(total|bonif)/i.test(description)) return;
+  if (description.length < 3 || !/[a-záéíóúñ]{2}/i.test(description) || /^(total|bonif)/i.test(description)) return;
   const tail = normalizedLine.slice(dateMatch.index + dateMatch[0].length).trim();
   const values = tail.match(/^(-?[\d.]+(?:,\d+)?)\s+(\d+(?:[.,]\d+)?)\s+\(?(-?[\d.]+(?:,\d+)?)\)?(?:\s+\*)?$/);
   const tokens = separateReceiptMarker(tail.split(/\s+/));
@@ -142,19 +162,22 @@ function accountTableLine(line: string, page: number, section?: string, provider
     const hasQuantity = Number.isInteger(first) && first >= 1 && first <= 100 && Number.isFinite(second) && second > 0;
     const quantity = hasQuantity ? first : 1;
     const unitAmount = hasQuantity ? second : rowValues.find((candidate) => candidate > 0) ?? first;
-    const total = rowValues[rowValues.length - 1];
-    if (Number.isFinite(quantity) && Number.isFinite(unitAmount) && Number.isFinite(total)) {
+    const parsedTotal = rowValues[rowValues.length - 1];
+    if (Number.isFinite(quantity) && Number.isFinite(unitAmount) && Number.isFinite(parsedTotal)) {
+      const total = reconciledOcrTotal(quantity, unitAmount, parsedTotal, allowOcrReconciliation);
       return {
         code,
         description,
-        amount: total,
+        amount: total.amount,
         unitAmount,
         quantity,
         date: dateMatch[0],
         section,
+        subgroup,
         providerId,
         page,
-        confidence: hasQuantity ? 92 : 74,
+        confidence: total.reconciled ? 78 : hasQuantity ? 92 : 74,
+        numericReconciled: total.reconciled,
         sourceText: normalize(line),
       };
     }
@@ -184,6 +207,7 @@ function accountTableLine(line: string, page: number, section?: string, provider
       date: dateMatch[0],
       fonasaCode,
       section,
+      subgroup,
       providerId,
       page,
       confidence: 86,
@@ -192,21 +216,24 @@ function accountTableLine(line: string, page: number, section?: string, provider
   }
   const unitAmount = parseNumber(values[1]);
   const quantity = Number(values[2].replace(/\.(?=\d{3}\b)/g, "").replace(",", "."));
-  const total = parseNumber(values[3]);
-  if (!Number.isFinite(unitAmount) || !Number.isFinite(quantity) || !Number.isFinite(total)) return;
+  const parsedTotal = parseNumber(values[3]);
+  if (!Number.isFinite(unitAmount) || !Number.isFinite(quantity) || !Number.isFinite(parsedTotal)) return;
+  const total = reconciledOcrTotal(quantity, unitAmount, parsedTotal, allowOcrReconciliation);
   const fonasaCode = undefined;
   return {
     code,
     description,
-    amount: total,
+    amount: total.amount,
     unitAmount,
     quantity,
     date: dateMatch[0],
     fonasaCode,
     section,
+    subgroup,
     providerId,
     page,
-    confidence: values ? 94 : 86,
+    confidence: total.reconciled ? 78 : values ? 94 : 86,
+    numericReconciled: total.reconciled,
     sourceText: normalize(line),
   };
 }
@@ -244,14 +271,32 @@ function providerFromLine(line: string) {
   return `${match[1]} ${name}`;
 }
 
-function sectionFromLine(line: string, current?: string) {
+function careContextFromPage(text: string) {
+  const upper = text.toUpperCase();
+  if (/HONORARIOS?\s+(?:M[EÉ]DICOS?|QUIR[ÚU]RGICOS?)/.test(upper)) return "Honorarios";
+  if (/(?:ESTADO\s+CUENTA|INSTITUTO[^\n]{0,80})[^\n]{0,80}-?\s*URGENCIA\b|ATENCI[ÓO]N\s+DE\s+URGENCIA/.test(upper)) return "Urgencia";
+  if (/(?:ESTADO\s+CUENTA|INSTITUTO[^\n]{0,80})[^\n]{0,80}-?\s*HOSPITALIZAD[OA]\b|PACIENTE\s+HOSPITALIZAD[OA]/.test(upper)) return "Hospitalización";
+  return undefined;
+}
+
+function subgroupFromLine(line: string, current?: string) {
   const upper = line.toUpperCase();
-  if (/DIA CAMA|HOSPITALIZ/.test(upper)) return "Hospitalización";
-  if (/PABELLON|PABELLÓN/.test(upper)) return "Pabellón";
+  if (/ESTERILIZACI[ÓO]N/.test(upper)) return "Esterilización";
+  if (/SICOTR[ÓO]PICOS?/.test(upper)) return "Sicotrópicos";
+  if (/MEDICAMENTOS?|F[ÁA]RMACOS?/.test(upper)) return "Medicamentos";
+  if (/MATERIALES?|INSUMOS?/.test(upper)) return "Insumos";
+  return current;
+}
+
+function sectionFromLine(line: string, current?: string, careContext?: string) {
+  const upper = line.toUpperCase();
+  if (/FARMACIA\s+EN\s+PABELL[ÓO]N|DERECHO\s+(?:DE\s+)?PABELL[ÓO]N|\bPABELL[ÓO]N\b/.test(upper)) return "Pabellón";
+  if (/D[IÍ]A\s+CAMA/.test(upper)) return "Hospitalización";
   if (/HONORARIO/.test(upper)) return "Honorarios";
-  if (/MATERIALES|INSUMOS/.test(upper)) return "Materiales clínicos";
-  if (/F[ÁA]RMACOS|FARMACIA|MEDICAMENTOS/.test(upper)) return "Medicamentos";
   if (/ANATOMIA PATOLOGICA|RAYOS X|BANCO DE SANGRE/.test(upper)) return normalize(line);
+  if (/MATERIALES|INSUMOS|F[ÁA]RMACOS|FARMACIA|MEDICAMENTOS/.test(upper)) {
+    return careContext ?? (/MATERIALES|INSUMOS/.test(upper) ? "Materiales clínicos" : "Medicamentos");
+  }
   return current;
 }
 
@@ -263,17 +308,31 @@ function isAccountSummaryLine(value: string) {
   return /^(?:total(?:\s|$)|subtotal\b|total\s+por\s+consumo\b|atenci[oó]n\s+(?:abierta|cerrada)\b|ex[aá]menes?\b|imagenolog[ií]a\b|insumos?\b|medicamentos?\b|recetario\b|servicios\s+varios\b|resonancia\s+magnetica\b|consultas?\b|honorarios?\b|procedimientos?\b|pabell[oó]n\b|d[ií]a\s+cama\b)/i.test(value.trim());
 }
 
-function monetaryLines(pages: TextPage[], kind: "account" | "pam"): ExtractedLine[] {
+function monetaryLines(pages: TextPage[], kind: "account" | "pam", allowOcrReconciliation = false): ExtractedLine[] {
   const results: ExtractedLine[] = [];
   let section: string | undefined;
+  let subgroup: string | undefined;
+  let careContext: string | undefined;
   let providerId: string | undefined;
   for (const page of pages) {
     const rawLines = page.text.split(/\r?\n/).map(normalize).filter(Boolean);
+    const nextCareContext = careContextFromPage(page.text);
+    if (nextCareContext && nextCareContext !== careContext) {
+      careContext = nextCareContext;
+      section = nextCareContext;
+      subgroup = undefined;
+    } else if (!section && nextCareContext) {
+      careContext = nextCareContext;
+      section = nextCareContext;
+    }
     for (let index = 0; index < rawLines.length; index += 1) {
       const rawLine = rawLines[index];
       const line = normalize(rawLine);
       providerId = providerFromLine(line) ?? providerId;
-      section = sectionFromLine(line, section);
+      const nextSection = sectionFromLine(line, section, careContext);
+      if (nextSection !== section) subgroup = undefined;
+      section = nextSection;
+      subgroup = subgroupFromLine(line, subgroup);
       const previous = rawLines[index - 1] ?? "";
       const next = rawLines[index + 1] ?? "";
       const neighborDescription = [previous, next]
@@ -284,7 +343,7 @@ function monetaryLines(pages: TextPage[], kind: "account" | "pam"): ExtractedLin
         )
         .join(" ");
       const structured = kind === "account"
-        ? accountTableLine(line, page.page, section, providerId)
+        ? accountTableLine(line, page.page, section, subgroup, providerId, allowOcrReconciliation)
         : pamTableLine(line, page.page, neighborDescription, providerId);
       if (structured) {
         results.push(structured);
@@ -462,7 +521,7 @@ function patientIdentityFields(pages: TextPage[]) {
   ] satisfies Array<ExtractionField | undefined>);
 }
 
-export function parseClinicalAccount(pages: TextPage[]): StructuredExtraction {
+export function parseClinicalAccount(pages: TextPage[], allowOcrReconciliation = false): StructuredExtraction {
   const identityFields = patientIdentityFields(pages);
   const fields = compact([
     providerField(pages),
@@ -481,7 +540,7 @@ export function parseClinicalAccount(pages: TextPage[]): StructuredExtraction {
     label: "Cuenta clínica",
     pages: pages.map((page) => page.page),
     fields,
-    lines: monetaryLines(pages, "account"),
+    lines: monetaryLines(pages, "account", allowOcrReconciliation),
   };
 }
 
@@ -532,8 +591,15 @@ export function structureDocument(
   const detectedAccountPages = pages.filter((_, index) => detectedKinds[index] === "account");
   const detectedPamPages = pages.filter((_, index) => detectedKinds[index] === "pam");
   const isMixedDocument = detectedAccountPages.length > 0 && detectedPamPages.length > 0;
-  if (expected === "account" && !isMixedDocument) accountPages = pages;
-  else if (expected === "pam" && !isMixedDocument) pamPages = pages;
+  let reportedKinds = detectedKinds;
+  if (expected === "account" && !isMixedDocument) {
+    accountPages = pages;
+    reportedKinds = pages.map(() => "account" as const);
+  }
+  else if (expected === "pam" && !isMixedDocument) {
+    pamPages = pages;
+    reportedKinds = pages.map(() => "pam" as const);
+  }
   else {
     accountPages = detectedAccountPages;
     pamPages = detectedPamPages;
@@ -550,7 +616,8 @@ export function structureDocument(
     pageCount: pages.length,
     usedOcr,
     ocrPages,
-    account: accountPages.length ? parseClinicalAccount(accountPages) : undefined,
+    pageKinds: pages.map((page, index) => ({ page: page.page, kind: reportedKinds[index] })),
+    account: accountPages.length ? parseClinicalAccount(accountPages, usedOcr) : undefined,
     pam: pamPages.length ? parsePam(pamPages) : undefined,
   };
 }

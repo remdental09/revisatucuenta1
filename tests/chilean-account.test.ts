@@ -233,6 +233,25 @@ test("no confunde una glosa de apoyo diagnóstico con un pabellón realizado", (
   assert.equal(result.lineAssessments.find(({ line }) => line.id === "syringe")?.candidates.some(({ bundle }) => bundle === "operating_room"), false);
 });
 
+test("usa el contexto local: incluye cargos explícitos de pabellón y no arrastra Urgencia", () => {
+  const result = analyzeClinicalAccount([
+    { ...base, id: "main", code: "18-02-053-02", description: "APENDICECTOMIA POR VIA", section: "Pabellón", amount: 1914834 },
+    { ...base, id: "trocar", description: "KIT TROCAR DESCARTABLE", section: "Pabellón", subgroup: "Insumos", amount: 5500 },
+    { ...base, id: "urgent-syringe", description: "JERINGA DESECHABLE", section: "Urgencia", amount: 900 },
+    { ...base, id: "urgent-flebo", description: "FLEBOCLISIS", section: "Urgencia", amount: 42957 },
+  ]);
+  const main = result.lineAssessments.find(({ line }) => line.id === "main");
+  const trocar = result.lineAssessments.find(({ line }) => line.id === "trocar");
+  const urgentSyringe = result.lineAssessments.find(({ line }) => line.id === "urgent-syringe");
+  const urgentFlebo = result.lineAssessments.find(({ line }) => line.id === "urgent-flebo");
+
+  assert.equal(main?.candidates.length, 0);
+  assert.ok(trocar?.candidates.some((candidate) => candidate.bundle === "operating_room" && candidate.knowledgeIds.includes("CL-PAB-SECTION-CONTEXT-002")));
+  assert.equal(urgentSyringe?.candidates.some((candidate) => candidate.bundle === "operating_room"), false);
+  assert.equal(urgentFlebo?.candidates.some((candidate) => candidate.bundle === "operating_room"), false);
+  assert.ok(urgentFlebo?.candidates.some((candidate) => candidate.bundle === "hospital_stay"));
+});
+
 test("distingue anestésicos incluidos de honorarios del anestesiólogo", () => {
   const result = analyzeClinicalAccount([
     { ...base, id: "pab", description: "Derecho de pabellón", section: "Pabellón", amount: 900000 },

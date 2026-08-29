@@ -1,6 +1,6 @@
 // Increment this whenever the extraction rules change in a way that makes a
 // previously persisted extraction unsafe to present as current.
-export const CURRENT_READER_VERSION = "2026-08-28.1";
+export const CURRENT_READER_VERSION = "2026-08-29.1";
 
 export type ExtractionField = {
   key: string;
@@ -20,9 +20,11 @@ export type ExtractedLine = {
   code?: string;
   fonasaCode?: string;
   section?: string;
+  subgroup?: string;
   providerId?: string;
   quantity?: number;
   unitAmount?: number;
+  numericReconciled?: boolean;
   confidence?: number;
   sourceText?: string;
   sourceRegion?: string;
@@ -114,6 +116,10 @@ export type DocumentExtraction = {
   pageCount: number;
   usedOcr: boolean;
   ocrPages?: number[];
+  pageKinds?: Array<{
+    page: number;
+    kind: "account" | "pam" | "unknown";
+  }>;
   readerAssessment?: ReaderAssessment;
   account?: StructuredExtraction;
   pam?: StructuredExtraction;

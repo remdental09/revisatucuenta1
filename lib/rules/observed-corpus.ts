@@ -598,6 +598,8 @@ function functionalAlertForLine(
 
   const lineIsHospital = HOSPITAL_CONTEXT_TERMS.some((term) => fullLineText.includes(normalize(term)));
   const lineIsOperatingRoom = OPERATING_ROOM_CONTEXT_TERMS.some((term) => fullLineText.includes(normalize(term)));
+  const lineIsEmergency = /\burgencia\b/.test(sectionText);
+  if (rule.targetBundles.includes("operating_room") && lineIsEmergency && !lineIsOperatingRoom) return null;
   const targetHospital = rule.targetBundles.includes("hospital_stay");
   const contextConflict = targetHospital && context.hasOperatingRoom && !lineIsHospital && !lineIsOperatingRoom;
   const observed = observedSupportForRule(rule, corpus);

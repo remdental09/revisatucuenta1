@@ -39,6 +39,14 @@ test("separa automáticamente un PDF mixto aunque se cargue como cuenta clínica
   assert.deepEqual(result.pam?.pages, [9]);
   assert.equal(result.account?.lines[0]?.description, "DIA CAMA");
   assert.equal(result.pam?.lines[0]?.code, "1802053");
+  assert.deepEqual(result.pageKinds, [
+    { page: 1, kind: "account" },
+    { page: 9, kind: "pam" },
+  ]);
+  const assessment = assessExtractionQuality(result, "account");
+  assert.equal(assessment.codeChangeNeeded, false);
+  assert.equal(assessment.parserMode, "mixed");
+  assert.match(assessment.signals.join(" "), /fuentes independientes/i);
 });
 
 test("extrae filas PAM escaneadas aunque el OCR pierda los símbolos de moneda", () => {
@@ -267,6 +275,39 @@ test("separa códigos pegados a la glosa y conserva la sección entre páginas",
   );
 });
 
+test("conserva Farmacia en Pabellón entre páginas y separa después Urgencia", () => {
+  const result = structureDocument([
+    {
+      page: 1,
+      text: [
+        "ESTADO CUENTA PACIENTE - HOSPITALIZADO",
+        "FARMACIA EN PABELLON - INSUMOS",
+        "22040003 JERINGA 10 CC 06-07-2025 1 421 0 354 354 67 421 1",
+      ].join("\n"),
+    },
+    {
+      page: 2,
+      text: [
+        "ESTADO CUENTA PACIENTE - HOSPITALIZADO",
+        "600500001 KIT TROCAR DESCARTABLE 06-07-2025 1 5.500 0 4.622 4.622 878 5.500 1",
+      ].join("\n"),
+    },
+    {
+      page: 4,
+      text: [
+        "ESTADO CUENTA PACIENTE - URGENCIA",
+        "22040003 JERINGA URGENCIA 06-07-2025 1 900 0 756 756 144 900 1",
+      ].join("\n"),
+    },
+  ], "account", true, [1, 2, 4]);
+
+  assert.deepEqual(result.account?.lines.map(({ description, section, subgroup }) => ({ description, section, subgroup })), [
+    { description: "JERINGA 10 CC", section: "Pabellón", subgroup: "Insumos" },
+    { description: "KIT TROCAR DESCARTABLE", section: "Pabellón", subgroup: "Insumos" },
+    { description: "JERINGA URGENCIA", section: "Urgencia", subgroup: undefined },
+  ]);
+});
+
 test("conserva la entidad facturadora por bloque de cuenta", () => {
   const result = structureDocument(
     [{
@@ -419,6 +460,26 @@ test("no infla montos cuando OCR pierde la cantidad de una fila completa", () =>
     { description: "SUERO FISIOLOGICO 20 ML", quantity: 1, unitAmount: 1208, amount: 1208 },
   ]);
   assert.ok(extraction.account?.lines.every((line) => line.amount < 10000));
+});
+
+test("repara sólo pérdidas OCR inequívocas usando cantidad por valor unitario", () => {
+  const extraction = structureDocument([{
+    page: 1,
+    text: [
+      "ESTADO CUENTA PACIENTE - HOSPITALIZADO",
+      "FARMACIA EN PABELLON - MEDICAMENTOS",
+      "11010058 SUERO FISIOLOGICO 250 CC 06-07-2025 1 2.330 0 1.958 1.958 372 230 1",
+      "500500001 KETOPROFENO INYECTABLE 06-07-2025 3 6.756 0 17.032 17.032 3.236 120.268 1",
+    ].join("\n"),
+  }], "account", true, [1]);
+
+  assert.deepEqual(extraction.account?.lines.map(({ amount, numericReconciled }) => ({ amount, numericReconciled })), [
+    { amount: 2330, numericReconciled: true },
+    { amount: 20268, numericReconciled: true },
+  ]);
+  const assessment = assessExtractionQuality(extraction, "account");
+  assert.equal(assessment.numericIssues.length, 0);
+  assert.match(assessment.signals.join(" "), /corrigieron 2 totales OCR/i);
 });
 
 test("prepara un paquete local para revisión humana o LLM externa", () => {

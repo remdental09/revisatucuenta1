@@ -768,6 +768,25 @@ function precedentComparisonsForLine(
   });
 }
 
+const EXPLICIT_OPERATING_ROOM_SECTION_KNOWLEDGE: InclusionKnowledge = {
+  id: "CL-PAB-SECTION-CONTEXT-002",
+  label: "Cargo separado dentro de una sección explícita de pabellón",
+  terms: [],
+  bundle: "operating_room",
+  probability: 0.78,
+  authority: "technical_standard",
+  status: "provisional",
+  scope: "fonasa_mle",
+  sourceReference: "Circular N.º 43 y Compendio de Procedimientos: alcance integral del Derecho de Pabellón",
+  rationale:
+    "La propia cuenta ubicó el cargo dentro de Farmacia en Pabellón, Insumos, Medicamentos o Esterilización de pabellón. Esa ubicación abre una presunción técnica de cobro separado que debe contrastarse con convenio, arancel y registro de uso.",
+};
+
+function looksLikePrincipalProcedure(line: ChileanBillingLine) {
+  const value = normalize(`${line.code ?? ""} ${line.description}`);
+  return /derecho (?:de )?pabellon|pabellon transitorio|\b[a-z]{3,}(?:ectomia|plastia|tomia)\b|apendicect|colecistect|turbinect|rinoplast|septoplast|cesarea|cirugia principal/.test(value);
+}
+
 function scoreLine(
   line: ChileanBillingLine,
   lines: ChileanBillingLine[],
@@ -795,6 +814,7 @@ function scoreLine(
     `${line.section ?? ""} ${line.subgroup ?? ""}`,
     HOSPITAL_STAY_ANCHORS,
   );
+  const explicitEmergencySection = /\burgencia\b/.test(section);
   const lineHasOperatingRoomAnchor = includesAnchor(
     `${line.section ?? ""} ${line.subgroup ?? ""} ${line.description}`,
     OPERATING_ROOM_ANCHORS,
@@ -817,6 +837,11 @@ function scoreLine(
         !context.hasOperatingRoom &&
         !lineHasOperatingRoomAnchor
       ) &&
+      !(
+        entry.bundle === "operating_room" &&
+        explicitEmergencySection &&
+        !lineHasOperatingRoomAnchor
+      ) &&
       (!strongAdjudicatedBundle || entry.bundle === strongAdjudicatedBundle) &&
       !(
         context.noPavilionHospitalStay &&
@@ -825,9 +850,17 @@ function scoreLine(
       !(
         context.hasOperatingRoom &&
         HOSPITAL_NURSING_CONTEXT_RULES.has(entry.id) &&
-        !explicitHospitalSection
+        !explicitHospitalSection &&
+        !explicitEmergencySection
       ),
   );
+  if (
+    sectionFamily === "operating_room" &&
+    !professionalCharge &&
+    !looksLikePrincipalProcedure(line)
+  ) {
+    evidence.push(EXPLICIT_OPERATING_ROOM_SECTION_KNOWLEDGE);
+  }
   const linkedFamilies = new Set(
     lines
       .filter(

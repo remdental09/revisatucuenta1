@@ -64,6 +64,7 @@ function numericIssues(lines: Array<{
   quantity?: number;
   unitAmount?: number;
   amount: number;
+  numericReconciled?: boolean;
 }>) {
   const items: ReaderUnknownItem[] = [];
   for (const line of lines) {
@@ -83,6 +84,33 @@ function numericIssues(lines: Array<{
   return items.slice(0, 30);
 }
 
+function parseChileanAmount(value: string) {
+  const normalized = value.replace(/[^0-9,.-]/g, "");
+  if (!normalized) return Number.NaN;
+  if (/^\d{1,3}(?:[.,]\d{3})+$/.test(normalized)) return Number(normalized.replace(/[.,]/g, ""));
+  return Number(normalized.replace(/\./g, "").replace(",", "."));
+}
+
+function documentTotalIssue(
+  fields: Array<{ key: string; value: string; page: number }>,
+  lines: Array<{ amount: number }>,
+) {
+  const totalField = fields.find((field) => field.key === "total");
+  if (!totalField || !lines.length) return;
+  const printedTotal = parseChileanAmount(totalField.value);
+  const extractedTotal = Math.round(lines.reduce((sum, line) => sum + line.amount, 0));
+  if (!Number.isFinite(printedTotal) || printedTotal <= 0) return;
+  const difference = Math.abs(Math.round(printedTotal) - extractedTotal);
+  const tolerance = Math.max(1_000, Math.round(printedTotal * 0.01));
+  if (difference <= tolerance) return;
+  return {
+    value: `Total impreso ${Math.round(printedTotal)} vs. suma de líneas extraídas ${extractedTotal}`,
+    page: totalField.page,
+    reason: "La suma de los renglones no concilia con el total informado por el prestador; puede haber filas omitidas, duplicadas o columnas OCR mal interpretadas.",
+    confidence: 0.2,
+  } satisfies ReaderUnknownItem;
+}
+
 export function assessExtractionQuality(
   extraction: DocumentExtraction,
   expectedKind: ReaderKind,
@@ -93,10 +121,19 @@ export function assessExtractionQuality(
   const pages = source?.pages ?? [];
   const fields = source?.fields ?? [];
   const unknown = unknownItems(extraction, lines);
-  const numeric = numericIssues(lines);
+  const lineNumericIssues = numericIssues(lines);
+  const totalIssue = kind === "account" ? documentTotalIssue(fields, lines) : undefined;
+  const numeric = totalIssue ? [...lineNumericIssues, totalIssue] : lineNumericIssues;
+  const reconciledCount = lines.filter((line) => line.numericReconciled).length;
+  const unresolvedPages = (extraction.pageKinds ?? []).filter((page) => page.kind === "unknown");
+  const recognizedMixedDocument = Boolean(
+    extraction.account && extraction.pam && extraction.pageKinds?.length && unresolvedPages.length === 0,
+  );
   const lowConfidencePages = [...new Set([...unknown, ...numeric].map((item) => item.page))].sort((left, right) => left - right);
   const signals: string[] = [];
-  const parserMode = extraction.usedOcr
+  const parserMode = recognizedMixedDocument
+    ? "mixed"
+    : extraction.usedOcr
     ? extraction.ocrPages && extraction.ocrPages.length > 0 && extraction.ocrPages.length < extraction.pageCount
       ? "mixed"
       : "ocr"
@@ -104,16 +141,19 @@ export function assessExtractionQuality(
 
   if (!extraction.pageCount) signals.push("El archivo no informó páginas legibles.");
   if (extraction.usedOcr) signals.push("Se utilizó OCR porque el PDF no entregó texto suficiente.");
+  if (recognizedMixedDocument) signals.push("El archivo contenía cuenta clínica y PAM; ambos bloques fueron separados y se analizan como fuentes independientes.");
   if (!source) signals.push(`No se identificó una estructura de ${kind === "unknown" ? "cuenta o PAM" : kind}.`);
   if (!lines.length) signals.push("No se reconocieron líneas monetarias analizables.");
   if (unknown.length && lines.length) signals.push("Existen glosas que requieren revisión del lector.");
   if (numeric.length) signals.push("Se detectaron inconsistencias entre cantidad, valor unitario y total; el diagnóstico no debe darse por válido sin revisar esas filas.");
+  if (reconciledCount) signals.push(`Se corrigieron ${reconciledCount} totales OCR únicamente cuando cantidad × valor unitario mostró una pérdida inequívoca de dígitos.`);
   if (kind === "account" && lines.length > 0 && !fields.some((field) => field.key === "total")) {
     signals.push("No se encontró un total explícito; el total no debe inferirse sin revisión.");
   }
-  if (pages.length && pages.length < extraction.pageCount) {
+  if (pages.length && pages.length < extraction.pageCount && !recognizedMixedDocument) {
     signals.push("No todas las páginas quedaron asociadas al tipo documental esperado.");
   }
+  if (unresolvedPages.length) signals.push(`${unresolvedPages.length} páginas no pudieron clasificarse con seguridad como cuenta o PAM.`);
 
   let confidence = 0.15;
   if (extraction.pageCount > 0) confidence += 0.2;
@@ -121,12 +161,13 @@ export function assessExtractionQuality(
   if (lines.length > 0) confidence += Math.min(0.28, lines.length >= 5 ? 0.28 : lines.length * 0.055);
   if (fields.length > 0) confidence += Math.min(0.12, fields.length * 0.025);
   if (extraction.usedOcr) confidence -= 0.1;
+  confidence -= Math.min(0.08, reconciledCount * 0.01);
   confidence -= Math.min(0.25, unknown.length * 0.06);
   confidence -= Math.min(0.25, numeric.length * 0.05);
   if (kind === "account" && lines.length > 0 && !fields.some((field) => field.key === "total")) confidence -= 0.08;
   confidence = Math.max(0.05, Math.min(0.98, confidence));
 
-  const codeChangeNeeded = !source || !lines.length || unknown.length >= 3 || numeric.length >= 2 || (extraction.pageCount > 1 && pages.length < extraction.pageCount);
+  const codeChangeNeeded = !source || !lines.length || unknown.length >= 3 || numeric.length >= 2 || unresolvedPages.length > 0 || (extraction.pageCount > 1 && pages.length < extraction.pageCount && !recognizedMixedDocument);
   const status = codeChangeNeeded
     ? "reader_change_needed"
     : signals.length || extraction.usedOcr || unknown.length
