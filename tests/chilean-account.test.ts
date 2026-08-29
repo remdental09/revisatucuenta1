@@ -48,6 +48,13 @@ const base = {
   page: 1,
 };
 
+const testAuthHeaders = {
+  "oai-authenticated-user-id": "chilean-account-tests",
+  "oai-authenticated-user-email": "tests@revisatucuenta.local",
+};
+
+process.env.REVISA_DEVELOPER_EMAILS = testAuthHeaders["oai-authenticated-user-email"];
+
 test("mantiene incertidumbre explícita para artículos de hospitalización", () => {
   const lines: ChileanBillingLine[] = [
     { ...base, id: "stay", description: "Hospitalización transitoria", section: "Hospitalización transitoria", amount: 314968 },
@@ -363,7 +370,7 @@ test("expone el motor para las próximas cuentas con trazabilidad de página", a
   const response = await analyzeAccountRequest(
     new Request("http://localhost/api/analysis", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { ...testAuthHeaders, "content-type": "application/json" },
       body: JSON.stringify({
         lines: [
           { ...base, id: "needle", description: "Aguja desechable", section: "Materiales clínicos", amount: 1200 },
@@ -480,7 +487,7 @@ test("incorpora cuentas nuevas al corpus sólo después de validarlas", async ()
   const caseId = `corpus-test-${randomUUID()}`;
   const created = await createCaseRequest(new Request("http://localhost/api/cases", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { ...testAuthHeaders, "content-type": "application/json" },
     body: JSON.stringify({ id: caseId, episodeLabel: "Hospitalización pediátrica" }),
   }));
   assert.equal(created.status, 201);
@@ -492,7 +499,7 @@ test("incorpora cuentas nuevas al corpus sólo después de validarlas", async ()
   };
   const firstAnalysis = await analyzeAccountRequest(new Request("http://localhost/api/analysis", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { ...testAuthHeaders, "content-type": "application/json" },
     body: JSON.stringify(requestBody),
   }));
   const firstPayload = await firstAnalysis.json() as { corpusLearning?: { status: string }; observedCorpus: { caseCount: number } };
@@ -502,7 +509,7 @@ test("incorpora cuentas nuevas al corpus sólo después de validarlas", async ()
 
   const validated = await updateCorpusRequest(new Request(`http://localhost/api/cases/${caseId}/corpus`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { ...testAuthHeaders, "content-type": "application/json" },
     body: JSON.stringify({ status: "validated" }),
   }), { params: Promise.resolve({ id: caseId }) });
   const validatedPayload = await validated.json() as { activeInCorpus: boolean; caseCount: number };
@@ -512,7 +519,7 @@ test("incorpora cuentas nuevas al corpus sólo después de validarlas", async ()
 
   const secondAnalysis = await analyzeAccountRequest(new Request("http://localhost/api/analysis", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { ...testAuthHeaders, "content-type": "application/json" },
     body: JSON.stringify(requestBody),
   }));
   const secondPayload = await secondAnalysis.json() as { observedCorpus: { caseCount: number; observationCount: number }; lineAssessments: Array<{ observedEquivalents: Array<{ description: string }> }> };
@@ -525,14 +532,14 @@ test("acumula cuenta y PAM en una observación pendiente antes de activar el cor
   const caseId = `account-pam-corpus-${randomUUID()}`;
   const created = await createCaseRequest(new Request("http://localhost/api/cases", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { ...testAuthHeaders, "content-type": "application/json" },
     body: JSON.stringify({ id: caseId, episodeLabel: "Cuenta y PAM" }),
   }));
   assert.equal(created.status, 201);
 
   const account = await registerCorpusObservationRequest(new Request("http://localhost/api/corpus", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { ...testAuthHeaders, "content-type": "application/json" },
     body: JSON.stringify({
       caseId,
       sourceKind: "account",
@@ -545,7 +552,7 @@ test("acumula cuenta y PAM en una observación pendiente antes de activar el cor
 
   const pam = await registerCorpusObservationRequest(new Request("http://localhost/api/corpus", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { ...testAuthHeaders, "content-type": "application/json" },
     body: JSON.stringify({
       caseId,
       sourceKind: "pam",
@@ -560,7 +567,7 @@ test("acumula cuenta y PAM en una observación pendiente antes de activar el cor
 
   const validated = await updateCorpusRequest(new Request(`http://localhost/api/cases/${caseId}/corpus`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { ...testAuthHeaders, "content-type": "application/json" },
     body: JSON.stringify({ status: "validated" }),
   }), { params: Promise.resolve({ id: caseId }) });
   assert.equal(validated.status, 200);
@@ -568,19 +575,19 @@ test("acumula cuenta y PAM en una observación pendiente antes de activar el cor
 });
 
 test("mantiene el PAM validado fuera del corpus de análisis de cuenta", async () => {
-  const baselineResponse = await getCorpusObservationRequest(new Request("http://localhost/api/corpus"));
+  const baselineResponse = await getCorpusObservationRequest(new Request("http://localhost/api/corpus", { headers: testAuthHeaders }));
   const baseline = await baselineResponse.json() as { caseCount: number; observationCount: number };
   const caseId = `pam-only-corpus-${randomUUID()}`;
   const created = await createCaseRequest(new Request("http://localhost/api/cases", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { ...testAuthHeaders, "content-type": "application/json" },
     body: JSON.stringify({ id: caseId, episodeLabel: "PAM aislado" }),
   }));
   assert.equal(created.status, 201);
 
   const pam = await registerCorpusObservationRequest(new Request("http://localhost/api/corpus", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { ...testAuthHeaders, "content-type": "application/json" },
     body: JSON.stringify({
       caseId,
       sourceKind: "pam",
@@ -592,14 +599,14 @@ test("mantiene el PAM validado fuera del corpus de análisis de cuenta", async (
 
   const validated = await updateCorpusRequest(new Request(`http://localhost/api/cases/${caseId}/corpus`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { ...testAuthHeaders, "content-type": "application/json" },
     body: JSON.stringify({ status: "validated" }),
   }), { params: Promise.resolve({ id: caseId }) });
   assert.equal(validated.status, 200);
 
   const accountProbe = await analyzeAccountRequest(new Request("http://localhost/api/analysis", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { ...testAuthHeaders, "content-type": "application/json" },
     body: JSON.stringify({ lines: [{ id: "account-probe", description: "Prestación exclusiva de liquidación PAM", amount: 1200, page: 1, section: "Materiales clínicos" }] }),
   }));
   const payload = await accountProbe.json() as { observedCorpus: { caseCount: number; observationCount: number }; lineAssessments: Array<{ observedEquivalents: unknown[] }> };

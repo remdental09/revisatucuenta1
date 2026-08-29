@@ -4,6 +4,7 @@ import { removePendingCorpusContribution } from "../../../lib/server/observed-co
 import { requireApiUser } from "../../../lib/server/auth.ts";
 import { caseAccessResponse, developerAccessResponse } from "../../../lib/server/case-access.ts";
 import { purgeExpiredDocumentSources } from "../../../lib/server/source-retention.ts";
+import { recoverStaleDatabaseExtractions } from "../../../lib/server/extraction-watchdog.ts";
 
 function sourceKindForClassification(classification: string): "account" | "pam" | undefined {
   if (/pam|liquid/i.test(classification)) return "pam";
@@ -37,6 +38,7 @@ export async function GET(request: Request) {
   }
   if (!env?.DB) return Response.json({ documents: localGetDocuments(caseId, auth.user.id, true) });
   await ensureCaseSchema(env.DB);
+  await recoverStaleDatabaseExtractions(env.DB, caseId);
   const result = await env.DB.prepare(`SELECT id, original_name, mime_type, byte_size, classification, classification_confidence, processing_status, processing_error, source_expires_at, source_deleted_at, page_from, page_to, created_at FROM documents WHERE case_id = ? ORDER BY created_at ASC`).bind(caseId).all();
   return Response.json({ documents: result.results });
 }

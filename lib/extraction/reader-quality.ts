@@ -251,3 +251,91 @@ export function readerChangeProposalToMarkdown(proposal: ReaderChangeProposal) {
     "",
   ].join("\n");
 }
+
+/**
+ * Creates a self-contained handoff for a human reviewer using an external
+ * LLM. It deliberately contains only the extraction evidence already stored
+ * in the case; it never sends the document or its medical data anywhere.
+ */
+export type ReaderReviewPackage = {
+  packageVersion: string;
+  generatedAt: string;
+  documentName: string;
+  readerAssessment: ReaderAssessment;
+  extracted: {
+    fields: DocumentExtraction["account"] extends infer Account
+      ? Account extends { fields: infer Fields } ? Fields : never
+      : never;
+    lines: DocumentExtraction["account"] extends infer Account
+      ? Account extends { lines: infer Lines } ? Lines : never
+      : never;
+  };
+  instructions: string[];
+  safetyBoundary: string;
+};
+
+export function buildReaderReviewPackage(documentName: string, extraction: DocumentExtraction): ReaderReviewPackage {
+  const account = extraction.account;
+  const assessment = extraction.readerAssessment ?? assessExtractionQuality(extraction, account ? "account" : "unknown");
+  return {
+    packageVersion: `${CONTRACT_VERSION}-handoff`,
+    generatedAt: new Date().toISOString(),
+    documentName,
+    readerAssessment: assessment,
+    extracted: {
+      fields: account?.fields ?? [],
+      lines: account?.lines ?? [],
+    },
+    instructions: [
+      "Revisar el documento original junto con esta evidencia, página por página.",
+      "Corregir sólo errores de lectura claramente demostrables y conservar el texto original.",
+      "No convertir una hipótesis técnica en una conclusión legal o de cobertura.",
+      "Devolver una lista de correcciones propuestas y su evidencia; la aceptación debe ser humana y versionada.",
+    ],
+    safetyBoundary: "Este paquete es una ayuda de revisión. No modifica código, no publica reglas y no determina devoluciones ni pertenencia a Día Cama o Pabellón.",
+  };
+}
+
+export function readerReviewPackageToMarkdown(review: ReaderReviewPackage) {
+  const fields = review.extracted.fields.map((field) =>
+    `| ${field.label} | ${field.value} | pág. ${field.page} | ${Math.round(field.confidence)}% | ${field.sourceText ?? "—"} |`,
+  );
+  const lines = review.extracted.lines.map((line, index) =>
+    `| ${index + 1} | ${line.page} | ${line.code ?? "—"} | ${line.description} | ${Math.round(line.amount)} | ${line.sourceText ?? "—"} |`,
+  );
+  return [
+    `# Revisión asistida de lectura: ${review.documentName}`,
+    "",
+    `- Paquete: ${review.packageVersion}`,
+    `- Generado: ${review.generatedAt}`,
+    `- Estado del lector: ${review.readerAssessment.status}`,
+    `- Ruta: ${review.readerAssessment.parserMode}`,
+    `- Confianza global: ${Math.round(review.readerAssessment.confidence * 100)}%`,
+    `- Huella de formato: ${review.readerAssessment.templateFingerprint}`,
+    "",
+    "## Instrucciones para la revisión humana o LLM externo",
+    "",
+    ...review.instructions.map((instruction) => `- ${instruction}`),
+    "",
+    "## Campos extraídos",
+    "",
+    "| Campo | Valor | Página | Confianza | Texto de origen |",
+    "|---|---|---:|---:|---|",
+    ...(fields.length ? fields : ["| — | No se extrajeron campos | — | — | — |"]),
+    "",
+    "## Líneas extraídas",
+    "",
+    "| # | Página | Código | Glosa | Monto | Texto de origen |",
+    "|---:|---:|---|---|---:|---|",
+    ...(lines.length ? lines : ["| — | — | — | No se reconocieron líneas monetarias | — | — |"]),
+    "",
+    "## Señales y elementos dudosos",
+    "",
+    ...review.readerAssessment.signals.map((signal) => `- ${signal}`),
+    ...review.readerAssessment.unknownItems.map((item) => `- Página ${item.page}: ${item.value} — ${item.reason}`),
+    ...review.readerAssessment.numericIssues.map((item) => `- Página ${item.page}: ${item.value} — ${item.reason}`),
+    "",
+    `> ${review.safetyBoundary}`,
+    "",
+  ].join("\n");
+}

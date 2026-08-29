@@ -27,7 +27,7 @@ La fase de cuenta clínica también detecta:
 
 El PAM se reserva para una segunda fase: conciliación, cobertura, rechazo y traslado del costo al paciente.
 
-La ruta `POST /api/analysis` recibe los renglones previamente extraídos del PDF y ejecuta este motor conservando la página y el identificador documental. La extracción OCR/PDF continúa siendo una etapa separada y pendiente de conectar al cargador de archivos.
+La ruta `POST /api/analysis` recibe los renglones previamente extraídos del PDF y ejecuta este motor conservando la página y el identificador documental. El cargador usa PDF.js para leer texto directo y Tesseract.js para páginas escaneadas; cuando encuentra señales de cuenta y PAM en el mismo archivo, segmenta ambos documentos por página antes de persistirlos.
 
 ### Corpus observado y equivalencia de insumos
 
@@ -84,7 +84,8 @@ Esta capa separa siempre tres niveles: hecho documental, inferencia conductual e
 
 ## Límites deliberados del MVP
 
-- La clasificación de archivos nuevos usa señales del nombre y permite confirmación humana.
-- El caso emblemático utiliza su segmentación ya verificada visualmente.
+- La clasificación inicial de archivos nuevos usa señales del nombre, pero la lectura también revisa el contenido y puede detectar un PDF mixto cuenta/PAM.
+- Un fallo de lectura deja el original cifrado temporalmente, muestra el error en desarrollo y permite reemplazar o descargar el original para una revisión humana/LLM externa.
 - El OCR clínico y la reconstrucción financiera básica están conectados al cargador. El motor contractual y los reclamos enviados siguen siendo capas posteriores.
+- El paquete de revisión humana/LLM se genera localmente desde la evidencia extraída. No envía datos a terceros ni modifica código automáticamente.
 - El resultado se presenta como preliminar y no afirma por sí solo un cobro indebido.

@@ -3,7 +3,7 @@ import test from "node:test";
 import { structureDocument } from "../lib/extraction/parsers.ts";
 import { extractedPatientField } from "../lib/extraction/patient-identity.ts";
 import { textItemsToLines } from "../lib/extraction/client.ts";
-import { assessExtractionQuality, buildReaderChangeProposal } from "../lib/extraction/reader-quality.ts";
+import { assessExtractionQuality, buildReaderChangeProposal, buildReaderReviewPackage, readerReviewPackageToMarkdown } from "../lib/extraction/reader-quality.ts";
 import { localCreateCase, localGetCase, localSaveDocument, localSaveExtraction } from "../lib/server/runtime-store.ts";
 
 test("extracts account and PAM independently from a mixed document", () => {
@@ -27,6 +27,28 @@ test("extracts account and PAM independently from a mixed document", () => {
   assert.equal(result.account?.fields.find((field) => field.key === "total")?.value, "6.912.876");
   assert.equal(result.pam?.fields.find((field) => field.key === "bonus")?.value, "6.472.806");
   assert.equal(result.pam?.fields.find((field) => field.key === "copay")?.value, "440.069");
+});
+
+test("separa automáticamente un PDF mixto aunque se cargue como cuenta clínica", () => {
+  const result = structureDocument([
+    { page: 1, text: "Estado Cuenta Paciente Definitiva - Detallada\nCódigo Descripción Cant. Total\n11010001 DIA CAMA 06-07-2025 1 452.075 0 0 452.075 0 452.075 1" },
+    { page: 9, text: "PROGRAMA DE ATENCION MEDICA\nFolio PAM: 7000355688\nCódigo Prestación Cantidad Valor Bonificación Copago\n1802053 APENDICECTOMIA 1 $ 1.914.834 $ 1.914.834 $ 0" },
+  ], "account", true, [1, 9]);
+
+  assert.deepEqual(result.account?.pages, [1]);
+  assert.deepEqual(result.pam?.pages, [9]);
+  assert.equal(result.account?.lines[0]?.description, "DIA CAMA");
+  assert.equal(result.pam?.lines[0]?.code, "1802053");
+});
+
+test("extrae filas PAM escaneadas aunque el OCR pierda los símbolos de moneda", () => {
+  const result = structureDocument([
+    { page: 20, text: "PROGRAMA DE ATENCION MEDICA\n0201101 DÍA CAMA DE HOSPITALIZACIÓN INTEGRAL CUIDADOS MEDIOS 1 452075 452.075" },
+  ], "pam", true, [20]);
+
+  assert.deepEqual(result.pam?.lines.map(({ code, description, quantity, amount, confidence }) => ({ code, description, quantity, amount, confidence })), [
+    { code: "0201101", description: "DÍA CAMA DE HOSPITALIZACIÓN INTEGRAL CUIDADOS MEDIOS", quantity: 1, amount: 452075, confidence: 82 },
+  ]);
 });
 
 test("preserves PDF table rows using text coordinates", () => {
@@ -128,7 +150,7 @@ test("extracts patient identity from an OCR-style Indisa account", () => {
         "Empresa : CLINICA INDISA",
         "Id. Ingreso : 611.915 - 8",
         "Rut Paclente : 00.000.000 - 0",
-        "Paciente : PERSONA EJEMPLO INDISA",
+        "Paciente : PERSONA EJEMPLO INDISA Convenio: PLAN DE PRUEBA",
         "Rut Titular : 99.999.999 - 9",
       ].join("\n"),
     }],
@@ -348,4 +370,32 @@ test("marca un formato sin líneas y prepara una propuesta sin cambiar el códig
   const proposal = buildReaderChangeProposal(assessment, "cuenta-nueva.pdf");
   assert.equal(proposal.status, "pending_human_review");
   assert.match(proposal.safetyBoundary, /no modifica el lector/);
+});
+
+test("no infla montos cuando OCR pierde la cantidad de una fila completa", () => {
+  const extraction = structureDocument([{
+    page: 1,
+    text: [
+      "MATERIALES CLINICOS",
+      "22200082 BANDEJA ALUSA ESTERIL 07-07-2025 : 633 o 332 532 101 633 1",
+      "11010057 SUERO FISIOLOGICO 20 ML 07-07-2025 l 1.208 o 1.015 1.015 193 1.208 1",
+    ].join("\n"),
+  }], "account", true, [1]);
+
+  assert.deepEqual(extraction.account?.lines.map((line) => ({ description: line.description, quantity: line.quantity, unitAmount: line.unitAmount, amount: line.amount })), [
+    { description: "BANDEJA ALUSA ESTERIL", quantity: 1, unitAmount: 633, amount: 633 },
+    { description: "SUERO FISIOLOGICO 20 ML", quantity: 1, unitAmount: 1208, amount: 1208 },
+  ]);
+  assert.ok(extraction.account?.lines.every((line) => line.amount < 10000));
+});
+
+test("prepara un paquete local para revisión humana o LLM externa", () => {
+  const extraction = structureDocument([{ page: 1, text: "CUENTA CLINICA FORMATO NUEVO\nContenido no reconocido" }], "account", true, [1]);
+  extraction.readerAssessment = assessExtractionQuality(extraction, "account");
+  const review = buildReaderReviewPackage("cuenta-nueva.pdf", extraction);
+  const markdown = readerReviewPackageToMarkdown(review);
+
+  assert.equal(review.readerAssessment.status, "reader_change_needed");
+  assert.match(markdown, /revisión humana o LLM externo/i);
+  assert.match(markdown, /no envía|no modifica código/i);
 });

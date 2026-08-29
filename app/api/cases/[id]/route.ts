@@ -5,6 +5,7 @@ import type { ClinicalAccountAnalysis } from "../../../../lib/rules/chilean-acco
 import { getCorpusContributionStatus } from "../../../../lib/server/observed-corpus-store.ts";
 import { requireApiUser } from "../../../../lib/server/auth.ts";
 import { caseAccessResponse } from "../../../../lib/server/case-access.ts";
+import { recoverStaleDatabaseExtractions } from "../../../../lib/server/extraction-watchdog.ts";
 
 export async function GET(
   request: Request,
@@ -22,6 +23,7 @@ export async function GET(
     return Response.json({ ...snapshot, corpusStatus: await getCorpusContributionStatus(env, id) });
   }
   await ensureCaseSchema(env.DB);
+  await recoverStaleDatabaseExtractions(env.DB, id);
   const caseResult = await env.DB.prepare(`SELECT * FROM cases WHERE id = ?`).bind(id).first();
   if (!caseResult) return Response.json({ error: "Caso no encontrado" }, { status: 404 });
 

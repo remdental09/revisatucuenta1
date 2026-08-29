@@ -120,25 +120,29 @@ function accountTableLine(line: string, page: number, section?: string, provider
   const tail = normalizedLine.slice(dateMatch.index + dateMatch[0].length).trim();
   const values = tail.match(/^(-?[\d.]+(?:,\d+)?)\s+(\d+(?:[.,]\d+)?)\s+\(?(-?[\d.]+(?:,\d+)?)\)?(?:\s+\*)?$/);
   const tokens = separateReceiptMarker(tail.split(/\s+/));
-  const quantityIndex = tokens.findIndex((token) => /^\d{1,3},\d{3}$/.test(token));
-  const unitAmountToken = quantityIndex >= 0
-    ? tokens.slice(quantityIndex + 1).find((token) => /^\$?[\d.]+(?:,\d+)?$/.test(token))
-    : undefined;
   const numericValues = tokens.map(numericToken).filter((value): value is number => value !== undefined);
   const lastToken = tokens[tokens.length - 1] ?? "";
   const previousToken = tokens[tokens.length - 2] ?? "";
   const hasReceiptMarker = (/^[12]$/.test(lastToken)) ||
+    (/^[^0-9]{0,2}[12][^0-9]{0,3}$/.test(lastToken)) ||
     (lastToken === "*" && /^[12]$/.test(previousToken));
+  const firstNumericToken = tokens.find((token) => numericToken(token) !== undefined);
+  const hasLeadingFonasaCode = Boolean(firstNumericToken && /^\d{7}$/.test(firstNumericToken));
 
-  // Some providers print the full account row as:
-  // quantity, unit value, exento, afecto, neto, IVA, total, receipt marker.
-  // OCR often changes the separators or turns the final marker into a star,
-  // so the total is read from the seventh numeric column when available.
-  if (!values && quantityIndex < 0 && numericValues.length >= 6) {
-    const quantity = numericValues[0];
-    const unitAmount = numericValues[1];
-    const totalIndex = numericValues.length - (hasReceiptMarker ? 2 : 1);
-    const total = numericValues[totalIndex];
+  // Full account rows normally contain quantity, unit value, tax columns and
+  // total. OCR can drop the first quantity (for example, `: 633 ... 633 1`)
+  // or turn the receipt marker into a letter glued to its number. In that
+  // case the old positional parser treated a tax value as the quantity and
+  // inflated the line amount. The total is the last numeric value before the
+  // receipt marker; the first positive value is the safest unit fallback.
+  const rowValues = hasReceiptMarker ? numericValues.slice(0, -1) : numericValues;
+  if (!values && !hasLeadingFonasaCode && rowValues.length >= 5) {
+    const first = rowValues[0];
+    const second = rowValues[1];
+    const hasQuantity = Number.isInteger(first) && first >= 1 && first <= 100 && Number.isFinite(second) && second > 0;
+    const quantity = hasQuantity ? first : 1;
+    const unitAmount = hasQuantity ? second : rowValues.find((candidate) => candidate > 0) ?? first;
+    const total = rowValues[rowValues.length - 1];
     if (Number.isFinite(quantity) && Number.isFinite(unitAmount) && Number.isFinite(total)) {
       return {
         code,
@@ -150,20 +154,47 @@ function accountTableLine(line: string, page: number, section?: string, provider
         section,
         providerId,
         page,
-        confidence: 92,
+        confidence: hasQuantity ? 92 : 74,
         sourceText: normalize(line),
       };
     }
   }
 
-  if (!values && (!unitAmountToken || quantityIndex < 0)) return;
-  const unitAmount = values ? parseNumber(values[1]) : parseNumber(unitAmountToken!);
-  const quantity = values
-    ? Number(values[2].replace(/\.(?=\d{3}\b)/g, "").replace(",", "."))
-    : Number(tokens[quantityIndex].replace(".", "").replace(",", "."));
-  const total = values ? parseNumber(values[3]) : Math.round(unitAmount * quantity);
+  // Some providers print the full account row as:
+  // quantity, unit value, exento, afecto, neto, IVA, total, receipt marker.
+  // OCR often changes the separators or turns the final marker into a star,
+  // so the total is read from the seventh numeric column when available.
+  if (!values) {
+    const quantityIndex = tokens.findIndex((token) => /^\d{1,3},\d{3}$/.test(token));
+    const unitAmountToken = quantityIndex >= 0
+      ? tokens.slice(quantityIndex + 1).find((token) => /^\$?[\d.]+(?:,\d+)?$/.test(token))
+      : undefined;
+    if (!unitAmountToken || quantityIndex < 0) return;
+    const unitAmount = parseNumber(unitAmountToken);
+    const quantity = Number(tokens[quantityIndex].replace(".", "").replace(",", "."));
+    const total = Math.round(unitAmount * quantity);
+    if (!Number.isFinite(unitAmount) || !Number.isFinite(quantity) || !Number.isFinite(total)) return;
+    const fonasaCode = tokens.slice(0, quantityIndex).find((token) => /^\d{7}$/.test(token));
+    return {
+      code,
+      description,
+      amount: total,
+      unitAmount,
+      quantity,
+      date: dateMatch[0],
+      fonasaCode,
+      section,
+      providerId,
+      page,
+      confidence: 86,
+      sourceText: normalize(line),
+    };
+  }
+  const unitAmount = parseNumber(values[1]);
+  const quantity = Number(values[2].replace(/\.(?=\d{3}\b)/g, "").replace(",", "."));
+  const total = parseNumber(values[3]);
   if (!Number.isFinite(unitAmount) || !Number.isFinite(quantity) || !Number.isFinite(total)) return;
-  const fonasaCode = values ? undefined : tokens.slice(0, quantityIndex).find((token) => /^\d{7}$/.test(token));
+  const fonasaCode = undefined;
   return {
     code,
     description,
@@ -184,19 +215,23 @@ function pamTableLine(line: string, page: number, neighborDescription = "", prov
   const match = line.match(
     /^([0-9]{6,8})(?:\s+(.+?))?\s+(\d+(?:[.,]\d+)?)\s+\$\s*([0-9.]+)\s+\$\s*([0-9.]+)\s+\$\s*([0-9.]+)\s*$/,
   );
-  if (!match) return;
-  const quantity = Number(match[3].replace(",", "."));
-  const value = parseNumber(match[4]);
+  const plainMatch = line.match(
+    /^([0-9]{6,8})(?:\s+(.+?))?\s+(\d+(?:[.,]\d+)?)\s+([0-9][\d.]*(?:,\d+)?)\s+(?:([0-9][\d.]*(?:,\d+)?)(?:\s+([0-9][\d.]*(?:,\d+)?))?)?\s*$/,
+  );
+  const selected = match ?? plainMatch;
+  if (!selected) return;
+  const quantity = Number(selected[3].replace(",", "."));
+  const value = parseNumber(selected[4]);
   if (!Number.isFinite(quantity) || !Number.isFinite(value)) return;
   return {
-    code: match[1],
-    description: normalize(match[2] || neighborDescription || `Prestación ${match[1]}`),
+    code: selected[1],
+    description: normalize(selected[2] || neighborDescription || `Prestación ${selected[1]}`),
     quantity,
     unitAmount: quantity ? value / quantity : value,
     amount: value,
     providerId,
     page,
-    confidence: 90,
+    confidence: match ? 90 : 82,
     sourceText: normalize(line),
   };
 }
@@ -290,7 +325,7 @@ function cleanPatientName(value: string) {
   return normalize(value)
     .replace(/^[\s:;,.-]+/, "")
     .replace(
-      /\s+(?:Rut\s+(?:del\s+)?Pac[ií1l]ente|Cuenta|Id\.?\s*(?:de\s+)?Ingreso|Fecha(?:\s+de)?\s+(?:Ingreso|Alta|Egreso)|Previsi[oó]n|Plan|Direcci[oó]n|Tel[eé]fono|Edad|C[oó]digo\s+de\s+Carga|Titular)\b.*$/i,
+      /\s+(?:Rut\s+(?:del\s+)?Pac[ií1l]ente|Cuenta|Id\.?\s*(?:de\s+)?Ingreso|Fecha(?:\s+de)?\s+(?:Ingreso|Alta|Egreso)|Previsi[oó]n|Plan|Convenio|Direcci[oó]n|Tel[eé]fono|Edad|C[oó]digo\s+de\s+Carga|Titular)\b.*$/i,
       "",
     )
     .replace(/[\s:;,.-]+$/, "")
@@ -466,8 +501,16 @@ export function parsePam(pages: TextPage[]): StructuredExtraction {
 
 function pageKind(text: string): "account" | "pam" | "unknown" {
   const normalized = text.toLowerCase();
+  const pamStrong = /programa\s+de\s+atenci[oó]n\s+m[eé]dica|documentos\s+valorizados|folio\s+p\.?\s*a\.?\s*m\.?|bono\s+debe\s+ser\s+cobrado|prestaci[oó]n\s+clasif|copago\s+en\s+cl[ií]nica|detalle\s+de\s+cobros\s+duplicados|norma\s+t[eé]cnica\s+convenida/i.test(normalized);
+  const accountStrong = /estado\s+cuenta\s+paciente|medicamentos\s+y\s+materiales|farmacia\s+en\s+pabell[oó]n|d[ií]as?\s+cama|tipo\s+de\s+cobro|c[oó]digo\s+descripci[oó]n/i.test(normalized);
+  // PAM duplicate-detail pages also print a “Código / Descripción” header and
+  // mention Día Cama. The structural account anchors below are therefore
+  // deliberately limited to the provider's own account sections.
+  const accountStructural = /estado\s+cuenta\s+paciente|medicamentos\s+y\s+materiales|farmacia\s+en\s+pabell[oó]n|tipo\s+de\s+cobro/i.test(normalized);
   const pamScore = ["pam", "bono hospitalario", "bonificación", "bonificacion", "copago", "isapre", "liquidación", "liquidacion"].filter((term) => normalized.includes(term)).length;
   const accountScore = ["cuenta clínica", "cuenta clinica", "día cama", "dia cama", "pabellón", "pabellon", "insumos", "farmacia"].filter((term) => normalized.includes(term)).length;
+  if (pamStrong && !accountStructural) return "pam";
+  if (accountStrong && !pamStrong) return "account";
   if (pamScore > accountScore && pamScore > 0) return "pam";
   if (accountScore > 0) return "account";
   return "unknown";
@@ -481,12 +524,16 @@ export function structureDocument(
 ): DocumentExtraction {
   let accountPages: TextPage[] = [];
   let pamPages: TextPage[] = [];
-  if (expected === "account") accountPages = pages;
-  else if (expected === "pam") pamPages = pages;
+  const detectedKinds = pages.map((page) => pageKind(page.text));
+  const detectedAccountPages = pages.filter((_, index) => detectedKinds[index] === "account");
+  const detectedPamPages = pages.filter((_, index) => detectedKinds[index] === "pam");
+  const isMixedDocument = detectedAccountPages.length > 0 && detectedPamPages.length > 0;
+  if (expected === "account" && !isMixedDocument) accountPages = pages;
+  else if (expected === "pam" && !isMixedDocument) pamPages = pages;
   else {
-    accountPages = pages.filter((page) => pageKind(page.text) === "account");
-    pamPages = pages.filter((page) => pageKind(page.text) === "pam");
-    const unknown = pages.filter((page) => pageKind(page.text) === "unknown");
+    accountPages = detectedAccountPages;
+    pamPages = detectedPamPages;
+    const unknown = pages.filter((_, index) => detectedKinds[index] === "unknown");
     if (!accountPages.length && !pamPages.length) accountPages = unknown;
     else if (unknown.length) {
       const target = accountPages.length >= pamPages.length ? accountPages : pamPages;

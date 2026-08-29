@@ -16,6 +16,9 @@ type LocalRuntimeState = {
   activities: LocalActivity[];
 };
 
+const STALE_EXTRACTION_MS = 2 * 60 * 60 * 1000;
+const STALE_EXTRACTION_MESSAGE = "La lectura no informó avances dentro del tiempo esperado. Reemplaza el documento para reintentar o prepara una revisión humana/LLM.";
+
 // Render's volatile demo can evaluate route bundles in more than one global
 // realm. Keep the temporary state on the Node process when available so the
 // case list, case detail and analysis routes see the same in-memory session.
@@ -53,7 +56,18 @@ function addActivity(caseId: string, title: string, detail: string) {
   activities.unshift({ id: crypto.randomUUID(), case_id: caseId, title, detail, event_at: now(), pending: 0 });
 }
 
+function recoverStaleLocalDocuments(caseId?: string) {
+  const cutoff = Date.now() - STALE_EXTRACTION_MS;
+  for (const document of documents.values()) {
+    if (document.processing_status !== "extracting" || (caseId && document.case_id !== caseId)) continue;
+    const createdAt = Date.parse(document.created_at);
+    if (!Number.isFinite(createdAt) || createdAt > cutoff) continue;
+    localUpdateDocumentProcessing(document.id, "failed", STALE_EXTRACTION_MESSAGE);
+  }
+}
+
 export function localListCases(ownerUserId: string, includeAll = false) {
+  recoverStaleLocalDocuments();
   return [...cases.values()].filter((item) => includeAll || item.owner_user_id === ownerUserId).sort((a, b) => b.updated_at.localeCompare(a.updated_at)).map((item) => ({
     ...item, document_count: [...documents.values()].filter((doc) => doc.case_id === item.id).length,
   }));
@@ -73,6 +87,7 @@ export function localCanAccessCase(id: string, ownerUserId: string, includeAll =
 }
 
 export function localGetCase(id: string, ownerUserId: string, includeAll = false) {
+  recoverStaleLocalDocuments(id);
   const item = cases.get(id);
   if (!item || (!includeAll && item.owner_user_id !== ownerUserId)) return null;
   const caseDocuments = [...documents.values()].filter((document) => document.case_id === id).sort((a, b) => a.created_at.localeCompare(b.created_at)).map((document) => ({
@@ -91,6 +106,7 @@ export function localGetCase(id: string, ownerUserId: string, includeAll = false
 }
 
 export function localGetDocuments(caseId: string, ownerUserId: string, includeAll = false) {
+  recoverStaleLocalDocuments(caseId);
   if (!localCanAccessCase(caseId, ownerUserId, includeAll)) return [];
   return [...documents.values()].filter((document) => document.case_id === caseId);
 }
