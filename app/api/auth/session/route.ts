@@ -12,6 +12,12 @@ export async function GET(request: Request) {
   const view = new URL(request.url).searchParams.get("view");
   const headers = new Headers();
 
+  // A developer/pilot session is intentionally scoped to the internal
+  // console. It must never silently authenticate the patient-facing portal.
+  if (view === "patient" && (user?.source === "development" || user?.source === "pilot")) {
+    user = undefined;
+  }
+
   // The pilot console is intentionally passwordless. Issue the same signed
   // session used by the protected APIs, but only after an explicit developer
   // entry request and only when the deployment has opted into open dev mode.
