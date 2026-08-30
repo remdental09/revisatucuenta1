@@ -124,6 +124,17 @@ export type ReaderAssistResponse = {
   warnings: string[];
 };
 
+export type VisionPageImage = {
+  page: number;
+  region: "full_page" | "line_crop";
+  dataUrl: string;
+};
+
+export type VisionAssistResponse = ReaderAssistResponse & {
+  mode: "vision";
+  reviewedPages: number[];
+};
+
 export type DocumentExtraction = {
   readerVersion?: string;
   pageCount: number;

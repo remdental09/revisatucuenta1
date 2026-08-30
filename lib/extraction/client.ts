@@ -1,7 +1,7 @@
 import { structureDocument, type TextPage } from "./parsers.ts";
 import { installPromiseWithResolversPolyfill } from "./promise-compat.ts";
 import { assessExtractionQuality } from "./reader-quality.ts";
-import type { DocumentExtraction, OcrEnhancementDiagnostic } from "./types.ts";
+import type { DocumentExtraction, OcrEnhancementDiagnostic, VisionPageImage } from "./types.ts";
 
 const pdfWorkerUrl = "/pdf-worker-bootstrap.mjs";
 // Keep the Spanish OCR model on the same origin so mobile deployments do not
@@ -243,6 +243,70 @@ function cropLineRegion(source: HTMLCanvasElement) {
   context.imageSmoothingQuality = "high";
   context.drawImage(source, 0, top, source.width, source.height - top, 0, 0, canvas.width, canvas.height);
   return canvas;
+}
+
+function canvasToVisionDataUrl(source: HTMLCanvasElement, maxWidth = 1600) {
+  const scale = Math.min(1, maxWidth / Math.max(1, source.width));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.ceil(source.width * scale));
+  canvas.height = Math.max(1, Math.ceil(source.height * scale));
+  const context = canvas.getContext("2d");
+  if (!context) return "";
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(source, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/jpeg", 0.76);
+}
+
+function fileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+    reader.onerror = () => reject(reader.error || new Error("No se pudo preparar la imagen para visión."));
+    reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * Prepares only the pages selected by the reader-quality assessment for the
+ * explicit developer Vision fallback. The original file remains separate;
+ * these JPEGs are transient request payloads and are never persisted here.
+ */
+export async function prepareVisionPageImages(
+  file: File,
+  pageNumbers: number[],
+  onProgress?: (progress: number) => void,
+): Promise<VisionPageImage[]> {
+  const selectedPages = [...new Set(pageNumbers.filter((page) => Number.isInteger(page) && page > 0))].slice(0, 4);
+  if (!selectedPages.length) return [];
+  onProgress?.(3);
+  if (file.type.startsWith("image/")) {
+    const dataUrl = await fileAsDataUrl(file);
+    onProgress?.(100);
+    return dataUrl ? [{ page: 1, region: "full_page", dataUrl }] : [];
+  }
+  installPromiseWithResolversPolyfill();
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+  const loadingTask = pdfjs.getDocument({ data: await file.arrayBuffer(), disableWorker: true });
+  const pdf = await withTimeout(loadingTask.promise, PDF_LOAD_TIMEOUT_MS, "El lector PDF no pudo preparar las páginas para visión.");
+  const images: VisionPageImage[] = [];
+  for (let index = 0; index < selectedPages.length; index += 1) {
+    const pageNumber = selectedPages[index];
+    if (pageNumber > pdf.numPages) continue;
+    const page = await withTimeout(pdf.getPage(pageNumber), PDF_LOAD_TIMEOUT_MS, `No se pudo preparar la página ${pageNumber} para visión.`);
+    const canvas = await withTimeout(renderPageCanvas(page), PDF_LOAD_TIMEOUT_MS, `No se pudo renderizar la página ${pageNumber} para visión.`);
+    if (!canvas) continue;
+    const enhanced = enhanceCanvas(canvas);
+    const fullPage = canvasToVisionDataUrl(enhanced);
+    const lineCrop = canvasToVisionDataUrl(cropLineRegion(enhanced));
+    if (fullPage) images.push({ page: pageNumber, region: "full_page", dataUrl: fullPage });
+    if (lineCrop) images.push({ page: pageNumber, region: "line_crop", dataUrl: lineCrop });
+    onProgress?.(Math.round(((index + 1) / selectedPages.length) * 100));
+  }
+  return images;
 }
 
 async function extractPdf(file: File, expected: ExpectedKind, onProgress?: (progress: number) => void) {

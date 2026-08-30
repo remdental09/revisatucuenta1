@@ -109,6 +109,15 @@ ni los resultados del paciente: la aceptación de cada corrección queda a cargo
 de un revisor humano. Si no hay líneas extraídas, el sistema informa que se
 requiere OCR adicional o revisión humana del documento original.
 
+Cuando la extracción parcial conserva páginas dudosas, la consola también
+ofrece **Solicitar GPT Vision**. Esta acción es exclusiva del modo desarrollador:
+prepara hasta cuatro páginas (página completa y recorte de renglones), las envía
+al endpoint Responses de OpenAI y conserva la propuesta sólo en la respuesta de
+la sesión. No se ejecuta automáticamente, no modifica el análisis y no se
+expone en la vista paciente. Configura `OPENAI_VISION_MODEL` si quieres usar un
+modelo visual distinto; por defecto reutiliza `OPENAI_READER_MODEL` y finalmente
+`gpt-5.4-mini`. En Railway debe existir `OPENAI_API_KEY` como variable secreta.
+
 ## Useful Commands
 
 - `npm run dev`: start local development

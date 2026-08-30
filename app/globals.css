@@ -547,6 +547,8 @@ button { cursor:pointer; }
 .reader-failure-message b { color:#713f3b; font-size:9px; }
 .reader-failure-message span { overflow-wrap:anywhere; }
 .reader-assist-panel { margin:18px 0 0; padding:17px; border:1px solid #cfe3ec; border-left:3px solid #4287a0; border-radius:9px; background:#f4fafc; }
+.reader-vision-panel { border-color:#ddd2ee; border-left-color:#7353a6; background:#fbf9ff; }
+.reader-vision-panel .reader-assist-badge { background:#eee7fb; color:#704d9a; }
 .reader-assist-head { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; }
 .reader-assist-head h3 { margin:6px 0 0; color:#2f5262; font:500 18px Georgia,serif; }
 .reader-assist-head p { max-width:650px; margin:7px 0 0; color:#78909a; font-size:9px; line-height:1.55; }

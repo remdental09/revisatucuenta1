@@ -69,6 +69,10 @@ function resolveApiKey(env: RuntimeEnvironment, explicit?: string) {
   return explicit?.trim() || runtimeValue("OPENAI_API_KEY") || environmentValue(env, "OPENAI_API_KEY");
 }
 
+export function resolveReaderAssistApiKey(env: RuntimeEnvironment, explicit?: string) {
+  return resolveApiKey(env, explicit);
+}
+
 export function readerAssistModel(env?: RuntimeEnvironment) {
   return runtimeValue("OPENAI_READER_MODEL") || environmentValue(env, "OPENAI_READER_MODEL") || DEFAULT_MODEL;
 }
@@ -157,7 +161,7 @@ export function buildReaderAssistContext(extraction: DocumentExtraction, expecte
   };
 }
 
-const readerAssistSchema = {
+export const readerAssistSchema = {
   type: "object",
   additionalProperties: false,
   required: ["status", "summary", "fields", "lineCorrections", "unknownItems", "safetyNotes"],

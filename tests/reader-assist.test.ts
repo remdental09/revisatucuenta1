@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildReaderAssistContext, parseReaderAssistResponse, requestReaderAssist } from "../lib/server/openai-reader-assist.ts";
-import type { DocumentExtraction } from "../lib/extraction/types.ts";
+import { isVisionPageImage, requestVisionAssist } from "../lib/server/openai-vision-assist.ts";
+import type { DocumentExtraction, VisionPageImage } from "../lib/extraction/types.ts";
 
 function sampleExtraction(): DocumentExtraction {
   return {
@@ -89,4 +90,41 @@ test("does not call the provider when the API key is absent", async () => {
   };
   await assert.rejects(() => requestReaderAssist(buildReaderAssistContext(sampleExtraction(), "account"), {}, { fetchImpl }), { code: "LLM_NOT_CONFIGURED" });
   assert.equal(called, false);
+});
+
+test("sends selected page images to GPT Vision without storing the response", async () => {
+  const image: VisionPageImage = { page: 1, region: "full_page", dataUrl: "data:image/jpeg;base64,ZmFrZQ==" };
+  assert.equal(isVisionPageImage(image), true);
+  assert.equal(isVisionPageImage({ ...image, dataUrl: "not-an-image" }), false);
+  let requestInit: RequestInit | undefined;
+  const fetchImpl: typeof fetch = async (_input, init) => {
+    requestInit = init;
+    return new Response(JSON.stringify({ output_text: JSON.stringify({ status: "assisted", summary: "La imagen permite contrastar la fila.", fields: [], lineCorrections: [], unknownItems: [], safetyNotes: ["Revisar contra el original."] }) }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  const result = await requestVisionAssist(buildReaderAssistContext(sampleExtraction(), "account"), [image], undefined, { apiKey: "test-key", fetchImpl });
+  assert.equal(result.mode, "vision");
+  assert.equal(result.status, "ready_for_review");
+  assert.deepEqual(result.reviewedPages, [1]);
+  const body = JSON.parse(String(requestInit?.body));
+  assert.equal(body.store, false);
+  assert.equal(body.model, "gpt-5.4-mini");
+  assert.equal(body.input[1].content[2].type, "input_image");
+  assert.match(body.input[1].content[2].image_url, /^data:image\/jpeg;base64,/);
+  assert.equal(body.text.format.type, "json_schema");
+});
+
+test("allows Vision to propose a read when the deterministic reader has no lines", async () => {
+  const extraction: DocumentExtraction = { pageCount: 1, usedOcr: true, account: { type: "account", label: "Cuenta clínica", pages: [1], fields: [], lines: [] } };
+  const image: VisionPageImage = { page: 1, region: "full_page", dataUrl: "data:image/png;base64,ZmFrZQ==" };
+  let called = false;
+  const fetchImpl: typeof fetch = async (_input, init) => {
+    called = true;
+    const body = JSON.parse(String(init?.body));
+    assert.equal(body.input[1].content[0].text.includes('"lines":[]'), true);
+    return new Response(JSON.stringify({ output_text: JSON.stringify({ status: "assisted", summary: "Se observó un renglón legible.", fields: [], lineCorrections: [{ index: 1, page: 1, description: "SUERO VISIBLE", code: null, quantity: 1, unitAmount: 100, amount: 100, evidence: "SUERO VISIBLE", confidence: 0.71, reason: "La glosa y el monto son visibles en la imagen." }], unknownItems: [], safetyNotes: [] }) }), { status: 200 });
+  };
+  const result = await requestVisionAssist(buildReaderAssistContext(extraction, "account"), [image], undefined, { apiKey: "test-key", fetchImpl });
+  assert.equal(called, true);
+  assert.equal(result.status, "ready_for_review");
+  assert.equal(result.result.lineCorrections[0]?.description, "SUERO VISIBLE");
 });
