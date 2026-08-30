@@ -14,6 +14,7 @@ type LocalRuntimeState = {
   analyses: Map<string, { analysis: ClinicalAccountAnalysis; updatedAt: string }>;
   authorizations: Map<string, { authorized: number; scope: string; authorizedAt: string }>;
   activities: LocalActivity[];
+  runtimeFlags: Set<string>;
 };
 
 const STALE_EXTRACTION_MS = 2 * 60 * 60 * 1000;
@@ -33,6 +34,7 @@ const localState = runtimeHost.__revisaTuCuentaLocalState ??= {
   analyses: new Map<string, { analysis: ClinicalAccountAnalysis; updatedAt: string }>(),
   authorizations: new Map<string, { authorized: number; scope: string; authorizedAt: string }>(),
   activities: [],
+  runtimeFlags: new Set<string>(),
 };
 
 const { cases, documents, extractions, analyses, authorizations, activities } = localState;
@@ -71,6 +73,20 @@ export function localListCases(ownerUserId: string, includeAll = false) {
   return [...cases.values()].filter((item) => includeAll || item.owner_user_id === ownerUserId).sort((a, b) => b.updated_at.localeCompare(a.updated_at)).map((item) => ({
     ...item, document_count: [...documents.values()].filter((doc) => doc.case_id === item.id).length,
   }));
+}
+
+export function localResetPilot(version: string) {
+  if (localState.runtimeFlags.has(version)) return { reset: false, deletedCases: 0, deletedDocuments: 0 };
+  const deletedCases = cases.size;
+  const deletedDocuments = documents.size;
+  cases.clear();
+  documents.clear();
+  extractions.clear();
+  analyses.clear();
+  authorizations.clear();
+  activities.length = 0;
+  localState.runtimeFlags.add(version);
+  return { reset: true, deletedCases, deletedDocuments };
 }
 
 export function localCreateCase(input: { id: string; ownerUserId: string; ownerEmail: string; patientName?: string; contactEmail?: string; episodeLabel: string }) {

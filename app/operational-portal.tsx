@@ -38,6 +38,8 @@ type Snapshot = {
   activities: Activity[];
   corpusStatus?: "pending_review" | "validated" | "rejected";
 };
+
+const PILOT_RESET_VERSION = "2026-08-30-empty-console-v1";
 type CaseRow = { id: string; patient_name: string; episode_label: string; status: string; document_count: number };
 type SessionUser = { id: string; email: string; displayName: string; source: "chatgpt" | "email" | "development" | "pilot" };
 
@@ -1090,10 +1092,29 @@ function AuthenticatedDeveloperPortal({ initialCaseId = "", user }: { initialCas
   const [visionAssistResponse, setVisionAssistResponse] = useState<VisionAssistResponse>();
   const [visionAssistDocumentId, setVisionAssistDocumentId] = useState("");
   const sourceFileRef = useRef<{ documentId: string; file: File }>();
+  const pilotResetStartedRef = useRef(false);
   const [pendingUpload, setPendingUpload] = useState<PendingUpload>();
   const selected = cases.some((item) => item.id === selectedId) ? selectedId : cases[0]?.id || "";
   async function refresh() { if (!selected) return; try { const next = hideStaleAnalysis(await getSnapshot(selected)); setSnapshot(next); if (extractionNeedsRefresh(accountDoc(next))) setNotice("La extracción anterior quedó fuera de vigencia. Reemplaza la cuenta clínica para aplicar el lector actualizado."); } catch (reason) { setNotice(errorMessage(reason, "No se pudo cargar el expediente")); } }
   useEffect(() => { void refresh(); }, [selected]);
+  useEffect(() => {
+    if (pilotResetStartedRef.current) return;
+    pilotResetStartedRef.current = true;
+    void (async () => {
+      try {
+        const response = await fetch("/api/admin/pilot-reset", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ version: PILOT_RESET_VERSION }),
+        });
+        const payload = await response.json().catch(() => ({})) as { reset?: boolean };
+        if (!response.ok || !payload.reset) return;
+        window.location.reload();
+      } catch {
+        // A failed cleanup must not prevent the developer console from loading.
+      }
+    })();
+  }, []);
   async function onFile(file: File, classification: string) {
     if (!selected) return;
     const previousAccount = /cuenta|mixto/i.test(classification) ? accountDoc(snapshot) : undefined;
@@ -1104,8 +1125,6 @@ function AuthenticatedDeveloperPortal({ initialCaseId = "", user }: { initialCas
     setAnalysisStatus("idle");
     setReaderAssistResponse(undefined);
     setReaderAssistDocumentId("");
-    setVisionAssistResponse(undefined);
-    setVisionAssistDocumentId("");
     setVisionAssistResponse(undefined);
     setVisionAssistDocumentId("");
     try {
@@ -1201,6 +1220,8 @@ function AuthenticatedDeveloperPortal({ initialCaseId = "", user }: { initialCas
     setAnalysisStatus("idle");
     setReaderAssistResponse(undefined);
     setReaderAssistDocumentId("");
+    setVisionAssistResponse(undefined);
+    setVisionAssistDocumentId("");
     try {
       const updateProgress = (value: number) => {
         const bounded = Math.max(2, Math.min(100, Math.round(value)));
