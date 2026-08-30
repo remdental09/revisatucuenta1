@@ -156,7 +156,34 @@ export type ClinicalAccountAnalysis = {
     status: "not_registered" | "pending_review" | "validated" | "rejected";
     message: string;
   };
+  llmAssist?: LlmClinicalAnalysisAssist;
   limitations: string[];
+};
+
+export type LlmClinicalLineHypothesis = {
+  lineId: string;
+  page: number;
+  bundle: BundleFamily;
+  decision: "review" | "do_not_add" | "insufficient_evidence";
+  confidence: number;
+  rationale: string;
+  evidence: string[];
+  missingEvidence: string[];
+};
+
+export type LlmClinicalAnalysisAssist = {
+  status: "ready_for_review" | "insufficient_evidence" | "not_configured" | "unavailable";
+  model?: string;
+  summary: string;
+  episode: {
+    type: "surgical" | "hospitalization" | "emergency" | "ambulatory" | "mixed" | "unknown";
+    hasOperatingRoom: boolean;
+    hasHospitalStay: boolean;
+    hasEmergency: boolean;
+    anchors: Array<{ lineId: string; page: number; evidence: string }>;
+  };
+  lineHypotheses: LlmClinicalLineHypothesis[];
+  warnings: string[];
 };
 
 const normalize = (value = "") =>

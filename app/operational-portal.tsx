@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { extractHealthcareDocument, extractionErrorMessage, prepareVisionPageImages } from "../lib/extraction/client";
 import { CURRENT_READER_VERSION, type DocumentExtraction, type ReaderAssistResponse, type VisionAssistResponse } from "../lib/extraction/types";
 import { assessExtractionQuality, buildReaderChangeProposal, buildReaderReviewPackage, readerChangeProposalToMarkdown, readerReviewPackageToMarkdown } from "../lib/extraction/reader-quality";
-import type { ClinicalAccountAnalysis, ChileanBillingLine } from "../lib/rules/chilean-account";
+import type { ClinicalAccountAnalysis, ChileanBillingLine, InclusionCandidate } from "../lib/rules/chilean-account";
 import type { FunctionalEquivalenceAlert } from "../lib/rules/observed-corpus";
 import { generateClarificationClaimMarkdown } from "../lib/claims/claim-generator";
 import {
@@ -135,7 +135,7 @@ function analysisBlocked(document?: CaseDocument) {
   if (!document) return true;
   if (["failed", "pending", "extracting"].includes(document.processingStatus || "")) return true;
   if (!document.extraction?.account?.lines.length) return true;
-  return extractionNeedsRefresh(document) || document.extraction.readerAssessment?.status === "reader_change_needed";
+  return extractionNeedsRefresh(document);
 }
 
 function hideStaleAnalysis(snapshot: Snapshot) {
@@ -152,11 +152,12 @@ function hideStaleAnalysis(snapshot: Snapshot) {
 
 function possibleDisputeAmount(analysis?: ClinicalAccountAnalysis) {
   return (analysis?.lineAssessments ?? [])
-    .filter((assessment) => assessment.candidates.some((candidate) => candidate.probability >= DEVELOPER_CANDIDATE_THRESHOLD))
+    .filter((assessment) => Boolean(bestCombinedCandidate(analysis, assessment)))
     .reduce((sum, assessment) => sum + assessment.line.amount, 0);
 }
 
 const DEVELOPER_CANDIDATE_THRESHOLD = 0.45;
+const LLM_CANDIDATE_THRESHOLD = 0.7;
 type DeveloperLineAssessment = ClinicalAccountAnalysis["lineAssessments"][number];
 type DeveloperCategoryKey = "access" | "medication" | "monitoring" | "surgical" | "field";
 
@@ -189,6 +190,46 @@ function bestDeveloperCandidate(assessment: DeveloperLineAssessment, bundle?: "o
     .sort((left, right) => right.probability - left.probability)[0];
 }
 
+function llmCandidateForLine(
+  analysis: ClinicalAccountAnalysis | undefined,
+  lineId: string,
+  bundle?: "operating_room",
+): InclusionCandidate | undefined {
+  const hypothesis = analysis?.llmAssist?.lineHypotheses
+    .filter((item) =>
+      item.lineId === lineId
+      && item.decision === "review"
+      && item.confidence >= LLM_CANDIDATE_THRESHOLD
+      && item.bundle !== "procedure"
+      && item.bundle !== "professional_fees"
+      && item.bundle !== "unassigned"
+      && (!bundle || item.bundle === bundle),
+    )
+    .sort((left, right) => right.confidence - left.confidence)[0];
+  if (!hypothesis) return;
+  return {
+    bundle: hypothesis.bundle,
+    probability: hypothesis.confidence,
+    knowledgeIds: ["LLM-SECOND-READER-001"],
+    precedentIds: [],
+    precedentSupport: 0,
+    reasons: [hypothesis.rationale, ...hypothesis.evidence].filter(Boolean),
+    missingEvidence: hypothesis.missingEvidence,
+  };
+}
+
+function bestCombinedCandidate(
+  analysis: ClinicalAccountAnalysis | undefined,
+  assessment: DeveloperLineAssessment,
+  bundle?: "operating_room",
+) {
+  const deterministic = bestDeveloperCandidate(assessment, bundle);
+  const assisted = llmCandidateForLine(analysis, assessment.line.id, bundle);
+  if (!deterministic) return assisted;
+  if (!assisted) return deterministic;
+  return assisted.probability > deterministic.probability ? assisted : deterministic;
+}
+
 type DeveloperBreakdownItem = {
   code: string;
   description: string;
@@ -208,7 +249,7 @@ type DeveloperBreakdownCategory = {
 
 function buildDeveloperBreakdown(analysis: ClinicalAccountAnalysis) {
   const pavilionRows = analysis.lineAssessments.flatMap((assessment) => {
-    const candidate = bestDeveloperCandidate(assessment, "operating_room");
+    const candidate = bestCombinedCandidate(analysis, assessment, "operating_room");
     return candidate ? [{ assessment, candidate }] : [];
   });
   const pavilionLineIds = new Set(pavilionRows.map(({ assessment }) => assessment.line.id));
@@ -238,15 +279,14 @@ function buildDeveloperBreakdown(analysis: ClinicalAccountAnalysis) {
     category.items.set(itemKey, item);
   }
 
-  const alternatives = analysis.lineAssessments.flatMap((assessment) => assessment.candidates
-    .filter((candidate) => candidate.bundle !== "operating_room" && candidate.probability >= DEVELOPER_CANDIDATE_THRESHOLD)
-    .sort((left, right) => right.probability - left.probability)
-    .slice(0, 1)
-    .map((candidate) => ({
+  const alternatives = analysis.lineAssessments.flatMap((assessment) => {
+    const candidate = bestCombinedCandidate(analysis, assessment);
+    return candidate && candidate.bundle !== "operating_room" ? [{
       line: assessment.line,
       candidate,
       overlapsPavilion: pavilionLineIds.has(assessment.line.id),
-    })));
+    }] : [];
+  });
 
   const categories = (Object.keys(developerCategoryLabels) as DeveloperCategoryKey[])
     .map((key) => {
@@ -349,6 +389,82 @@ async function uploadDocument(caseId: string, file: File, classification: string
   }
 }
 
+async function persistExtraction(documentId: string, extraction: DocumentExtraction) {
+  const response = await fetch("/api/extractions", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ documentId, extraction }),
+  });
+  if (!response.ok) {
+    throw new Error((await response.json().catch(() => ({}))).error || "La lectura asistida terminó, pero no pudo guardarse");
+  }
+}
+
+function mergeVisionCorrections(extraction: DocumentExtraction, response: VisionAssistResponse) {
+  const source = extraction.account;
+  if (!source || response.status !== "ready_for_review") return { extraction, appliedCount: 0 };
+  const lines = source.lines.map((line) => ({ ...line }));
+  let appliedCount = 0;
+  for (const correction of response.result.lineCorrections) {
+    if (correction.confidence < 0.9 || !correction.description.trim() || correction.amount === null || correction.amount < 0) continue;
+    const index = correction.index - 1;
+    const current = lines[index];
+    if (current && current.page === correction.page) {
+      const nextCode = correction.code || current.code;
+      lines[index] = {
+        ...current,
+        description: correction.description,
+        code: nextCode || undefined,
+        quantity: correction.quantity ?? current.quantity,
+        unitAmount: correction.unitAmount ?? current.unitAmount,
+        amount: correction.amount,
+        numericReconciled: false,
+        assistedBy: "openai_vision",
+        assistConfidence: correction.confidence,
+        originalDescription: current.originalDescription ?? current.description,
+        originalCode: current.originalCode ?? current.code,
+        originalAmount: current.originalAmount ?? current.amount,
+      };
+      appliedCount += 1;
+      continue;
+    }
+    if (!source.lines.length) {
+      lines.push({
+        description: correction.description,
+        code: correction.code || undefined,
+        quantity: correction.quantity ?? undefined,
+        unitAmount: correction.unitAmount ?? undefined,
+        amount: correction.amount,
+        page: correction.page,
+        confidence: Math.round(correction.confidence * 100),
+        sourceText: correction.evidence,
+        assistedBy: "openai_vision",
+        assistConfidence: correction.confidence,
+      });
+      appliedCount += 1;
+    }
+  }
+  if (!appliedCount) return { extraction, appliedCount: 0 };
+  const base: DocumentExtraction = {
+    ...extraction,
+    account: { ...source, lines },
+    readerAssessment: undefined,
+  };
+  const assessment = assessExtractionQuality(base, "account");
+  const assisted: DocumentExtraction = {
+    ...base,
+    readerAssessment: {
+      ...assessment,
+      llmAssist: { ...assessment.llmAssist, status: "ready_for_review" },
+      signals: [
+        ...assessment.signals,
+        `GPT Vision corrigió ${appliedCount} renglón(es) con confianza igual o superior a 90%; los valores originales quedaron conservados en la trazabilidad.`,
+      ],
+    },
+  };
+  return { extraction: assisted, appliedCount };
+}
+
 async function retryStoredDocument(caseId: string, document: CaseDocument, onProgress?: (value: number) => void) {
   const sourceUrl = `/api/documents?caseId=${encodeURIComponent(caseId)}&documentId=${encodeURIComponent(document.id)}&download=source`;
   const statusResponse = await fetch("/api/documents", {
@@ -418,10 +534,18 @@ async function analyzeCase(caseId: string, document?: CaseDocument, episodeLabel
     documentId: document.id,
   })) ?? [];
   if (!lines.length) throw new Error("La cuenta no tiene líneas extraídas para analizar");
+  const totalField = document?.extraction?.account?.fields.find((field) => field.key === "total");
+  const printedTotal = totalField ? Number(totalField.value.replace(/[^0-9-]/g, "")) : undefined;
   const response = await fetch("/api/analysis", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ caseId, episodeLabel, lines }),
+    body: JSON.stringify({
+      caseId,
+      episodeLabel,
+      lines,
+      readerAssessment: document?.extraction?.readerAssessment,
+      printedTotal: Number.isFinite(printedTotal) ? printedTotal : undefined,
+    }),
   });
   if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || "No se pudo analizar la cuenta");
   return response.json() as Promise<ClinicalAccountAnalysis>;
@@ -565,7 +689,7 @@ function analysisToMarkdown(analysis: ClinicalAccountAnalysis) {
   const framework = analysis.claimFramework ?? UNIVERSAL_CLAIM_FRAMEWORK;
   const equality = analysis.equalityProjection ?? EQUALITY_PROJECTION_FRAMEWORK;
   const operatingRoom = analysis.operatingRoomFramework ?? FULL_OPERATING_ROOM_FRAMEWORK;
-  const candidateCount = analysis.lineAssessments.reduce((sum, item) => sum + item.candidates.length, 0);
+  const candidateCount = analysis.lineAssessments.filter((item) => Boolean(bestCombinedCandidate(analysis, item))).length;
   const precedentCount = analysis.lineAssessments.reduce((sum, item) => sum + (item.precedentComparisons?.length ?? 0), 0);
   const functionalAlerts = analysis.functionalEquivalenceAlerts ?? [];
   const accountSignals = analysis.accountSignals ?? [];
@@ -577,12 +701,18 @@ function analysisToMarkdown(analysis: ClinicalAccountAnalysis) {
   });
   const functionalFoundations = functionalAlerts.map((alert) => `- **${markdownCell(alert.lineDescription)} — ${markdownCell(alert.familyLabel)}:** ${markdownCell(alert.rationale)} ${markdownCell(alert.caution)} Fuentes: ${markdownCell(alert.sourceBasis.join("; "))}.`);
   const rows = analysis.lineAssessments.map((assessment, index) => {
-    const hypotheses = assessment.candidates.length
-      ? assessment.candidates.map((candidate) => {
+    const combinedCandidates = [...assessment.candidates];
+    const assistedCandidate = llmCandidateForLine(analysis, assessment.line.id);
+    if (assistedCandidate && !combinedCandidates.some((candidate) => candidate.bundle === assistedCandidate.bundle)) {
+      combinedCandidates.push(assistedCandidate);
+    }
+    const hypotheses = combinedCandidates.length
+      ? combinedCandidates.map((candidate) => {
           const evidence = candidate.missingEvidence.length
             ? `Falta: ${candidate.missingEvidence.join("; ")}`
             : "Sin evidencia faltante declarada";
-          return `${bundleLabel(candidate.bundle)} (${Math.round(candidate.probability * 100)}%). ${evidence}. IDs: ${candidate.knowledgeIds.join(", ") || "—"}`;
+          const source = candidate.knowledgeIds.includes("LLM-SECOND-READER-001") ? "Segunda lectura LLM" : `IDs: ${candidate.knowledgeIds.join(", ") || "—"}`;
+          return `${bundleLabel(candidate.bundle)} (${Math.round(candidate.probability * 100)}%). ${evidence}. ${source}`;
         }).join("<br>")
       : "Sin hipótesis de inclusión";
     const observed = assessment.observedEquivalents.length
@@ -690,6 +820,19 @@ function analysisToMarkdown(analysis: ClinicalAccountAnalysis) {
     ...(functionalAlerts.length
       ? functionalFoundations
       : ["- No hay fundamentos funcionales activados."]),
+    "",
+    "## Segunda lectura LLM",
+    "",
+    analysis.llmAssist
+      ? `- Estado: ${analysis.llmAssist.status}`
+      : "- Estado: no ejecutada",
+    analysis.llmAssist?.model ? `- Modelo: ${analysis.llmAssist.model}` : "- Modelo: —",
+    analysis.llmAssist?.summary ? `- Resumen: ${analysis.llmAssist.summary}` : "- Resumen: sin segunda lectura disponible.",
+    analysis.llmAssist
+      ? `- Contexto: ${analysis.llmAssist.episode.type}; pabellón ${analysis.llmAssist.episode.hasOperatingRoom ? "sí" : "no"}; hospitalización ${analysis.llmAssist.episode.hasHospitalStay ? "sí" : "no"}; urgencia ${analysis.llmAssist.episode.hasEmergency ? "sí" : "no"}.`
+      : "- Contexto: —",
+    "",
+    "> Las propuestas LLM quedan separadas de las reglas deterministas y sólo se suman al monto preliminar cuando señalan revisión con confianza igual o superior al 70%.",
     "",
     "## Matriz línea por línea",
     "",
@@ -1141,7 +1284,7 @@ function AuthenticatedDeveloperPortal({ initialCaseId = "", user }: { initialCas
               : `Leyendo ${documentLabel}`,
         );
       };
-      const result = previousAccount
+      let result = previousAccount
         ? await replaceAccountDocument(selected, previousAccount, file, updateProgress)
         : await uploadDocument(selected, file, classification, updateProgress);
       let automaticVisionNotice = "";
@@ -1158,8 +1301,13 @@ function AuthenticatedDeveloperPortal({ initialCaseId = "", user }: { initialCas
             });
             setVisionAssistResponse(vision);
             setVisionAssistDocumentId(result.documentId);
+            const merged = mergeVisionCorrections(result.extraction, vision);
+            if (merged.appliedCount > 0) {
+              await persistExtraction(result.documentId, merged.extraction);
+              result = { ...result, extraction: merged.extraction };
+            }
             automaticVisionNotice = vision.status === "ready_for_review"
-              ? "OCR bajo detectado: GPT Vision revisó las zonas señaladas y dejó una propuesta para revisión humana."
+              ? `OCR bajo detectado: GPT Vision revisó las zonas y aplicó ${merged.appliedCount} corrección(es) de alta confianza con trazabilidad.`
               : "OCR bajo detectado: GPT Vision no encontró evidencia suficiente; la cuenta quedó pendiente de revisión humana.";
           } catch (reason) {
             automaticVisionNotice = `La cuenta fue guardada, pero la revisión visual automática quedó pendiente: ${errorMessage(reason, "no se pudo consultar GPT Vision")}`;
@@ -1229,7 +1377,7 @@ function AuthenticatedDeveloperPortal({ initialCaseId = "", user }: { initialCas
         setUploadProgress(bounded);
         setUploadStage(bounded >= 100 ? "Relectura completada" : "Reintentando lectura con el lector PDF compatible");
       };
-      const result = await retryStoredDocument(selected, document, updateProgress);
+      let result = await retryStoredDocument(selected, document, updateProgress);
       let automaticVisionNotice = "";
       if (shouldAutoVision(result.extraction)) {
         setVisionAssistBusy(true);
@@ -1242,8 +1390,13 @@ function AuthenticatedDeveloperPortal({ initialCaseId = "", user }: { initialCas
           });
           setVisionAssistResponse(vision);
           setVisionAssistDocumentId(document.id);
+          const merged = mergeVisionCorrections(result.extraction, vision);
+          if (merged.appliedCount > 0) {
+            await persistExtraction(document.id, merged.extraction);
+            result = { ...result, extraction: merged.extraction };
+          }
           automaticVisionNotice = vision.status === "ready_for_review"
-            ? "La cuenta fue releída y GPT Vision revisó automáticamente las zonas señaladas; la propuesta requiere revisión humana."
+            ? `La cuenta fue releída y GPT Vision aplicó ${merged.appliedCount} corrección(es) de alta confianza con trazabilidad.`
             : "La cuenta fue releída, pero GPT Vision no encontró evidencia suficiente; quedó pendiente de revisión humana.";
         } catch (reason) {
           automaticVisionNotice = `La cuenta fue releída, pero la revisión visual automática quedó pendiente: ${errorMessage(reason, "no se pudo consultar GPT Vision")}`;
@@ -1314,8 +1467,13 @@ function AuthenticatedDeveloperPortal({ initialCaseId = "", user }: { initialCas
       });
       setVisionAssistResponse(vision);
       setVisionAssistDocumentId(account.id);
+      const merged = mergeVisionCorrections(extraction, vision);
+      if (merged.appliedCount > 0) {
+        await persistExtraction(account.id, merged.extraction);
+        await refresh();
+      }
       setNotice(vision.status === "ready_for_review"
-        ? "GPT Vision quedó disponible como propuesta para revisión humana; no se aplicó automáticamente."
+        ? `GPT Vision terminó: ${merged.appliedCount} corrección(es) de alta confianza fueron incorporadas con sus valores originales conservados.`
         : "GPT Vision no encontró evidencia suficiente; la cuenta requiere revisión humana.");
     } catch (reason) {
       setNotice(errorMessage(reason, "No se pudo solicitar GPT Vision"));
@@ -1350,7 +1508,7 @@ function DeveloperCaseIdentity({ snapshot }: { snapshot: Snapshot }) {
 }
 
 function DevMetric({ label, value, detail, pending }: { label: string; value: string; detail: string; pending?: boolean }) { return <article className={`dev-metric ${pending ? "pending" : ""}`}><span>{label}</span><strong>{value}</strong><small>{detail}</small></article>; }
-function DeveloperOverview({ snapshot, total, busy, onAnalyze, onExport, onClaimDraft, onCorpusStatus }: { snapshot: Snapshot; total: number; busy: boolean; onAnalyze: () => void; onExport: () => void; onClaimDraft: () => void; onCorpusStatus: (status: "pending_review" | "validated" | "rejected") => void }) { const account = accountDoc(snapshot); const analysis = snapshot.analysis; const candidates = analysis?.lineAssessments.filter((item) => item.candidates.some((candidate) => candidate.probability >= 0.45)) || []; return <div className="developer-overview"><DeveloperCaseIdentity snapshot={snapshot}/><div className="dev-flow-card"><div className="card-heading"><div><span className="card-kicker">FLUJO DEL EXPEDIENTE</span><h3>Cuenta clínica primero</h3></div><span className="dev-percentage">{analysis ? "100%" : "50%"}</span></div><div className="dev-flow"><FlowStep number="01" title="Cuenta" state={account ? "complete" : "pending"} detail={account ? "Recibida" : "Pendiente"}/><i/><FlowStep number="02" title="Análisis de cuenta" state={analysis ? "complete" : account ? "current" : "pending"} detail={analysis ? "Listo" : account ? "En curso" : "Esperando cuenta"}/><i/><FlowStep number="03" title="Cobertura PAM" state={pamDoc(snapshot) ? "complete" : "pending"} detail={pamDoc(snapshot) ? "Aislada" : "Opcional"}/><i/><FlowStep number="04" title="Conciliación posterior" state="pending" detail="No ejecutada"/></div></div><div className="developer-scope-card"><div><span className="card-kicker">ALCANCE ACTUAL</span><h3>Posibles desfragmentaciones del prestador</h3><p>Se revisan glosas, códigos, cantidades y vínculos dentro de la cuenta clínica. El PAM informa cobertura, bonificación, copago y rechazos; no determina desfragmentaciones ni reemplaza la cuenta.</p></div><span>OPERATIVO</span></div><div className="dev-analysis-grid"><article><span className="card-kicker">CUENTA CLÍNICA</span><strong>{money(total)}</strong><small>Total informado por el prestador</small></article><article><span className="card-kicker">LÍNEAS CANDIDATAS</span><strong>{candidates.length}</strong><small>Requieren contraste técnico</small></article><article><span className="card-kicker">PRÓXIMA ACCIÓN</span><strong>{analysis ? "Exportar" : "Analizar"}</strong><small>{analysis ? "Preinforme del caso" : "Ejecutar motor"}</small></article></div><div className="developer-actions"><button className="portal-button portal-button-primary" onClick={onAnalyze} disabled={busy}>{busy ? "Procesando…" : analysis ? "Actualizar análisis" : "Abrir analizador"} →</button><button className="portal-button portal-button-secondary" onClick={onExport}>Exportar preinforme</button><button className="portal-button portal-button-secondary" onClick={onClaimDraft}>Generar reclamo base</button></div><CorpusLearningPanel status={snapshot.corpusStatus} busy={busy} onStatus={onCorpusStatus}/>{analysis && <DeveloperAnalysisDetail analysis={analysis}/>}</div>; }
+function DeveloperOverview({ snapshot, total, busy, onAnalyze, onExport, onClaimDraft, onCorpusStatus }: { snapshot: Snapshot; total: number; busy: boolean; onAnalyze: () => void; onExport: () => void; onClaimDraft: () => void; onCorpusStatus: (status: "pending_review" | "validated" | "rejected") => void }) { const account = accountDoc(snapshot); const analysis = snapshot.analysis; const candidates = analysis?.lineAssessments.filter((item) => Boolean(bestCombinedCandidate(analysis, item))) || []; return <div className="developer-overview"><DeveloperCaseIdentity snapshot={snapshot}/><div className="dev-flow-card"><div className="card-heading"><div><span className="card-kicker">FLUJO DEL EXPEDIENTE</span><h3>Cuenta clínica primero</h3></div><span className="dev-percentage">{analysis ? "100%" : "50%"}</span></div><div className="dev-flow"><FlowStep number="01" title="Cuenta" state={account ? "complete" : "pending"} detail={account ? "Recibida" : "Pendiente"}/><i/><FlowStep number="02" title="Análisis de cuenta" state={analysis ? "complete" : account ? "current" : "pending"} detail={analysis ? "Listo" : account ? "En curso" : "Esperando cuenta"}/><i/><FlowStep number="03" title="Cobertura PAM" state={pamDoc(snapshot) ? "complete" : "pending"} detail={pamDoc(snapshot) ? "Aislada" : "Opcional"}/><i/><FlowStep number="04" title="Conciliación posterior" state="pending" detail="No ejecutada"/></div></div><div className="developer-scope-card"><div><span className="card-kicker">ALCANCE ACTUAL</span><h3>Posibles desfragmentaciones del prestador</h3><p>Se revisan glosas, códigos, cantidades y vínculos dentro de la cuenta clínica. El PAM informa cobertura, bonificación, copago y rechazos; no determina desfragmentaciones ni reemplaza la cuenta.</p></div><span>OPERATIVO</span></div><div className="dev-analysis-grid"><article><span className="card-kicker">CUENTA CLÍNICA</span><strong>{money(total)}</strong><small>Total informado por el prestador</small></article><article><span className="card-kicker">LÍNEAS CANDIDATAS</span><strong>{candidates.length}</strong><small>Reglas y segunda lectura LLM</small></article><article><span className="card-kicker">PRÓXIMA ACCIÓN</span><strong>{analysis ? "Exportar" : "Analizar"}</strong><small>{analysis ? "Preinforme del caso" : "Ejecutar motor + LLM"}</small></article></div><div className="developer-actions"><button className="portal-button portal-button-primary" onClick={onAnalyze} disabled={busy}>{busy ? "Procesando…" : analysis ? "Actualizar análisis" : "Abrir analizador"} →</button><button className="portal-button portal-button-secondary" onClick={onExport}>Exportar preinforme</button><button className="portal-button portal-button-secondary" onClick={onClaimDraft}>Generar reclamo base</button></div><CorpusLearningPanel status={snapshot.corpusStatus} busy={busy} onStatus={onCorpusStatus}/>{analysis && <DeveloperAnalysisDetail analysis={analysis}/>}</div>; }
 function CorpusLearningPanel({ status, busy, onStatus }: { status?: Snapshot["corpusStatus"]; busy: boolean; onStatus: (status: "pending_review" | "validated" | "rejected") => void }) { const label = status === "validated" ? "Activo en corpus" : status === "rejected" ? "No incorporado" : status === "pending_review" ? "Pendiente de validación" : "Sin observación registrada"; return <section className="corpus-learning-panel"><div><span className="card-kicker">APRENDIZAJE INCREMENTAL</span><h3>{label}</h3><p>Las observaciones de cuenta y PAM se registran por separado. Solo una revisión humana las incorpora al corpus correspondiente.</p></div><div className="corpus-learning-actions"><button className="portal-button portal-button-secondary" onClick={() => onStatus("validated")} disabled={busy || status === "validated"}>Validar aporte</button><button className="portal-button portal-button-secondary" onClick={() => onStatus("rejected")} disabled={busy || status === "rejected"}>Rechazar</button></div></section>; }
 
 function DeveloperTraceability({ snapshot, onExport, onExportMarkdown }: { snapshot: Snapshot; onExport: () => void; onExportMarkdown: () => void }) { return <div className="traceability-view"><DeveloperCaseIdentity snapshot={snapshot}/><div className="traceability-toolbar"><div><span className="card-kicker">MATRIZ DE CUENTA CLÍNICA</span><h3>Evidencia línea por línea</h3></div><div className="traceability-toolbar-actions"><button className="portal-button portal-button-secondary" onClick={onExport}>Exportar .json</button><button className="portal-button portal-button-secondary" onClick={onExportMarkdown}>Exportar .md</button></div></div>{snapshot.analysis ? <DeveloperAnalysisDetail analysis={snapshot.analysis}/> : <section className="trace-note"><span>i</span><p>Ejecuta el análisis desde Resumen para generar la matriz.</p></section>}</div>; }
@@ -1404,9 +1562,41 @@ function DeveloperBreakdownPanel({ analysis }: { analysis: ClinicalAccountAnalys
   </section>;
 }
 
+function LlmSecondReaderPanel({ analysis }: { analysis: ClinicalAccountAnalysis }) {
+  const assist = analysis.llmAssist;
+  if (!assist) return null;
+  const reviewHypotheses = assist.lineHypotheses.filter((item) => item.decision === "review" && item.confidence >= LLM_CANDIDATE_THRESHOLD);
+  const episodeLabel = assist.episode.type === "surgical"
+    ? "Episodio quirúrgico"
+    : assist.episode.type === "hospitalization"
+      ? "Hospitalización"
+      : assist.episode.type === "emergency"
+        ? "Urgencia"
+        : assist.episode.type === "mixed"
+          ? "Episodio mixto"
+          : assist.episode.type === "ambulatory"
+            ? "Atención ambulatoria"
+            : "Contexto no resuelto";
+  const statusLabel = assist.status === "ready_for_review"
+    ? "Segunda lectura disponible"
+    : assist.status === "not_configured"
+      ? "API no configurada"
+      : assist.status === "unavailable"
+        ? "Asistencia temporalmente no disponible"
+        : "Evidencia insuficiente";
+  return <section className="reader-assist-panel llm-analysis-panel">
+    <div className="reader-assist-head"><div><span className="card-kicker">SEGUNDA LECTURA LLM</span><h3>{statusLabel}</h3><p>{assist.summary}</p></div><span className="reader-assist-badge">{assist.model || "Sin modelo"}</span></div>
+    <div className="developer-detail-metrics"><article><b>{episodeLabel}</b><small>Contexto clínico propuesto</small></article><article><b>{assist.episode.hasOperatingRoom ? "Sí" : "No / dudoso"}</b><small>Pabellón reconocido</small></article><article><b>{reviewHypotheses.length}</b><small>Hipótesis sobre 70%</small></article><article><b>{assist.episode.anchors.length}</b><small>Anclas trazables</small></article></div>
+    {assist.episode.anchors.length > 0 && <div className="reader-quality-signals"><b>Anclas del episodio</b>{assist.episode.anchors.slice(0, 8).map((anchor) => <span key={`${anchor.lineId}-${anchor.page}`}>Pág. {anchor.page}: {anchor.evidence}</span>)}</div>}
+    {assist.warnings.length > 0 && <div className="reader-assist-notes">{assist.warnings.map((warning) => <small key={warning}>• {warning}</small>)}</div>}
+    <p className="developer-detail-foot">Las hipótesis LLM se muestran y suman sólo desde 70% de confianza. Siguen siendo presuntivas y requieren contraste con cuenta, contrato, registro de uso y respuesta del prestador.</p>
+  </section>;
+}
+
 function OperatingRoomScopePanel({ analysis }: { analysis: ClinicalAccountAnalysis }) {
   const framework = analysis.operatingRoomFramework ?? FULL_OPERATING_ROOM_FRAMEWORK;
-  const active = analysis.lineAssessments.some((item) => item.candidates.some((candidate) => candidate.bundle === "operating_room"));
+  const active = analysis.lineAssessments.some((item) => Boolean(bestCombinedCandidate(analysis, item, "operating_room")))
+    || analysis.llmAssist?.episode.hasOperatingRoom === true;
   if (!active) return null;
   return <section className="reasoning-control-panel"><div className="precedent-projection-head"><div><span className="card-kicker">CIRCULAR 43 · FULL PABELLÓN</span><h3>Alcance integral activado</h3><p>{framework.sourceRule}</p></div><div className="developer-analysis-badges"><span>{framework.includedCategories.length} categorías</span></div></div><div className="functional-equivalence-summary"><strong>Regla operativa</strong><p>{framework.applicationRule}</p></div><div className="reasoning-control-list">{framework.includedCategories.map((category) => <article key={category}><b>{category}</b></article>)}</div><p className="developer-detail-foot">{framework.limits.join(" ")}</p></section>;
 }
@@ -1426,7 +1616,8 @@ function AccountStructurePanel({ analysis }: { analysis: ClinicalAccountAnalysis
 
 function DeveloperAnalysisDetail({ analysis }: { analysis: ClinicalAccountAnalysis }) {
   const rows = analysis.lineAssessments.filter((item) => !/bonificacion|copago|liquidacion|pam|ajuste/i.test(`${item.line.description} ${item.line.section || ""}`));
-  return <section className="developer-analysis-detail"><div className="developer-analysis-detail-head"><div><span className="card-kicker">ANÁLISIS DEL PRESTADOR</span><h3>Hipótesis técnicas trazables</h3><p>Estos resultados requieren contraste contractual y documental.</p></div><div className="developer-analysis-badges"><span>{rows.length} líneas en foco</span><span>{analysis.functionalEquivalenceAlerts?.length ?? 0} alertas funcionales</span></div></div><div className="developer-detail-metrics"><article><b>{rows.length}</b><small>Líneas en foco</small></article><article><b>{rows.filter((item) => item.candidates.length).length}</b><small>Con hipótesis</small></article><article><b>{money(rows.filter((item) => item.candidates.length).reduce((sum, item) => sum + item.line.amount, 0))}</b><small>Valor bajo hipótesis</small></article><article><b>{analysis.anomalies.length}</b><small>Señales</small></article></div><DeveloperBreakdownPanel analysis={analysis}/><AccountStructurePanel analysis={analysis}/><OperatingRoomScopePanel analysis={analysis}/><PrecedentProjectionPanel analysis={analysis} rows={rows}/><FunctionalEquivalencePanel analysis={analysis}/><ReasoningControlPanel analysis={analysis}/><div className="developer-line-table"><div className="developer-line-head"><span>Línea / origen</span><span>Hipótesis</span><span>Valor</span></div>{rows.map((item) => { const candidate = [...item.candidates].sort((left, right) => right.probability - left.probability)[0]; const precedent = item.precedentComparisons?.[0]; return <article key={item.line.id}><div><b>{item.line.description}</b><small>{item.line.section || "Sin sección"} · pág. {item.line.page}{item.line.code ? ` · código ${item.line.code}` : ""}{item.line.confidence ? ` · lectura ${item.line.confidence}%` : ""}</small>{item.line.sourceText && <small><strong>Texto original:</strong> {item.line.sourceText}</small>}</div><div><strong>{candidate ? `${Math.round(candidate.probability * 100)}%` : "Sin hipótesis"}</strong><small>{candidate?.reasons[0] || "Requiere clasificación adicional"}{precedent ? ` · Antecedente ${Math.round(precedent.comparability * 100)}% comparable` : ""}{candidate?.missingEvidence?.length ? ` · Falta: ${candidate.missingEvidence.join("; ")}` : ""}</small></div><b>{money(item.line.amount)}</b></article>; })}</div></section>;
+  const candidates = rows.filter((item) => Boolean(bestCombinedCandidate(analysis, item)));
+  return <section className="developer-analysis-detail"><div className="developer-analysis-detail-head"><div><span className="card-kicker">ANÁLISIS DEL PRESTADOR</span><h3>Hipótesis técnicas trazables</h3><p>Estos resultados combinan reglas auditables y una segunda lectura semántica. Requieren contraste contractual y documental.</p></div><div className="developer-analysis-badges"><span>{rows.length} líneas en foco</span><span>{analysis.functionalEquivalenceAlerts?.length ?? 0} alertas funcionales</span></div></div><div className="developer-detail-metrics"><article><b>{rows.length}</b><small>Líneas en foco</small></article><article><b>{candidates.length}</b><small>Con hipótesis combinada</small></article><article><b>{money(candidates.reduce((sum, item) => sum + item.line.amount, 0))}</b><small>Valor presuntivo en revisión</small></article><article><b>{analysis.anomalies.length}</b><small>Señales</small></article></div><LlmSecondReaderPanel analysis={analysis}/><DeveloperBreakdownPanel analysis={analysis}/><AccountStructurePanel analysis={analysis}/><OperatingRoomScopePanel analysis={analysis}/><PrecedentProjectionPanel analysis={analysis} rows={rows}/><FunctionalEquivalencePanel analysis={analysis}/><ReasoningControlPanel analysis={analysis}/><div className="developer-line-table"><div className="developer-line-head"><span>Línea / origen</span><span>Hipótesis</span><span>Valor</span></div>{rows.map((item) => { const candidate = bestCombinedCandidate(analysis, item); const precedent = item.precedentComparisons?.[0]; const assisted = candidate?.knowledgeIds.includes("LLM-SECOND-READER-001"); return <article key={item.line.id}><div><b>{item.line.description}</b><small>{item.line.section || "Sin sección"} · pág. {item.line.page}{item.line.code ? ` · código ${item.line.code}` : ""}{item.line.confidence ? ` · lectura ${item.line.confidence}%` : ""}{item.line.assistedBy ? " · corrección visual trazada" : ""}</small>{item.line.sourceText && <small><strong>Texto original:</strong> {item.line.sourceText}</small>}</div><div><strong>{candidate ? `${Math.round(candidate.probability * 100)}%` : "Sin hipótesis"}</strong><small>{candidate ? `${assisted ? "Segunda lectura LLM" : "Motor de reglas"}: ${candidate.reasons[0] || "Hipótesis en revisión"}` : "Requiere clasificación adicional"}{precedent ? ` · Antecedente ${Math.round(precedent.comparability * 100)}% comparable` : ""}{candidate?.missingEvidence?.length ? ` · Falta: ${candidate.missingEvidence.join("; ")}` : ""}</small></div><b>{money(item.line.amount)}</b></article>; })}</div></section>;
 }
 function FlowStep({ number, title, state, detail }: { number: string; title: string; state: "complete" | "current" | "pending"; detail: string }) { return <div className={state}><span>{number}</span><b>{title}</b><small>{detail}</small></div>; }
 

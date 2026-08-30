@@ -11,8 +11,17 @@ import {
 } from "../../../lib/server/observed-corpus-store.ts";
 import { requireApiUser } from "../../../lib/server/auth.ts";
 import { caseAccessResponse } from "../../../lib/server/case-access.ts";
+import type { ReaderAssessment } from "../../../lib/extraction/types.ts";
+import { ReaderAssistError } from "../../../lib/server/openai-reader-assist.ts";
+import { requestAnalysisAssist } from "../../../lib/server/openai-analysis-assist.ts";
 
-type AnalysisRequest = { caseId?: string; episodeLabel?: string; lines?: unknown };
+type AnalysisRequest = {
+  caseId?: string;
+  episodeLabel?: string;
+  lines?: unknown;
+  readerAssessment?: ReaderAssessment;
+  printedTotal?: number;
+};
 
 function isBillingLine(value: unknown): value is ChileanBillingLine {
   if (!value || typeof value !== "object") return false;
@@ -67,6 +76,26 @@ export async function POST(request: Request) {
   // PAM observations remain a separate coverage source for a later reconciliation.
   const corpusSnapshot = await getObservedCorpusSnapshot(env, "account");
   const analysis = analyzeClinicalAccount(body.lines, undefined, corpusSnapshot.corpus);
+  try {
+    analysis.llmAssist = await requestAnalysisAssist(
+      body.lines,
+      analysis,
+      body.readerAssessment,
+      body.printedTotal,
+      env,
+    );
+  } catch (error) {
+    const message = error instanceof ReaderAssistError
+      ? error.message
+      : "La segunda lectura LLM no pudo completarse.";
+    analysis.llmAssist = {
+      status: "unavailable",
+      summary: message,
+      episode: { type: "unknown", hasOperatingRoom: false, hasHospitalStay: false, hasEmergency: false, anchors: [] },
+      lineHypotheses: [],
+      warnings: ["La matriz determinista se conserva y la asistencia puede reintentarse sin volver a cargar la cuenta."],
+    };
+  }
   analysis.observedCorpus.pendingContributionCount = corpusSnapshot.pendingCount;
   analysis.observedCorpus.validatedContributionCount = corpusSnapshot.validatedCount;
   analysis.corpusLearning = {

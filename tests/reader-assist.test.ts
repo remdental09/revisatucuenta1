@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildReaderAssistContext, parseReaderAssistResponse, requestReaderAssist } from "../lib/server/openai-reader-assist.ts";
+import { parseAnalysisAssistResponse, requestAnalysisAssist } from "../lib/server/openai-analysis-assist.ts";
 import { isVisionPageImage, requestVisionAssist } from "../lib/server/openai-vision-assist.ts";
+import { analyzeClinicalAccount, type ChileanBillingLine } from "../lib/rules/chilean-account.ts";
 import type { DocumentExtraction, VisionPageImage } from "../lib/extraction/types.ts";
 
 function sampleExtraction(): DocumentExtraction {
@@ -20,7 +22,7 @@ function sampleExtraction(): DocumentExtraction {
       signals: ["Formato nuevo"],
       nextAction: "Revisar",
       codeChangeNeeded: true,
-      llmAssist: { status: "not_configured", role: "assistive_only", contractVersion: "reader-change-v1" },
+      llmAssist: { status: "not_attempted", role: "assistive_only", contractVersion: "reader-change-v1" },
     },
     account: {
       type: "account",
@@ -130,4 +132,51 @@ test("allows Vision to propose a read when the deterministic reader has no lines
   assert.equal(called, true);
   assert.equal(result.status, "ready_for_review");
   assert.equal(result.result.lineCorrections[0]?.description, "SUERO VISIBLE");
+});
+
+test("uses the LLM as a second clinical-account analyst with traceable line ids", async () => {
+  const lines: ChileanBillingLine[] = [
+    { id: "procedure-1", description: "APENDICECTOMIA", section: "Derecho Pabellon", amount: 1_500_000, page: 2 },
+    { id: "suture-1", description: "SUTURA VICRYL 3-0", section: "Farmacia en Pabellon", amount: 22_500, page: 4 },
+  ];
+  const deterministic = analyzeClinicalAccount(lines);
+  let requestInit: RequestInit | undefined;
+  const fetchImpl: typeof fetch = async (_input, init) => {
+    requestInit = init;
+    return new Response(JSON.stringify({
+      output_text: JSON.stringify({
+        status: "ready_for_review",
+        summary: "La cuenta contiene un episodio quirúrgico y materiales cobrados separadamente.",
+        episode: {
+          type: "surgical",
+          hasOperatingRoom: true,
+          hasHospitalStay: false,
+          hasEmergency: false,
+          anchors: [{ lineId: "procedure-1", page: 2, evidence: "APENDICECTOMIA" }],
+        },
+        lineHypotheses: [
+          { lineId: "procedure-1", page: 2, bundle: "procedure", decision: "do_not_add", confidence: 0.99, rationale: "Es la prestación principal.", evidence: ["APENDICECTOMIA"], missingEvidence: [] },
+          { lineId: "suture-1", page: 4, bundle: "operating_room", decision: "review", confidence: 0.93, rationale: "Sutura usada en el acto quirúrgico.", evidence: ["Farmacia en Pabellon"], missingEvidence: ["Registro de uso"] },
+          { lineId: "invented", page: 9, bundle: "operating_room", decision: "review", confidence: 0.99, rationale: "No existe.", evidence: [], missingEvidence: [] },
+        ],
+        warnings: ["Hipótesis presuntiva."],
+      }),
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  const result = await requestAnalysisAssist(lines, deterministic, undefined, 1_522_500, undefined, { apiKey: "test-key", model: "gpt-test", fetchImpl });
+  assert.equal(result.status, "ready_for_review");
+  assert.equal(result.episode.hasOperatingRoom, true);
+  assert.equal(result.lineHypotheses.length, 2);
+  assert.equal(result.lineHypotheses.find((item) => item.lineId === "suture-1")?.bundle, "operating_room");
+  assert.equal(result.lineHypotheses.some((item) => item.lineId === "invented"), false);
+  const body = JSON.parse(String(requestInit?.body));
+  assert.equal(body.store, false);
+  assert.equal(body.model, "gpt-test");
+  assert.equal(body.text.format.type, "json_schema");
+  assert.match(body.input[1].content[0].text, /SUTURA VICRYL 3-0/);
+});
+
+test("rejects an unstructured second-analysis response", () => {
+  const lines: ChileanBillingLine[] = [{ id: "line-1", description: "INSUMO", amount: 100, page: 1 }];
+  assert.throws(() => parseAnalysisAssistResponse({ output_text: "no es json" }, lines, "gpt-test"), { code: "LLM_INVALID_RESPONSE" });
 });

@@ -116,6 +116,10 @@ async function getOcrWorker() {
       workerPath: ocrWorkerPath,
       corePath: ocrCorePath,
       langPath: ocrLanguagePath,
+      // The repository ships the uncompressed Spanish model. Explicitly
+      // disable the implicit `.gz` lookup so Railway and local use the same
+      // tracked asset instead of depending on a workstation-only file.
+      gzip: false,
       // Use a direct worker URL. Some deployed browsers load the worker
       // through the Blob wrapper but do not allow that wrapper to continue
       // with importScripts, leaving OCR permanently at its initialization

@@ -28,6 +28,11 @@ export type ExtractedLine = {
   confidence?: number;
   sourceText?: string;
   sourceRegion?: string;
+  assistedBy?: "openai_vision";
+  assistConfidence?: number;
+  originalDescription?: string;
+  originalCode?: string;
+  originalAmount?: number;
 };
 
 export type StructuredExtraction = {
@@ -59,7 +64,7 @@ export type ReaderAssessment = {
   nextAction: string;
   codeChangeNeeded: boolean;
   llmAssist: {
-    status: "not_configured" | "ready_for_review";
+    status: "not_attempted" | "not_configured" | "ready_for_review";
     role: "assistive_only";
     contractVersion: string;
   };

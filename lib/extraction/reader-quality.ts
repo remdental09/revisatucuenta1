@@ -198,7 +198,7 @@ export function assessExtractionQuality(
       : "Mantener el resultado bajo revisión humana y contrastarlo con el documento original.",
     codeChangeNeeded,
     llmAssist: {
-      status: "not_configured",
+      status: "not_attempted",
       role: "assistive_only",
       contractVersion: CONTRACT_VERSION,
     },
@@ -285,7 +285,7 @@ export function readerChangeProposalToMarkdown(proposal: ReaderChangeProposal) {
     "",
     "## LLM",
     "",
-    `- Estado: ${proposal.llmAssist.status}`,
+    `- Estado: ${proposal.llmAssist.status === "not_attempted" ? "pendiente de ejecución" : proposal.llmAssist.status}`,
     `- Rol: ${proposal.llmAssist.role}`,
     `- Contrato: ${proposal.llmAssist.contractVersion}`,
     "",
