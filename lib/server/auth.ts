@@ -242,6 +242,8 @@ export async function requireApiUser(request: Request) {
 
 export function isDeveloperUser(user: AuthenticatedUser) {
   if (user.source === "development" && developerOpenAccessEnabled()) return true;
+  const pilotEmail = normalizeEmail(runtimeEnv("REVISA_AUTH_DEV_EMAIL") || "desarrollo@revisatucuenta.local");
+  if (developerOpenAccessEnabled() && normalizeEmail(user.email) === pilotEmail) return true;
   const allowed = (runtimeEnv("REVISA_DEVELOPER_EMAILS") || "")
     .split(",")
     .map(normalizeEmail)

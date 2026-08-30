@@ -18,18 +18,12 @@ export async function GET(request: Request) {
     user = undefined;
   }
 
-  // The pilot console is intentionally passwordless. Issue the same signed
-  // session used by the protected APIs, but only after an explicit developer
-  // entry request and only when the deployment has opted into open dev mode.
-  if (!user && view === "developer" && developerOpenAccessEnabled()) {
-    if (!authSessionSecret()) {
-      return Response.json(
-        { error: "La consola de desarrollo está abierta, pero falta AUTH_SESSION_SECRET" },
-        { status: 503 },
-      );
-    }
+  // The pilot console is intentionally passwordless. In developer view, an
+  // existing patient/email session must not shadow the explicitly configured
+  // pilot identity, otherwise protected developer operations receive 403.
+  if (view === "developer" && developerOpenAccessEnabled() && user?.source !== "development") {
     user = await developmentUser();
-    headers.set("set-cookie", sessionCookie(await createSessionToken(user)));
+    if (authSessionSecret()) headers.set("set-cookie", sessionCookie(await createSessionToken(user)));
   }
 
   if (!user) return Response.json({ authenticated: false, developerOpen: view === "developer" && developerOpenAccessEnabled() }, { status: 401 });
