@@ -138,6 +138,7 @@ test("uses the LLM as a second clinical-account analyst with traceable line ids"
   const lines: ChileanBillingLine[] = [
     { id: "procedure-1", description: "APENDICECTOMIA", section: "Derecho Pabellon", amount: 1_500_000, page: 2 },
     { id: "suture-1", description: "SUTURA VICRYL 3-0", section: "Farmacia en Pabellon", amount: 22_500, page: 4 },
+    { id: "stay-1", description: "DIA CAMA INDIVIDUAL", section: "Hospitalizacion", amount: 452_075, page: 1 },
   ];
   const deterministic = analyzeClinicalAccount(lines);
   let requestInit: RequestInit | undefined;
@@ -157,6 +158,7 @@ test("uses the LLM as a second clinical-account analyst with traceable line ids"
         lineHypotheses: [
           { lineId: "procedure-1", page: 2, bundle: "procedure", decision: "do_not_add", confidence: 0.99, rationale: "Es la prestación principal.", evidence: ["APENDICECTOMIA"], missingEvidence: [] },
           { lineId: "suture-1", page: 4, bundle: "operating_room", decision: "review", confidence: 0.93, rationale: "Sutura usada en el acto quirúrgico.", evidence: ["Farmacia en Pabellon"], missingEvidence: ["Registro de uso"] },
+          { lineId: "stay-1", page: 1, bundle: "hospital_stay", decision: "review", confidence: 0.99, rationale: "Es hospitalización.", evidence: ["DIA CAMA INDIVIDUAL"], missingEvidence: [] },
           { lineId: "invented", page: 9, bundle: "operating_room", decision: "review", confidence: 0.99, rationale: "No existe.", evidence: [], missingEvidence: [] },
         ],
         warnings: ["Hipótesis presuntiva."],
@@ -166,8 +168,9 @@ test("uses the LLM as a second clinical-account analyst with traceable line ids"
   const result = await requestAnalysisAssist(lines, deterministic, undefined, 1_522_500, undefined, { apiKey: "test-key", model: "gpt-test", fetchImpl });
   assert.equal(result.status, "ready_for_review");
   assert.equal(result.episode.hasOperatingRoom, true);
-  assert.equal(result.lineHypotheses.length, 2);
+  assert.equal(result.lineHypotheses.length, 3);
   assert.equal(result.lineHypotheses.find((item) => item.lineId === "suture-1")?.bundle, "operating_room");
+  assert.equal(result.lineHypotheses.find((item) => item.lineId === "stay-1")?.decision, "do_not_add");
   assert.equal(result.lineHypotheses.some((item) => item.lineId === "invented"), false);
   const body = JSON.parse(String(requestInit?.body));
   assert.equal(body.store, false);

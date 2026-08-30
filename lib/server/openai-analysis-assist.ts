@@ -139,6 +139,19 @@ function boundedConfidence(value: unknown) {
   return Math.max(0, Math.min(1, typeof value === "number" && Number.isFinite(value) ? value : 0));
 }
 
+function isPrincipalServiceLine(line: ChileanBillingLine, bundle: BundleFamily) {
+  const description = line.description
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+  if (bundle === "procedure" || bundle === "professional_fees") return true;
+  if (bundle === "hospital_stay" && /\bdia cama\b/.test(description)) return true;
+  return bundle === "operating_room"
+    && /\b(?:derecho de |derecho )?pabellon(?: quirurgico)?\b/.test(description);
+}
+
 function stringList(value: unknown, max = 12) {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string").map((item) => cap(item, 360)).filter(Boolean).slice(0, max)
@@ -235,9 +248,10 @@ export function parseAnalysisAssistResponse(payload: unknown, validLines: Chilea
     const bundle = typeof row.bundle === "string" && ALLOWED_BUNDLES.has(row.bundle as BundleFamily)
       ? row.bundle as BundleFamily
       : "unassigned";
-    const decision = row.decision === "review" || row.decision === "do_not_add" || row.decision === "insufficient_evidence"
+    const proposedDecision = row.decision === "review" || row.decision === "do_not_add" || row.decision === "insufficient_evidence"
       ? row.decision
       : "insufficient_evidence";
+    const decision = source && isPrincipalServiceLine(source, bundle) ? "do_not_add" : proposedDecision;
     const key = `${lineId}|${bundle}|${decision}`;
     if (!source || seen.has(key)) continue;
     seen.add(key);

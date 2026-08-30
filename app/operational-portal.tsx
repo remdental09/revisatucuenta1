@@ -195,6 +195,9 @@ function llmCandidateForLine(
   lineId: string,
   bundle?: "operating_room",
 ): InclusionCandidate | undefined {
+  const sourceLine = analysis?.lineAssessments.find((item) => item.line.id === lineId)?.line;
+  const description = normalizeDeveloperText(sourceLine?.description);
+  if (/\bdia cama\b|\b(?:derecho de |derecho )?pabellon(?: quirurgico)?\b/.test(description)) return;
   const hypothesis = analysis?.llmAssist?.lineHypotheses
     .filter((item) =>
       item.lineId === lineId
