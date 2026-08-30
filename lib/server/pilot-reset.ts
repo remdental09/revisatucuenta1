@@ -1,7 +1,7 @@
 import { ensureCaseSchema } from "./case-schema.ts";
 import { localResetPilot } from "./runtime-store.ts";
 
-export const PILOT_RESET_VERSION = "2026-08-30-empty-console-v1";
+export const PILOT_RESET_VERSION = "2026-08-30-empty-console-v2";
 const PILOT_RESET_FLAG = "pilot_reset_version";
 
 /**

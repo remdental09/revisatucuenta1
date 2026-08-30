@@ -39,7 +39,7 @@ type Snapshot = {
   corpusStatus?: "pending_review" | "validated" | "rejected";
 };
 
-const PILOT_RESET_VERSION = "2026-08-30-empty-console-v1";
+const PILOT_RESET_VERSION = "2026-08-30-empty-console-v2";
 type CaseRow = { id: string; patient_name: string; episode_label: string; status: string; document_count: number };
 type SessionUser = { id: string; email: string; displayName: string; source: "chatgpt" | "email" | "development" | "pilot" };
 
