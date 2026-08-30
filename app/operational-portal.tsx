@@ -965,7 +965,10 @@ function PatientActivity({ activities }: { activities: Activity[] }) {
 
 function useCases() {
   const [cases, setCases] = useState<CaseRow[]>([]); const [error, setError] = useState("");
-  const refresh = async () => { try { const response = await fetch("/api/cases", { cache: "no-store" }); const payload = await response.json(); if (!response.ok) throw new Error(payload.error); setCases(payload.cases || []); } catch (reason) { setError(errorMessage(reason, "No se pudieron cargar los casos")); } };
+  const refresh = async () => { try {
+    await fetch("/api/admin/pilot-reset", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ version: PILOT_RESET_VERSION }) }).catch(() => undefined);
+    const response = await fetch("/api/cases", { cache: "no-store" }); const payload = await response.json(); if (!response.ok) throw new Error(payload.error); setCases(payload.cases || []);
+  } catch (reason) { setError(errorMessage(reason, "No se pudieron cargar los casos")); } };
   useEffect(() => { void refresh(); }, []); return { cases, error, refresh };
 }
 
@@ -1092,29 +1095,10 @@ function AuthenticatedDeveloperPortal({ initialCaseId = "", user }: { initialCas
   const [visionAssistResponse, setVisionAssistResponse] = useState<VisionAssistResponse>();
   const [visionAssistDocumentId, setVisionAssistDocumentId] = useState("");
   const sourceFileRef = useRef<{ documentId: string; file: File }>();
-  const pilotResetStartedRef = useRef(false);
   const [pendingUpload, setPendingUpload] = useState<PendingUpload>();
   const selected = cases.some((item) => item.id === selectedId) ? selectedId : cases[0]?.id || "";
   async function refresh() { if (!selected) return; try { const next = hideStaleAnalysis(await getSnapshot(selected)); setSnapshot(next); if (extractionNeedsRefresh(accountDoc(next))) setNotice("La extracción anterior quedó fuera de vigencia. Reemplaza la cuenta clínica para aplicar el lector actualizado."); } catch (reason) { setNotice(errorMessage(reason, "No se pudo cargar el expediente")); } }
   useEffect(() => { void refresh(); }, [selected]);
-  useEffect(() => {
-    if (pilotResetStartedRef.current) return;
-    pilotResetStartedRef.current = true;
-    void (async () => {
-      try {
-        const response = await fetch("/api/admin/pilot-reset", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ version: PILOT_RESET_VERSION }),
-        });
-        const payload = await response.json().catch(() => ({})) as { reset?: boolean };
-        if (!response.ok || !payload.reset) return;
-        window.location.reload();
-      } catch {
-        // A failed cleanup must not prevent the developer console from loading.
-      }
-    })();
-  }, []);
   async function onFile(file: File, classification: string) {
     if (!selected) return;
     const previousAccount = /cuenta|mixto/i.test(classification) ? accountDoc(snapshot) : undefined;
