@@ -2,6 +2,7 @@ import { ensureCaseSchema } from "../../../lib/server/case-schema.ts";
 import { getCloudflareEnv, localCreateCase, localListCases } from "../../../lib/server/runtime-store.ts";
 import { isDeveloperUser, requireApiUser } from "../../../lib/server/auth.ts";
 import { purgeExpiredDocumentSources } from "../../../lib/server/source-retention.ts";
+import { resetPilotData } from "../../../lib/server/pilot-reset.ts";
 
 export async function GET(request: Request) {
   const auth = await requireApiUser(request);
@@ -9,6 +10,7 @@ export async function GET(request: Request) {
   const developer = isDeveloperUser(auth.user);
   const env = await getCloudflareEnv();
   await purgeExpiredDocumentSources(env);
+  if (developer) await resetPilotData(env);
   if (!env?.DB) return Response.json({ cases: localListCases(auth.user.id, developer) });
   await ensureCaseSchema(env.DB);
   const query = developer
