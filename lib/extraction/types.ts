@@ -126,13 +126,21 @@ export type ReaderAssistResponse = {
 
 export type VisionPageImage = {
   page: number;
-  region: "full_page" | "line_crop";
+  region: "full_page" | "line_crop" | "zone";
   dataUrl: string;
+  zone?: {
+    row: number;
+    column: number;
+    rows: number;
+    columns: number;
+  };
 };
 
 export type VisionAssistResponse = ReaderAssistResponse & {
   mode: "vision";
   reviewedPages: number[];
+  reviewedImageCount?: number;
+  gridSize?: 3 | 4;
 };
 
 export type DocumentExtraction = {

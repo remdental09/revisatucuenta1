@@ -425,6 +425,84 @@ async function analyzeCase(caseId: string, document?: CaseDocument, episodeLabel
   return response.json() as Promise<ClinicalAccountAnalysis>;
 }
 
+function emptyVisionExtraction(): DocumentExtraction {
+  return {
+    pageCount: 4,
+    usedOcr: true,
+    account: { type: "account", label: "Cuenta clínica", pages: [], fields: [], lines: [] },
+  };
+}
+
+function visionPagesForExtraction(extraction: DocumentExtraction) {
+  const assessment = extraction.readerAssessment ?? assessExtractionQuality(extraction, "account");
+  const pageCount = Math.max(1, extraction.pageCount || 4);
+  const prioritized = [
+    ...assessment.lowConfidencePages,
+    ...(extraction.ocrEnhancements?.map((item) => item.page) || []),
+    ...(extraction.ocrPages || []),
+  ];
+  const fallback = Array.from({ length: Math.min(pageCount, 4) }, (_, index) => index + 1);
+  return [...new Set([...prioritized, ...fallback])]
+    .filter((page) => page <= pageCount)
+    .slice(0, 4);
+}
+
+function visionGridForExtraction(extraction: DocumentExtraction): 3 | 4 {
+  const assessment = extraction.readerAssessment ?? assessExtractionQuality(extraction, "account");
+  const severe = !extraction.account?.lines.length || assessment.confidence < 0.45 || assessment.unknownItems.length >= 3 || assessment.numericIssues.length >= 2;
+  return severe ? 4 : 3;
+}
+
+function shouldAutoVision(extraction: DocumentExtraction) {
+  const assessment = extraction.readerAssessment ?? assessExtractionQuality(extraction, "account");
+  return !extraction.account?.lines.length ||
+    assessment.status === "reader_change_needed" ||
+    assessment.confidence < 0.70 ||
+    assessment.lowConfidencePages.length > 0 ||
+    Boolean(extraction.ocrEnhancements?.length) ||
+    assessment.numericIssues.length > 0;
+}
+
+type VisionSourceDocument = Pick<CaseDocument, "id" | "caseId" | "name" | "mimeType"> & { sourceDeletedAt?: string };
+
+async function requestVisionReview(
+  caseId: string,
+  sourceDocument: VisionSourceDocument,
+  extraction: DocumentExtraction,
+  sourceFile: File | undefined,
+  onProgress?: (progress: number) => void,
+) {
+  if (sourceDocument.sourceDeletedAt) throw new Error("El original temporal ya no está disponible para GPT Vision.");
+  const pages = visionPagesForExtraction(extraction);
+  if (!pages.length) throw new Error("No hay páginas seleccionadas para revisión visual.");
+  let file = sourceFile;
+  if (!file) {
+    const sourceUrl = `/api/documents?caseId=${encodeURIComponent(caseId)}&documentId=${encodeURIComponent(sourceDocument.id)}&download=source`;
+    const sourceResponse = await fetch(sourceUrl, { cache: "no-store" });
+    if (!sourceResponse.ok) {
+      const payload = await sourceResponse.json().catch(() => ({}));
+      throw new Error(payload.error || "El original temporal ya no está disponible para visión.");
+    }
+    const sourceBlob = await sourceResponse.blob();
+    file = new File([sourceBlob], sourceDocument.name, { type: sourceDocument.mimeType || sourceBlob.type || "application/pdf" });
+  }
+  const gridSize = visionGridForExtraction(extraction);
+  const images = await prepareVisionPageImages(file, pages, (value) => {
+    onProgress?.(Math.max(3, Math.min(55, Math.round(3 + value * 0.52))));
+  }, { gridSize });
+  if (!images.length) throw new Error("No se pudieron preparar zonas de las páginas seleccionadas.");
+  onProgress?.(60);
+  const response = await fetch("/api/vision-assist", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ caseId, documentId: sourceDocument.id, expectedKind: "account", extraction, images }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || "No se pudo solicitar GPT Vision");
+  onProgress?.(100);
+  return payload as VisionAssistResponse;
+}
+
 function downloadJson(filename: string, value: unknown) {
   const blob = new Blob([JSON.stringify(value, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
@@ -1028,6 +1106,8 @@ function AuthenticatedDeveloperPortal({ initialCaseId = "", user }: { initialCas
     setReaderAssistDocumentId("");
     setVisionAssistResponse(undefined);
     setVisionAssistDocumentId("");
+    setVisionAssistResponse(undefined);
+    setVisionAssistDocumentId("");
     try {
       const documentLabel = /pam|liquid/i.test(classification) ? "PAM / liquidación" : /contrato|plan/i.test(classification) ? "contrato / plan" : "cuenta clínica";
       const updateProgress = (value: number) => {
@@ -1044,14 +1124,37 @@ function AuthenticatedDeveloperPortal({ initialCaseId = "", user }: { initialCas
       const result = previousAccount
         ? await replaceAccountDocument(selected, previousAccount, file, updateProgress)
         : await uploadDocument(selected, file, classification, updateProgress);
-      if (/cuenta|mixto/i.test(classification)) sourceFileRef.current = { documentId: result.documentId, file };
+      let automaticVisionNotice = "";
+      if (/cuenta|mixto/i.test(classification)) {
+        sourceFileRef.current = { documentId: result.documentId, file };
+        if (shouldAutoVision(result.extraction)) {
+          setVisionAssistBusy(true);
+          setUploadProgress(3);
+          setUploadStage("OCR bajo detectado · preparando zonas para GPT Vision");
+          try {
+            const vision = await requestVisionReview(selected, { id: result.documentId, caseId: selected, name: file.name, mimeType: file.type }, result.extraction, file, (value) => {
+              setUploadProgress(value);
+              setUploadStage(value >= 100 ? "Propuesta GPT Vision disponible" : value < 60 ? `Preparando zonas para GPT Vision · ${value}%` : "Consultando GPT Vision");
+            });
+            setVisionAssistResponse(vision);
+            setVisionAssistDocumentId(result.documentId);
+            automaticVisionNotice = vision.status === "ready_for_review"
+              ? "OCR bajo detectado: GPT Vision revisó las zonas señaladas y dejó una propuesta para revisión humana."
+              : "OCR bajo detectado: GPT Vision no encontró evidencia suficiente; la cuenta quedó pendiente de revisión humana.";
+          } catch (reason) {
+            automaticVisionNotice = `La cuenta fue guardada, pero la revisión visual automática quedó pendiente: ${errorMessage(reason, "no se pudo consultar GPT Vision")}`;
+          } finally {
+            setVisionAssistBusy(false);
+          }
+        }
+      }
       await refresh();
       await refreshCases();
-      setNotice(previousAccount
+      setNotice(automaticVisionNotice || (previousAccount
         ? "Cuenta clínica anterior eliminada y reemplazada correctamente"
         : result.corpusRegistered
           ? "Documento guardado, extraído y enviado a revisión de aprendizaje"
-          : "Documento guardado y extraído; el aprendizaje quedó pendiente de sincronización");
+          : "Documento guardado y extraído; el aprendizaje quedó pendiente de sincronización"));
     } catch (reason) {
       setNotice(errorMessage(reason, "No se pudo procesar el documento"));
       await refresh();
@@ -1104,10 +1207,31 @@ function AuthenticatedDeveloperPortal({ initialCaseId = "", user }: { initialCas
         setUploadProgress(bounded);
         setUploadStage(bounded >= 100 ? "Relectura completada" : "Reintentando lectura con el lector PDF compatible");
       };
-      await retryStoredDocument(selected, document, updateProgress);
+      const result = await retryStoredDocument(selected, document, updateProgress);
+      let automaticVisionNotice = "";
+      if (shouldAutoVision(result.extraction)) {
+        setVisionAssistBusy(true);
+        setUploadProgress(3);
+        setUploadStage("OCR bajo detectado · preparando zonas para GPT Vision");
+        try {
+          const vision = await requestVisionReview(selected, document, result.extraction, undefined, (value) => {
+            setUploadProgress(value);
+            setUploadStage(value >= 100 ? "Propuesta GPT Vision disponible" : value < 60 ? `Preparando zonas para GPT Vision · ${value}%` : "Consultando GPT Vision");
+          });
+          setVisionAssistResponse(vision);
+          setVisionAssistDocumentId(document.id);
+          automaticVisionNotice = vision.status === "ready_for_review"
+            ? "La cuenta fue releída y GPT Vision revisó automáticamente las zonas señaladas; la propuesta requiere revisión humana."
+            : "La cuenta fue releída, pero GPT Vision no encontró evidencia suficiente; quedó pendiente de revisión humana.";
+        } catch (reason) {
+          automaticVisionNotice = `La cuenta fue releída, pero la revisión visual automática quedó pendiente: ${errorMessage(reason, "no se pudo consultar GPT Vision")}`;
+        } finally {
+          setVisionAssistBusy(false);
+        }
+      }
       await refresh();
       await refreshCases();
-      setNotice("La cuenta fue releída desde el original temporal; no fue necesario volver a subirla.");
+      setNotice(automaticVisionNotice || "La cuenta fue releída desde el original temporal; no fue necesario volver a subirla.");
     } catch (reason) {
       setNotice(errorMessage(reason, "No se pudo reintentar la lectura"));
       await refresh();
@@ -1154,22 +1278,7 @@ function AuthenticatedDeveloperPortal({ initialCaseId = "", user }: { initialCas
       setNotice("El original temporal ya no está disponible para GPT Vision. Reemplaza la cuenta para preparar una nueva lectura visual.");
       return;
     }
-    const extraction: DocumentExtraction = account.extraction ?? {
-      pageCount: 4,
-      usedOcr: true,
-      account: { type: "account", label: "Cuenta clínica", pages: [], fields: [], lines: [] },
-    };
-    const assessment = extraction.readerAssessment ?? assessExtractionQuality(extraction, "account");
-    const pageNumbers = [...new Set([
-      ...(assessment.lowConfidencePages || []),
-      ...(extraction.ocrEnhancements?.map((item) => item.page) || []),
-      ...(extraction.ocrPages || []),
-      ...(extraction.pageCount ? Array.from({ length: Math.min(extraction.pageCount, 4) }, (_, index) => index + 1) : []),
-    ])].filter((page) => page <= Math.max(1, extraction.pageCount)).slice(0, 4);
-    if (!pageNumbers.length) {
-      setNotice("No hay páginas legibles seleccionadas para la revisión visual; conserva el original para revisión humana.");
-      return;
-    }
+    const extraction = account.extraction ?? emptyVisionExtraction();
     setBusy(true);
     setVisionAssistBusy(true);
     setVisionAssistResponse(undefined);
@@ -1177,37 +1286,13 @@ function AuthenticatedDeveloperPortal({ initialCaseId = "", user }: { initialCas
     setUploadProgress(3);
     setUploadStage("Preparando páginas para GPT Vision");
     try {
-      let sourceFile = sourceFileRef.current?.documentId === account.id ? sourceFileRef.current.file : undefined;
-      if (!sourceFile) {
-        const sourceUrl = `/api/documents?caseId=${encodeURIComponent(selected)}&documentId=${encodeURIComponent(account.id)}&download=source`;
-        const sourceResponse = await fetch(sourceUrl, { cache: "no-store" });
-        if (!sourceResponse.ok) {
-          const payload = await sourceResponse.json().catch(() => ({}));
-          throw new Error(payload.error || "El original temporal ya no está disponible para visión.");
-        }
-        const sourceBlob = await sourceResponse.blob();
-        sourceFile = new File([sourceBlob], account.name, { type: account.mimeType || sourceBlob.type || "application/pdf" });
-      }
-      const images = await prepareVisionPageImages(sourceFile, pageNumbers, (value) => {
-        const bounded = Math.max(3, Math.min(55, Math.round(3 + value * 0.52)));
-        setUploadProgress(bounded);
-        setUploadStage(`Preparando páginas para GPT Vision · ${bounded}%`);
+      const vision = await requestVisionReview(selected, account, extraction, sourceFileRef.current?.documentId === account.id ? sourceFileRef.current.file : undefined, (value) => {
+        setUploadProgress(value);
+        setUploadStage(value >= 100 ? "Propuesta GPT Vision disponible" : value < 60 ? `Preparando zonas para GPT Vision · ${value}%` : "Consultando GPT Vision");
       });
-      if (!images.length) throw new Error("No se pudieron preparar imágenes de las páginas seleccionadas.");
-      setUploadProgress(60);
-      setUploadStage("Consultando GPT Vision");
-      const response = await fetch("/api/vision-assist", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ caseId: selected, documentId: account.id, expectedKind: "account", extraction, images }),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.error || "No se pudo solicitar GPT Vision");
-      setVisionAssistResponse(payload as VisionAssistResponse);
+      setVisionAssistResponse(vision);
       setVisionAssistDocumentId(account.id);
-      setUploadProgress(100);
-      setUploadStage("Propuesta GPT Vision disponible");
-      setNotice(payload.status === "ready_for_review"
+      setNotice(vision.status === "ready_for_review"
         ? "GPT Vision quedó disponible como propuesta para revisión humana; no se aplicó automáticamente."
         : "GPT Vision no encontró evidencia suficiente; la cuenta requiere revisión humana.");
     } catch (reason) {
@@ -1354,8 +1439,38 @@ function VisionAssistPanel({ document: sourceDocument, busy, response, onAssist 
   ])];
   const pageCount = Math.max(1, extraction?.pageCount || 4);
   const pageNumbers = (candidatePages.length ? candidatePages : Array.from({ length: Math.min(pageCount, 4) }, (_, index) => index + 1)).slice(0, 4);
+  const gridSize = response?.gridSize ?? (extraction ? visionGridForExtraction(extraction) : 3);
+  const imageCount = response?.reviewedImageCount ?? pageNumbers.length * gridSize * gridSize;
   const result = response?.result;
-  return <section className="reader-assist-panel reader-vision-panel"><div className="reader-assist-head"><div><span className="card-kicker">GPT VISION · SEGUNDO LECTOR</span><h3>Contrastar páginas difíciles con visión</h3><p>Envía sólo las páginas seleccionadas y la evidencia estructurada al modelo configurado. GPT Vision puede proponer correcciones visibles de OCR y, si no hubo extracción, renglones legibles desde la imagen. No decide coberturas, desfragmentaciones ni conclusiones legales.</p></div><span className="reader-assist-badge">Sólo desarrollo</span></div><div className="reader-assist-summary"><span>◈</span><p>{extraction ? `Se prepararán hasta ${pageNumbers.length} página(s) con lectura dudosa, en versión completa y recorte de renglones.` : `La lectura automática no produjo líneas. Se revisarán hasta ${pageNumbers.length} página(s) del original conservado.`}</p></div><div className="reader-assist-actions"><button className="portal-button portal-button-primary" onClick={onAssist} disabled={busy || !pageNumbers.length}>{busy ? "Consultando GPT Vision…" : "Solicitar GPT Vision"} →</button><small>Acción explícita de desarrollo. Las imágenes se envían a OpenAI sólo al pulsar el botón; la respuesta queda separada de la matriz y no se aplica automáticamente.</small></div>{result && <div className={`reader-assist-result ${result.status}`}><div className="reader-assist-result-head"><b>{result.status === "assisted" ? "Propuesta visual recibida para revisión humana" : "Evidencia visual insuficiente"}</b><span>{response?.model} · págs. {response?.reviewedPages.join(", ") || "—"}</span></div><p>{result.summary}</p>{result.fields.length > 0 && <div className="reader-assist-list"><strong>Campos visibles sugeridos</strong>{result.fields.slice(0, 8).map((field) => <article key={`${field.key}-${field.page}`}><b>{field.label} · pág. {field.page}</b><span>{field.value} · {Math.round(field.confidence * 100)}%</span><small>{field.evidence || "Sin evidencia textual informada"}</small></article>)}</div>}{result.lineCorrections.length > 0 && <div className="reader-assist-list"><strong>Correcciones de lectura sugeridas</strong>{result.lineCorrections.slice(0, 12).map((correction) => <article key={`${correction.index}-${correction.page}`}><b>Línea {correction.index} · pág. {correction.page}</b><span>{correction.description}{correction.amount !== null ? ` · ${money(correction.amount)}` : ""} · {Math.round(correction.confidence * 100)}%</span><small>{correction.reason}</small><em>Evidencia: {correction.evidence || "No informada"}</em></article>)}</div>}{result.unknownItems.length > 0 && <div className="reader-assist-list"><strong>Elementos que siguen dudosos</strong>{result.unknownItems.slice(0, 8).map((item, index) => <article key={`${item.page}-${index}`}><b>Pág. {item.page}</b><span>{item.value} · {Math.round(item.confidence * 100)}%</span><small>{item.reason}</small><em>Evidencia: {item.evidence || "No informada"}</em></article>)}</div>}{result.safetyNotes.map((note) => <small className="reader-assist-warning" key={note}>{note}</small>)}{response?.warnings.map((warning) => <small className="reader-assist-warning" key={warning}>{warning}</small>)}</div>}</section>;
+  return (
+    <section className="reader-assist-panel reader-vision-panel">
+      <div className="reader-assist-head">
+        <div>
+          <span className="card-kicker">GPT VISION · SEGUNDO LECTOR</span>
+          <h3>Revisión automática por zonas</h3>
+          <p>Cuando el OCR presenta señales de baja calidad, el sistema selecciona las páginas más dudosas y las divide en zonas para que GPT Vision pueda proponer correcciones visibles. La revisión se limita a la cuenta clínica y no decide coberturas, desfragmentaciones ni conclusiones legales.</p>
+        </div>
+        <span className="reader-assist-badge">{busy ? "En curso" : "Automático · sólo desarrollo"}</span>
+      </div>
+      <div className="reader-assist-summary">
+        <span>◈</span>
+        <p>{busy ? `Se están preparando hasta ${pageNumbers.length} página(s) en una malla ${gridSize}×${gridSize} (${imageCount} zonas posibles).` : result ? `La revisión visual terminó sobre ${response?.reviewedPages.length || pageNumbers.length} página(s), con ${response?.reviewedImageCount || imageCount} zona(s) enviada(s).` : `La cuenta tiene señales para revisión visual. Se usarán hasta ${pageNumbers.length} página(s) y una malla ${gridSize}×${gridSize}; el botón permite reintentarla cuando sea necesario.`}</p>
+      </div>
+      <div className="reader-assist-actions">
+        <button className="portal-button portal-button-primary" onClick={onAssist} disabled={busy || !pageNumbers.length}>{busy ? "Procesando zonas…" : result ? "Reintentar GPT Vision" : "Revisar zonas con GPT Vision"} →</button>
+        <small>La revisión automática se activa al cargar o reemplazar una cuenta con OCR bajo. Sólo se envían las zonas seleccionadas a OpenAI; la propuesta queda separada de la matriz y siempre requiere revisión humana.</small>
+      </div>
+      {result && <div className={`reader-assist-result ${result.status}`}>
+        <div className="reader-assist-result-head"><b>{result.status === "assisted" ? "Propuesta visual recibida para revisión humana" : "Evidencia visual insuficiente"}</b><span>{response?.model} · págs. {response?.reviewedPages.join(", ") || "—"} · malla {response?.gridSize || gridSize}×{response?.gridSize || gridSize}</span></div>
+        <p>{result.summary}</p>
+        {result.fields.length > 0 && <div className="reader-assist-list"><strong>Campos visibles sugeridos</strong>{result.fields.slice(0, 8).map((field) => <article key={`${field.key}-${field.page}`}><b>{field.label} · pág. {field.page}</b><span>{field.value} · {Math.round(field.confidence * 100)}%</span><small>{field.evidence || "Sin evidencia textual informada"}</small></article>)}</div>}
+        {result.lineCorrections.length > 0 && <div className="reader-assist-list"><strong>Correcciones de lectura sugeridas</strong>{result.lineCorrections.slice(0, 12).map((correction) => <article key={`${correction.index}-${correction.page}`}><b>Línea {correction.index} · pág. {correction.page}</b><span>{correction.description}{correction.amount !== null ? ` · ${money(correction.amount)}` : ""} · {Math.round(correction.confidence * 100)}%</span><small>{correction.reason}</small><em>Evidencia: {correction.evidence || "No informada"}</em></article>)}</div>}
+        {result.unknownItems.length > 0 && <div className="reader-assist-list"><strong>Elementos que siguen dudosos</strong>{result.unknownItems.slice(0, 8).map((item, index) => <article key={`${item.page}-${index}`}><b>Pág. {item.page}</b><span>{item.value} · {Math.round(item.confidence * 100)}%</span><small>{item.reason}</small><em>Evidencia: {item.evidence || "No informada"}</em></article>)}</div>}
+        {result.safetyNotes.map((note) => <small className="reader-assist-warning" key={note}>{note}</small>)}
+        {response?.warnings.map((warning) => <small className="reader-assist-warning" key={warning}>{warning}</small>)}
+      </div>}
+    </section>
+  );
 }
 
 function ReaderFailurePanel({ document: sourceDocument, busy, onRetry }: { document: CaseDocument; busy: boolean; onRetry: () => void }) {
@@ -1363,7 +1478,7 @@ function ReaderFailurePanel({ document: sourceDocument, busy, onRetry }: { docum
   return <section className="reader-quality-panel reader_change_needed"><div className="reader-quality-head"><div><span className="card-kicker">LECTURA DETENIDA</span><h3>La cuenta no quedó sin registrar</h3><p>El archivo original sigue vinculado temporalmente al expediente. La extracción falló antes de producir una matriz confiable, por lo que no se mostrarán montos ni hipótesis inventadas.</p></div><span className="reader-quality-status reader_change_needed">Requiere atención</span></div><div className="reader-failure-message"><b>Detalle técnico informado</b><span>{sourceDocument.processingError || "El lector no pudo procesar este formato."}</span></div><div className="reader-quality-actions"><button className="portal-button portal-button-primary" onClick={onRetry} disabled={busy || Boolean(sourceDocument.sourceDeletedAt)}>{busy ? "Reintentando lectura…" : "Reintentar lectura del original"}</button><a className="portal-button portal-button-secondary" href={`/api/documents?caseId=${encodeURIComponent(sourceDocument.caseId)}&documentId=${encodeURIComponent(sourceDocument.id)}&download=source`}>Descargar original temporal</a><small>El reintento usa el mismo original temporal y no duplica la cuenta. Si vuelve a fallar, conserva el archivo para revisión humana o LLM externa.</small></div></section>;
 }
 
-function DeveloperDocuments({ snapshot, busy, pendingUpload, uploadProgress, uploadStage, onFile, onAnalyze, onRetryReader, readerAssistBusy, readerAssistResponse, onReaderAssist, visionAssistBusy, visionAssistResponse, onVisionAssist }: { snapshot: Snapshot; busy: boolean; pendingUpload?: PendingUpload; uploadProgress: number; uploadStage: string; onFile: (file: File, classification: string) => void; onAnalyze: () => void; onRetryReader: () => void; readerAssistBusy: boolean; readerAssistResponse?: ReaderAssistResponse; onReaderAssist: () => void; visionAssistBusy: boolean; visionAssistResponse?: VisionAssistResponse; onVisionAssist: () => void }) { const account = accountDoc(snapshot); const assessment = account?.extraction?.readerAssessment; const needsReaderAssist = Boolean(account && (account.processingStatus === "failed" || !assessment || assessment.status !== "ready")); return <div className="developer-documents"><DeveloperCaseIdentity snapshot={snapshot}/><div className="traceability-toolbar"><div><span className="card-kicker">DOCUMENTOS DEL CASO</span><h3>Fuentes cargadas</h3></div><span className="document-replacement-note">Los archivos nuevos quedan vinculados al caso</span></div>{account?.processingStatus === "failed" && <ReaderFailurePanel document={account} busy={busy} onRetry={onRetryReader}/>} {account && <ReaderQualityPanel document={account}/>} {needsReaderAssist && account && <ReaderAssistPanel document={account} busy={readerAssistBusy} response={readerAssistResponse} onAssist={onReaderAssist}/>} {needsReaderAssist && account && <VisionAssistPanel document={account} busy={visionAssistBusy} response={visionAssistResponse} onAssist={onVisionAssist}/>}<div className="dev-document-grid"><OperationalDoc type="Cuenta clínica" document={account} classification="Cuenta clínica" busy={busy} pendingFile={pendingUpload?.classification === "Cuenta clínica" ? pendingUpload : undefined} uploadProgress={uploadProgress} uploadStage={uploadStage} onFile={onFile} analysisAvailable={Boolean(snapshot.analysis)} onAnalyze={onAnalyze}/><OperationalDoc type="PAM / liquidación" document={pamDoc(snapshot)} classification="PAM / liquidación" busy={busy} pendingFile={pendingUpload?.classification === "PAM / liquidación" ? pendingUpload : undefined} uploadProgress={uploadProgress} uploadStage={uploadStage} onFile={onFile}/><OperationalDoc type="Contrato / plan" document={snapshot.documents.find((doc) => /contrato|plan/i.test(doc.classification))} classification="Contrato" busy={busy} pendingFile={pendingUpload?.classification === "Contrato" ? pendingUpload : undefined} uploadProgress={uploadProgress} uploadStage={uploadStage} onFile={onFile}/></div></div>; }
+function DeveloperDocuments({ snapshot, busy, pendingUpload, uploadProgress, uploadStage, onFile, onAnalyze, onRetryReader, readerAssistBusy, readerAssistResponse, onReaderAssist, visionAssistBusy, visionAssistResponse, onVisionAssist }: { snapshot: Snapshot; busy: boolean; pendingUpload?: PendingUpload; uploadProgress: number; uploadStage: string; onFile: (file: File, classification: string) => void; onAnalyze: () => void; onRetryReader: () => void; readerAssistBusy: boolean; readerAssistResponse?: ReaderAssistResponse; onReaderAssist: () => void; visionAssistBusy: boolean; visionAssistResponse?: VisionAssistResponse; onVisionAssist: () => void }) { const account = accountDoc(snapshot); const assessment = account?.extraction?.readerAssessment; const needsReaderAssist = Boolean(account && (account.processingStatus === "failed" || !assessment || assessment.status !== "ready" || visionAssistBusy || visionAssistResponse)); return <div className="developer-documents"><DeveloperCaseIdentity snapshot={snapshot}/><div className="traceability-toolbar"><div><span className="card-kicker">DOCUMENTOS DEL CASO</span><h3>Fuentes cargadas</h3></div><span className="document-replacement-note">Los archivos nuevos quedan vinculados al caso</span></div>{account?.processingStatus === "failed" && <ReaderFailurePanel document={account} busy={busy} onRetry={onRetryReader}/>} {account && <ReaderQualityPanel document={account}/>} {needsReaderAssist && account && <ReaderAssistPanel document={account} busy={readerAssistBusy} response={readerAssistResponse} onAssist={onReaderAssist}/>} {needsReaderAssist && account && <VisionAssistPanel document={account} busy={visionAssistBusy} response={visionAssistResponse} onAssist={onVisionAssist}/>}<div className="dev-document-grid"><OperationalDoc type="Cuenta clínica" document={account} classification="Cuenta clínica" busy={busy} pendingFile={pendingUpload?.classification === "Cuenta clínica" ? pendingUpload : undefined} uploadProgress={uploadProgress} uploadStage={uploadStage} onFile={onFile} analysisAvailable={Boolean(snapshot.analysis)} onAnalyze={onAnalyze}/><OperationalDoc type="PAM / liquidación" document={pamDoc(snapshot)} classification="PAM / liquidación" busy={busy} pendingFile={pendingUpload?.classification === "PAM / liquidación" ? pendingUpload : undefined} uploadProgress={uploadProgress} uploadStage={uploadStage} onFile={onFile}/><OperationalDoc type="Contrato / plan" document={snapshot.documents.find((doc) => /contrato|plan/i.test(doc.classification))} classification="Contrato" busy={busy} pendingFile={pendingUpload?.classification === "Contrato" ? pendingUpload : undefined} uploadProgress={uploadProgress} uploadStage={uploadStage} onFile={onFile}/></div></div>; }
 function OperationalDoc({ type, document, classification, busy, pendingFile, uploadProgress, uploadStage, onFile, onAnalyze, analysisAvailable }: { type: string; document?: CaseDocument; classification: string; busy: boolean; pendingFile?: PendingUpload; uploadProgress: number; uploadStage: string; onFile: (file: File, classification: string) => void; onAnalyze?: () => void; analysisAvailable?: boolean }) {
   const input = useRef<HTMLInputElement>(null);
   const cannotAnalyze = analysisBlocked(document);

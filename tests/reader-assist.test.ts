@@ -93,7 +93,7 @@ test("does not call the provider when the API key is absent", async () => {
 });
 
 test("sends selected page images to GPT Vision without storing the response", async () => {
-  const image: VisionPageImage = { page: 1, region: "full_page", dataUrl: "data:image/jpeg;base64,ZmFrZQ==" };
+  const image: VisionPageImage = { page: 1, region: "zone", zone: { row: 1, column: 1, rows: 3, columns: 3 }, dataUrl: "data:image/jpeg;base64,ZmFrZQ==" };
   assert.equal(isVisionPageImage(image), true);
   assert.equal(isVisionPageImage({ ...image, dataUrl: "not-an-image" }), false);
   let requestInit: RequestInit | undefined;
@@ -105,11 +105,14 @@ test("sends selected page images to GPT Vision without storing the response", as
   assert.equal(result.mode, "vision");
   assert.equal(result.status, "ready_for_review");
   assert.deepEqual(result.reviewedPages, [1]);
+  assert.equal(result.gridSize, 3);
+  assert.equal(result.reviewedImageCount, 1);
   const body = JSON.parse(String(requestInit?.body));
   assert.equal(body.store, false);
   assert.equal(body.model, "gpt-5.4-mini");
   assert.equal(body.input[1].content[2].type, "input_image");
   assert.match(body.input[1].content[2].image_url, /^data:image\/jpeg;base64,/);
+  assert.match(body.input[1].content[1].text, /cuadrícula 3×3/);
   assert.equal(body.text.format.type, "json_schema");
 });
 

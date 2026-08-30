@@ -30,9 +30,9 @@ function isDocumentExtraction(value: unknown): value is DocumentExtraction {
 }
 
 function validImages(value: unknown): value is VisionPageImage[] {
-  if (!Array.isArray(value) || value.length < 1 || value.length > 8) return false;
+  if (!Array.isArray(value) || value.length < 1 || value.length > 64) return false;
   const images = value.filter(isVisionPageImage);
-  return images.length === value.length && new Set(images.map((image) => image.page)).size <= 4;
+  return images.length === value.length && new Set(images.map((image) => image.page)).size <= 4 && images.reduce((total, image) => total + image.dataUrl.length, 0) <= 48_000_000;
 }
 
 export async function POST(request: Request) {
@@ -52,7 +52,7 @@ export async function POST(request: Request) {
   const expectedKind = body.expectedKind === "pam" ? "pam" : "account";
   if (!caseId || !documentId) return Response.json({ error: "Caso o documento ausente" }, { status: 400 });
   if (!isDocumentExtraction(body.extraction)) return Response.json({ error: "La evidencia de extracción no tiene un formato válido" }, { status: 422 });
-  if (!validImages(body.images)) return Response.json({ code: "INVALID_VISION_IMAGES", error: "La solicitud debe contener hasta cuatro páginas en imágenes JPEG, PNG o WebP." }, { status: 422 });
+  if (!validImages(body.images)) return Response.json({ code: "INVALID_VISION_IMAGES", error: "La solicitud debe contener hasta cuatro páginas y 64 zonas en imágenes JPEG, PNG o WebP." }, { status: 422 });
 
   const env = await getCloudflareEnv();
   const access = await documentAccess(env, documentId, auth.user);

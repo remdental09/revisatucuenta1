@@ -260,13 +260,85 @@ function canvasToVisionDataUrl(source: HTMLCanvasElement, maxWidth = 1600) {
   return canvas.toDataURL("image/jpeg", 0.76);
 }
 
-function fileAsDataUrl(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
-    reader.onerror = () => reject(reader.error || new Error("No se pudo preparar la imagen para visión."));
-    reader.readAsDataURL(file);
+function fileToCanvas(file: File) {
+  return new Promise<HTMLCanvasElement>((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      const scale = Math.min(1, 2800 / Math.max(image.naturalWidth, image.naturalHeight));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.ceil(image.naturalWidth * scale));
+      canvas.height = Math.max(1, Math.ceil(image.naturalHeight * scale));
+      const context = canvas.getContext("2d");
+      if (!context) {
+        reject(new Error("No se pudo preparar la imagen para visión."));
+        return;
+      }
+      context.imageSmoothingEnabled = true;
+      context.imageSmoothingQuality = "high";
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      resolve(canvas);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("No se pudo abrir la imagen para visión."));
+    };
+    image.src = objectUrl;
   });
+}
+
+function cropVisionZone(source: HTMLCanvasElement, row: number, column: number, gridSize: 3 | 4) {
+  const cellWidth = source.width / gridSize;
+  const cellHeight = source.height / gridSize;
+  const overlapX = Math.ceil(source.width * 0.025);
+  const overlapY = Math.ceil(source.height * 0.025);
+  const left = Math.max(0, Math.floor(column * cellWidth - overlapX));
+  const top = Math.max(0, Math.floor(row * cellHeight - overlapY));
+  const right = Math.min(source.width, Math.ceil((column + 1) * cellWidth + overlapX));
+  const bottom = Math.min(source.height, Math.ceil((row + 1) * cellHeight + overlapY));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, right - left);
+  canvas.height = Math.max(1, bottom - top);
+  const context = canvas.getContext("2d");
+  if (!context) return canvas;
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(source, left, top, canvas.width, canvas.height, 0, 0, canvas.width, canvas.height);
+  return canvas;
+}
+
+type VisionPreparationOptions = {
+  gridSize?: 3 | 4;
+  includeFullPage?: boolean;
+  includeLineCrop?: boolean;
+};
+
+function buildVisionImages(source: HTMLCanvasElement, page: number, gridSize: 3 | 4, options: Required<VisionPreparationOptions>) {
+  const images: VisionPageImage[] = [];
+  if (options.includeFullPage) {
+    const dataUrl = canvasToVisionDataUrl(source);
+    if (dataUrl) images.push({ page, region: "full_page", dataUrl });
+  }
+  if (options.includeLineCrop) {
+    const dataUrl = canvasToVisionDataUrl(cropLineRegion(source));
+    if (dataUrl) images.push({ page, region: "line_crop", dataUrl });
+  }
+  for (let row = 0; row < gridSize; row += 1) {
+    for (let column = 0; column < gridSize; column += 1) {
+      const dataUrl = canvasToVisionDataUrl(cropVisionZone(source, row, column, gridSize));
+      if (!dataUrl) continue;
+      images.push({
+        page,
+        region: "zone",
+        dataUrl,
+        zone: { row: row + 1, column: column + 1, rows: gridSize, columns: gridSize },
+      });
+    }
+  }
+  return images;
 }
 
 /**
@@ -278,14 +350,20 @@ export async function prepareVisionPageImages(
   file: File,
   pageNumbers: number[],
   onProgress?: (progress: number) => void,
+  options: VisionPreparationOptions = {},
 ): Promise<VisionPageImage[]> {
   const selectedPages = [...new Set(pageNumbers.filter((page) => Number.isInteger(page) && page > 0))].slice(0, 4);
   if (!selectedPages.length) return [];
+  const preparation = {
+    gridSize: options.gridSize ?? 3,
+    includeFullPage: options.includeFullPage ?? false,
+    includeLineCrop: options.includeLineCrop ?? false,
+  } satisfies Required<VisionPreparationOptions>;
   onProgress?.(3);
   if (file.type.startsWith("image/")) {
-    const dataUrl = await fileAsDataUrl(file);
+    const source = enhanceCanvas(await fileToCanvas(file));
     onProgress?.(100);
-    return dataUrl ? [{ page: 1, region: "full_page", dataUrl }] : [];
+    return buildVisionImages(source, 1, preparation.gridSize, preparation);
   }
   installPromiseWithResolversPolyfill();
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
@@ -300,10 +378,7 @@ export async function prepareVisionPageImages(
     const canvas = await withTimeout(renderPageCanvas(page), PDF_LOAD_TIMEOUT_MS, `No se pudo renderizar la página ${pageNumber} para visión.`);
     if (!canvas) continue;
     const enhanced = enhanceCanvas(canvas);
-    const fullPage = canvasToVisionDataUrl(enhanced);
-    const lineCrop = canvasToVisionDataUrl(cropLineRegion(enhanced));
-    if (fullPage) images.push({ page: pageNumber, region: "full_page", dataUrl: fullPage });
-    if (lineCrop) images.push({ page: pageNumber, region: "line_crop", dataUrl: lineCrop });
+    images.push(...buildVisionImages(enhanced, pageNumber, preparation.gridSize, preparation));
     onProgress?.(Math.round(((index + 1) / selectedPages.length) * 100));
   }
   return images;

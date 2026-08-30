@@ -109,14 +109,16 @@ ni los resultados del paciente: la aceptación de cada corrección queda a cargo
 de un revisor humano. Si no hay líneas extraídas, el sistema informa que se
 requiere OCR adicional o revisión humana del documento original.
 
-Cuando la extracción parcial conserva páginas dudosas, la consola también
-ofrece **Solicitar GPT Vision**. Esta acción es exclusiva del modo desarrollador:
-prepara hasta cuatro páginas (página completa y recorte de renglones), las envía
-al endpoint Responses de OpenAI y conserva la propuesta sólo en la respuesta de
-la sesión. No se ejecuta automáticamente, no modifica el análisis y no se
-expone en la vista paciente. Configura `OPENAI_VISION_MODEL` si quieres usar un
-modelo visual distinto; por defecto reutiliza `OPENAI_READER_MODEL` y finalmente
-`gpt-5.4-mini`. En Railway debe existir `OPENAI_API_KEY` como variable secreta.
+Cuando la extracción marca una cuenta con lectura baja, la consola activa
+automáticamente **GPT Vision** sobre las páginas señaladas. Prepara hasta cuatro
+páginas y las divide en una malla 3×3; si la evidencia es especialmente débil,
+usa una malla 4×4. Las zonas se envían al endpoint Responses de OpenAI y la
+propuesta queda sólo en la sesión de desarrollo. El botón manual permite
+reintentar la revisión visual. No modifica el análisis, la matriz, el corpus ni
+el código y no se expone en la vista paciente. Configura
+`OPENAI_VISION_MODEL` si quieres usar otro modelo visual; por defecto reutiliza
+`OPENAI_READER_MODEL` y finalmente `gpt-5.4-mini`. En Railway debe existir
+`OPENAI_API_KEY` como variable secreta.
 
 ## Useful Commands
 
