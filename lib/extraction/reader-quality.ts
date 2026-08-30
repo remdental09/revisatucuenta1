@@ -141,6 +141,7 @@ export function assessExtractionQuality(
 
   if (!extraction.pageCount) signals.push("El archivo no informó páginas legibles.");
   if (extraction.usedOcr) signals.push("Se utilizó OCR porque el PDF no entregó texto suficiente.");
+  if (extraction.ocrEnhancements?.length) signals.push(`Se aplicó una segunda pasada OCR amplificada en ${extraction.ocrEnhancements.length} página(s) dudosa(s), conservando la lectura primaria para comparación.`);
   if (recognizedMixedDocument) signals.push("El archivo contenía cuenta clínica y PAM; ambos bloques fueron separados y se analizan como fuentes independientes.");
   if (!source) signals.push(`No se identificó una estructura de ${kind === "unknown" ? "cuenta o PAM" : kind}.`);
   if (!lines.length) signals.push("No se reconocieron líneas monetarias analizables.");

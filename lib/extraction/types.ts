@@ -1,6 +1,6 @@
 // Increment this whenever the extraction rules change in a way that makes a
 // previously persisted extraction unsafe to present as current.
-export const CURRENT_READER_VERSION = "2026-08-29.1";
+export const CURRENT_READER_VERSION = "2026-08-30.1";
 
 export type ExtractionField = {
   key: string;
@@ -65,6 +65,19 @@ export type ReaderAssessment = {
   };
 };
 
+export type OcrEnhancementDiagnostic = {
+  page: number;
+  selected: "primary" | "enhanced" | "line_crop";
+  primaryScore: number;
+  selectedScore: number;
+  methods: string[];
+  candidates: Array<{
+    pass: "primary" | "enhanced" | "line_crop";
+    score: number;
+    textLength: number;
+  }>;
+};
+
 export type ReaderAssistFieldProposal = {
   key: string;
   label: string;
@@ -116,6 +129,7 @@ export type DocumentExtraction = {
   pageCount: number;
   usedOcr: boolean;
   ocrPages?: number[];
+  ocrEnhancements?: OcrEnhancementDiagnostic[];
   pageKinds?: Array<{
     page: number;
     kind: "account" | "pam" | "unknown";

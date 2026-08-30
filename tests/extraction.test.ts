@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { structureDocument } from "../lib/extraction/parsers.ts";
 import { extractedPatientField } from "../lib/extraction/patient-identity.ts";
-import { extractionErrorMessage, textItemsToLines } from "../lib/extraction/client.ts";
+import { chooseOcrText, extractionErrorMessage, scoreOcrText, textItemsToLines } from "../lib/extraction/client.ts";
 import { installPromiseWithResolversPolyfill } from "../lib/extraction/promise-compat.ts";
 import { assessExtractionQuality, buildReaderChangeProposal, buildReaderReviewPackage, readerReviewPackageToMarkdown } from "../lib/extraction/reader-quality.ts";
 import { localCreateCase, localGetCase, localSaveDocument, localSaveExtraction } from "../lib/server/runtime-store.ts";
@@ -492,6 +492,18 @@ test("repara sólo pérdidas OCR inequívocas usando cantidad por valor unitario
   const assessment = assessExtractionQuality(extraction, "account");
   assert.equal(assessment.numericIssues.length, 0);
   assert.match(assessment.signals.join(" "), /corrigieron 2 totales OCR/i);
+});
+
+test("compara OCR primario, amplificado y recorte sin ocultar la evidencia", () => {
+  const primary = "CUENTA CLINICA\n11024037 SUERO FISIOLOGICO 1 4.022";
+  const enhanced = "CUENTA CLINICA\nPaciente: Moises Retamal\n11024037 SUERO FISIOLOGICO 1 4.022 4.022 4.022\nTOTAL CUENTA 4.022";
+  const lineCrop = "11024037 SUERO FISIOLOGICO 1 4.022 4.022 4.022\nTOTAL CUENTA 4.022";
+  const result = chooseOcrText(primary, enhanced, lineCrop);
+
+  assert.ok(scoreOcrText(enhanced) > scoreOcrText(primary));
+  assert.equal(result.selected, "enhanced");
+  assert.equal(result.candidates.length, 2);
+  assert.equal(result.candidates[0]?.pass, "enhanced");
 });
 
 test("prepara un paquete local para revisión humana o LLM externa", () => {

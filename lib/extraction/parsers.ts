@@ -3,6 +3,7 @@ import type {
   DocumentExtraction,
   ExtractedLine,
   ExtractionField,
+  OcrEnhancementDiagnostic,
   StructuredExtraction,
 } from "./types";
 
@@ -584,6 +585,7 @@ export function structureDocument(
   expected: "account" | "pam" | "mixed" | "unknown",
   usedOcr: boolean,
   ocrPages: number[] = [],
+  ocrEnhancements: OcrEnhancementDiagnostic[] = [],
 ): DocumentExtraction {
   let accountPages: TextPage[] = [];
   let pamPages: TextPage[] = [];
@@ -616,6 +618,7 @@ export function structureDocument(
     pageCount: pages.length,
     usedOcr,
     ocrPages,
+    ocrEnhancements,
     pageKinds: pages.map((page, index) => ({ page: page.page, kind: reportedKinds[index] })),
     account: accountPages.length ? parseClinicalAccount(accountPages, usedOcr) : undefined,
     pam: pamPages.length ? parsePam(pamPages) : undefined,
