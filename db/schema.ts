@@ -6,6 +6,7 @@ export const cases = sqliteTable("cases", {
   ownerUserId: text("owner_user_id").notNull().default(""),
   ownerEmail: text("owner_email").notNull().default(""),
   patientName: text("patient_name").notNull(),
+  patientRun: text("patient_run").notNull().default(""),
   contactEmail: text("contact_email").notNull().default(""),
   episodeLabel: text("episode_label").notNull(),
   status: text("status").notNull().default("collecting"),

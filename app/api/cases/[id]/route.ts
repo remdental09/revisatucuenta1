@@ -63,6 +63,7 @@ export async function GET(
     case: {
       id: String(caseResult.id),
       patientName: String(caseResult.patient_name),
+      patientRun: caseResult.patient_run ? String(caseResult.patient_run) : undefined,
       contactEmail: caseResult.contact_email ? String(caseResult.contact_email) : undefined,
       episodeLabel: String(caseResult.episode_label),
       status: String(caseResult.status),

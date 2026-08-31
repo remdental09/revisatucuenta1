@@ -50,7 +50,8 @@ test("server-renders RevisaTuCuenta", async () => {
   assert.match(html, /<title>RevisaTuCuenta \| Entiende y revisa tu cuenta clínica<\/title>/i);
   assert.match(html, /RevisaTuCuenta/);
   assert.match(html, /Entiende lo que te cobraron/);
-  assert.match(html, /Revisar mi cuenta/);
+  assert.match(html, /Entrada paciente/);
+  assert.match(html, /Entrada desarrolladores/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape|Building your site/i);
 });
 

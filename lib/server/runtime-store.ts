@@ -3,7 +3,7 @@ import { isPlaceholderPatientName } from "../extraction/patient-identity.ts";
 import type { ClinicalAccountAnalysis } from "../rules/chilean-account";
 import { getNodePersistentEnvironment } from "./node-persistent-env.ts";
 
-type LocalCase = { id: string; owner_user_id: string; owner_email: string; patient_name: string; contact_email?: string; episode_label: string; status: string; created_at: string; updated_at: string };
+type LocalCase = { id: string; owner_user_id: string; owner_email: string; patient_name: string; patient_run: string; contact_email?: string; episode_label: string; status: string; created_at: string; updated_at: string };
 type LocalDocument = { id: string; case_id: string; original_name: string; mime_type: string; byte_size: number; classification: string; classification_confidence: number; processing_status: string; processing_error?: string; source_expires_at?: string; source_deleted_at?: string; page_from?: number; page_to?: number; created_at: string };
 type LocalActivity = { id: string; case_id: string; title: string; detail: string; event_at: string; pending: number };
 type LocalServiceContract = {
@@ -113,10 +113,10 @@ export function localResetPilot(version: string) {
   return { reset: true, deletedCases, deletedDocuments };
 }
 
-export function localCreateCase(input: { id: string; ownerUserId: string; ownerEmail: string; patientName?: string; contactEmail?: string; episodeLabel: string }) {
+export function localCreateCase(input: { id: string; ownerUserId: string; ownerEmail: string; patientName?: string; patientRun?: string; contactEmail?: string; episodeLabel: string }) {
   if (cases.has(input.id)) return false;
   const timestamp = now();
-  cases.set(input.id, { id: input.id, owner_user_id: input.ownerUserId, owner_email: input.ownerEmail, patient_name: input.patientName || "Paciente", contact_email: input.contactEmail, episode_label: input.episodeLabel, status: "collecting", created_at: timestamp, updated_at: timestamp });
+  cases.set(input.id, { id: input.id, owner_user_id: input.ownerUserId, owner_email: input.ownerEmail, patient_name: input.patientName || "Paciente", patient_run: input.patientRun || "", contact_email: input.contactEmail, episode_label: input.episodeLabel, status: "collecting", created_at: timestamp, updated_at: timestamp });
   addActivity(input.id, "Caso creado", "Se abrió el expediente para revisión.");
   return true;
 }
@@ -139,7 +139,7 @@ export function localGetCase(id: string, ownerUserId: string, includeAll = false
   const authorization = authorizations.get(id);
   const serviceContract = serviceContracts.get(id);
   return {
-    case: { id: item.id, patientName: item.patient_name, contactEmail: item.contact_email, episodeLabel: item.episode_label, status: item.status, createdAt: item.created_at, updatedAt: item.updated_at },
+    case: { id: item.id, patientName: item.patient_name, patientRun: item.patient_run || "", contactEmail: item.contact_email, episodeLabel: item.episode_label, status: item.status, createdAt: item.created_at, updatedAt: item.updated_at },
     documents: caseDocuments, analysis: analysis?.analysis, analysisUpdatedAt: analysis?.updatedAt,
     authorization: authorization ? { authorized: authorization.authorized === 1, scope: authorization.scope, at: authorization.authorizedAt } : undefined,
     contract: serviceContract ? {
