@@ -949,7 +949,7 @@ function PatientStart({ userEmail, onCreated }: { userEmail: string; onCreated: 
     }
   }
 
-  return <main className="patient-login"><form className="patient-login-card" onSubmit={submit}><div className="portal-brand"><span>R</span> RevisaTuCuenta</div><div className="login-seal">⌁</div><p className="portal-kicker">Nuevo expediente</p><h1>Comienza tu revisión.</h1><p>Tu expediente quedará asociado al correo verificado.</p><div className="patient-verified-email"><span>Correo verificado</span><strong>{userEmail}</strong></div><input aria-label="Nombre" placeholder="Nombre para identificar el caso" value={name} onChange={(event) => setName(event.target.value)} /><input aria-label="Episodio" placeholder="Episodio o atención" value={episode} onChange={(event) => setEpisode(event.target.value)} /><label className="portal-button portal-button-secondary"><input type="file" accept="application/pdf,image/jpeg,image/png" hidden onChange={(event) => setFile(event.target.files?.[0])} />{file ? file.name : "Cargar cuenta clínica"}</label>{error && <p className="patient-analysis-notice">{error}</p>}<button className="portal-button portal-button-primary" disabled={busy}>{busy ? "Creando expediente…" : "Crear expediente"}</button><p className="patient-contact-note">El documento original se cifra mientras se procesa. Si la lectura queda completa, se elimina; si requiere revisión humana, vence automáticamente dentro de 72 horas.</p><a className="back-link" href="/">← Volver</a></form></main>;
+  return <main className="patient-login"><form className="patient-login-card" onSubmit={submit}><div className="portal-brand"><span>R</span> RevisaTuCuenta</div><div className="login-seal">⌁</div><p className="portal-kicker">Nuevo expediente</p><h1>Comienza tu revisión.</h1><p>Tu expediente quedará asociado al correo verificado.</p><div className="patient-verified-email"><span>Correo verificado</span><strong>{userEmail}</strong></div><input aria-label="Nombre" placeholder="Nombre para identificar el caso" value={name} onChange={(event) => setName(event.target.value)} /><input aria-label="Episodio" placeholder="Episodio o atención" value={episode} onChange={(event) => setEpisode(event.target.value)} /><label className="portal-button portal-button-secondary"><input type="file" accept="application/pdf,image/jpeg,image/png" hidden onChange={(event) => setFile(event.target.files?.[0])} />{file ? file.name : "Cargar cuenta clínica"}</label>{error && <p className="patient-analysis-notice">{error}</p>}<button className="portal-button portal-button-primary" disabled={busy}>{busy ? "Creando expediente…" : "Crear expediente"}</button><p className="patient-contact-note">Recibirás un resultado preliminar sin costo. Si aparecen posibles inconsistencias, podrás solicitar una asesoría especializada; te informaremos su alcance, precio y condiciones antes de contratar. El documento original se cifra mientras se procesa.</p><a className="back-link" href="/">← Volver</a></form></main>;
 }
 
 export function PatientPortal({ initialCaseId = "" }: { initialCaseId?: string }) {
@@ -969,6 +969,7 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState("");
   const [error, setError] = useState("");
+  const [advisoryPaymentUrl, setAdvisoryPaymentUrl] = useState("");
   const [deletingDocumentId, setDeletingDocumentId] = useState("");
   const accountInputRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -1054,12 +1055,17 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
     void runAnalysis();
   }, [caseId, snapshot, status, busy]);
 
-  async function authorize() {
+  async function requestAdvisory(contactConsent: boolean) {
     setBusy(true);
     try {
-      const response = await fetch(`/api/cases/${encodeURIComponent(caseId)}/authorization`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({}) });
-      if (!response.ok) { notify("No se pudo registrar la solicitud"); return; }
-      await refresh(); notify("Solicitud de asesoría registrada");
+      const response = await fetch(`/api/cases/${encodeURIComponent(caseId)}/advisory`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ contactConsent }) });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "No se pudo registrar la solicitud");
+      setAdvisoryPaymentUrl(typeof payload.paymentUrl === "string" ? payload.paymentUrl : "");
+      await refresh();
+      notify(payload.paymentUrl ? "Solicitud registrada. Puedes continuar al pago." : "Solicitud registrada. Te contactaremos con la propuesta.");
+    } catch (reason) {
+      notify(errorMessage(reason, "No se pudo registrar la solicitud"));
     } finally { setBusy(false); }
   }
 
@@ -1086,6 +1092,7 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
   const patientReviewLines = possibleDisputeLines(patientAnalysis);
   const patientReviewAmount = patientReviewLines.reduce((sum, assessment) => sum + assessment.line.amount, 0);
   const patientHasIrregularities = patientReviewLines.length > 0;
+  const advisoryRequested = snapshot.activities.some((activity) => activity.title === "Solicitud de asesoría recibida");
   const patientCanAnalyze = !analysisBlocked(account);
   const patientStatus = patientAnalysis
     ? patientHasIrregularities ? "Irregularidades detectadas" : "Análisis completado"
@@ -1095,7 +1102,7 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
     <header className="patient-topbar"><a className="portal-brand" href="/"><span>R</span> RevisaTuCuenta</a><div className="patient-topbar-right"><span className="surface-pill patient-pill">Vista paciente</span><span className="avatar">{snapshot.case.patientName.slice(0, 2).toUpperCase()}</span><span className="patient-email">{user.email}</span><a className="patient-signout-button" href={signOutHref(user)} aria-label="Cerrar sesión">Cerrar sesión</a></div></header>
     <div className="patient-layout"><aside className="patient-sidebar"><div className="case-mini"><span className="case-icon">⌁</span><div><small>CASO ACTIVO</small><b>{snapshot.case.patientName}</b><span>Expediente {caseId.slice(0, 8)}</span></div></div><nav className="patient-nav">{(["Resumen", "Documentos", "Actividad"] as const).map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item}</button>)}</nav><div className="patient-sidebar-help"><span>?</span><div><b>¿Necesitas ayuda?</b><small>Escríbenos sobre tu caso.</small></div></div></aside>
       <section className="patient-main"><div className="patient-heading"><div><p className="portal-kicker">Mi expediente</p><h1>Hola, {firstName}.</h1><p>{snapshot.case.episodeLabel}</p></div><span className="case-status"><i /> {patientStatus}</span></div>
-         {tab === "Resumen" && <PatientSummary account={account} pam={pam} reviewAmount={patientReviewAmount} irregularityCount={patientReviewLines.length} analysisAvailable={Boolean(patientAnalysis)} analysisRunning={status === "running"} progress={progress} stage={stage} authorized={Boolean(snapshot.authorization?.authorized)} busy={busy} readerReviewRequired={Boolean(readerNeedsRefresh || account?.processingStatus === "failed" || account?.processingStatus === "review_required" || (readerAssessment && readerAssessment.status !== "ready"))} readerChangeNeeded={!patientCanAnalyze} onAccount={() => accountInputRef.current?.click()} onPam={() => inputRef.current?.click()} onAnalyze={() => void runAnalysis()} onAuthorize={() => void authorize()} />}
+         {tab === "Resumen" && <PatientSummary account={account} pam={pam} reviewAmount={patientReviewAmount} irregularityCount={patientReviewLines.length} analysisAvailable={Boolean(patientAnalysis)} analysisRunning={status === "running"} progress={progress} stage={stage} advisoryRequested={advisoryRequested} advisoryPaymentUrl={advisoryPaymentUrl} busy={busy} readerReviewRequired={Boolean(readerNeedsRefresh || account?.processingStatus === "failed" || account?.processingStatus === "review_required" || (readerAssessment && readerAssessment.status !== "ready"))} readerChangeNeeded={!patientCanAnalyze} onAccount={() => accountInputRef.current?.click()} onPam={() => inputRef.current?.click()} onAnalyze={() => void runAnalysis()} onRequestAdvisory={(contactConsent) => void requestAdvisory(contactConsent)} />}
         {tab === "Documentos" && <PatientDocuments snapshot={snapshot} deletingDocumentId={deletingDocumentId} onAccount={() => accountInputRef.current?.click()} onPam={() => inputRef.current?.click()} onDelete={(document) => void removeDocument(document)} />}
         {tab === "Actividad" && <PatientActivity activities={snapshot.activities} />}
       </section></div>
@@ -1111,7 +1118,8 @@ function UploadProgress({ progress, stage }: { progress: number; stage: string }
   return <section className="analysis-progress-card upload-progress-card" aria-live="polite"><div className="analysis-progress-card-head"><div><span className="card-kicker">LECTURA DE DOCUMENTO</span><b>{stage}</b></div><strong>{progress}%</strong></div><div className="analysis-progress-bar" role="progressbar" aria-label="Progreso de la lectura del documento" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><i style={{ width: `${progress}%` }} /></div><small>El documento se está guardando y leyendo. En cuentas escaneadas, esta etapa puede tardar algunos minutos.</small></section>;
 }
 
-function PatientSummary({ account, pam, reviewAmount, irregularityCount, analysisAvailable, analysisRunning, progress, stage, authorized, busy, readerReviewRequired, readerChangeNeeded, onAccount, onPam, onAnalyze, onAuthorize }: { account?: CaseDocument; pam?: CaseDocument; reviewAmount: number; irregularityCount: number; analysisAvailable: boolean; analysisRunning: boolean; progress: number; stage: string; authorized: boolean; busy: boolean; readerReviewRequired: boolean; readerChangeNeeded: boolean; onAccount: () => void; onPam: () => void; onAnalyze: () => void; onAuthorize: () => void }) {
+function PatientSummary({ account, pam, reviewAmount, irregularityCount, analysisAvailable, analysisRunning, progress, stage, advisoryRequested, advisoryPaymentUrl, busy, readerReviewRequired, readerChangeNeeded, onAccount, onPam, onAnalyze, onRequestAdvisory }: { account?: CaseDocument; pam?: CaseDocument; reviewAmount: number; irregularityCount: number; analysisAvailable: boolean; analysisRunning: boolean; progress: number; stage: string; advisoryRequested: boolean; advisoryPaymentUrl: string; busy: boolean; readerReviewRequired: boolean; readerChangeNeeded: boolean; onAccount: () => void; onPam: () => void; onAnalyze: () => void; onRequestAdvisory: (contactConsent: boolean) => void }) {
+  const [contactConsent, setContactConsent] = useState(false);
   const accountReceived = Boolean(account);
   const pamReceived = Boolean(pam);
   const documentsReceived = accountReceived || pamReceived;
@@ -1160,13 +1168,13 @@ function PatientSummary({ account, pam, reviewAmount, irregularityCount, analysi
           <p>{hasIrregularities ? `El monto se relaciona con ${irregularityLabel} que conviene revisar. Es una estimación preliminar y no garantiza una devolución.` : "No identificamos un monto asociado a cargos que requieran revisión con la información disponible."}</p>
         </div>
         {hasIrregularities && reviewAmount > 0 && <section className="patient-advisory-card">
-          <div><span className="card-kicker">ASESORÍA INICIAL GRATUITA</span><h3>Revisemos los cargos observados</h3><p>La asesoría inicial es gratuita. Si la revisión confirma que existen montos que podrían recuperarse, nuestro equipo se pondrá en contacto contigo para explicarte los antecedentes y los pasos siguientes.</p></div>
-          {authorized ? <div className="patient-advisory-confirmed"><b>Solicitud de asesoría registrada</b><small>Nuestro equipo se pondrá en contacto contigo.</small></div> : <button className="portal-button portal-button-primary" onClick={onAuthorize} disabled={busy}>{busy ? "Registrando…" : "Solicitar asesoría inicial gratis"} →</button>}
+          <div><span className="card-kicker">ASESORÍA ESPECIALIZADA</span><h3>Podemos ayudarte a revisar estos cargos</h3><p>El preinforme es gratuito. La revisión detallada y la preparación de los siguientes pasos se ofrecen como un servicio de asesoría. Te informaremos el alcance, precio y condiciones antes de contratar; solicitar contacto no te obliga a pagar ni a iniciar un reclamo.</p>{!advisoryRequested && <label className="patient-advisory-consent"><input type="checkbox" checked={contactConsent} onChange={(event) => setContactConsent(event.target.checked)} /><span>Autorizo que me contacten en mi correo verificado para informarme sobre esta asesoría y usar el expediente sólo para preparar esa propuesta.</span></label>}</div>
+          {advisoryRequested ? <div className="patient-advisory-confirmed"><b>Solicitud recibida</b><small>Te contactaremos para confirmar alcance, precio y forma de pago.</small>{advisoryPaymentUrl && <a href={advisoryPaymentUrl} target="_blank" rel="noreferrer">Continuar al pago →</a>}</div> : <button className="portal-button portal-button-primary" onClick={() => onRequestAdvisory(contactConsent)} disabled={busy || !contactConsent}>{busy ? "Registrando…" : "Solicitar asesoría especializada"} →</button>}
         </section>}
       </>}
       <div className="patient-review-actions"><button className="portal-button portal-button-secondary" onClick={onAccount} disabled={busy}>{account ? "Reemplazar cuenta clínica" : "Agregar cuenta clínica"}</button><button className="portal-button portal-button-primary" onClick={onPam} disabled={busy}>{pam ? "Reemplazar documento de cobertura" : "Agregar documento de cobertura"}</button></div>
     </section>
-    <section className="patient-card next-card"><span className="card-kicker">SIGUIENTE PASO</span><h2>{analysisAvailable ? hasIrregularities ? "Revisa los cargos observados" : "Resultado de la revisión" : accountReceived ? "Obtén el resultado de tu cuenta" : pamReceived ? "Falta la cuenta clínica" : "Completa tus documentos"}</h2><p>{analysisAvailable ? hasIrregularities ? "Encontramos posibles irregularidades y te mostramos el monto aproximado asociado. Puedes solicitar una asesoría inicial para revisar los antecedentes." : "Con la información disponible no encontramos cargos que requieran revisión." : documentsReceived ? "Carga la cuenta clínica para obtener el resultado y el monto aproximado de la revisión." : "Carga la cuenta clínica para obtener el resultado de la revisión."}</p></section>
+    <section className="patient-card next-card"><span className="card-kicker">SIGUIENTE PASO</span><h2>{analysisAvailable ? hasIrregularities ? "Revisa los cargos observados" : "Resultado de la revisión" : accountReceived ? "Obtén el resultado de tu cuenta" : pamReceived ? "Falta la cuenta clínica" : "Completa tus documentos"}</h2><p>{analysisAvailable ? hasIrregularities ? "Encontramos posibles irregularidades y te mostramos el monto aproximado asociado. Puedes solicitar una propuesta de asesoría para revisar los antecedentes." : "Con la información disponible no encontramos cargos que requieran revisión." : documentsReceived ? "Carga la cuenta clínica para obtener el resultado y el monto aproximado de la revisión." : "Carga la cuenta clínica para obtener el resultado de la revisión."}</p></section>
   </>;
 }
 

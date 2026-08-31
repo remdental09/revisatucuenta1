@@ -6,6 +6,7 @@ import {
   localDeleteDocument,
   localGetCase,
   localListCases,
+  localRequestAdvisory,
   localSaveAnalysis,
   localSaveDocument,
 } from "../lib/server/runtime-store.ts";
@@ -66,4 +67,22 @@ test("reemplazar una cuenta elimina la anterior y conserva los demás documentos
   localSaveAnalysis(caseId, analyzeClinicalAccount([]));
   localDeleteDocument(pamId, caseId);
   assert.ok(localGetCase(caseId, owner, true)?.analysis);
+});
+
+test("registra una sola solicitud de asesoría sin autorizar reclamos", () => {
+  const suffix = crypto.randomUUID();
+  const owner = `advisory-owner-${suffix}`;
+  const caseId = `advisory-case-${suffix}`;
+  assert.equal(localCreateCase({ id: caseId, ownerUserId: owner, ownerEmail: "advisory@example.com", patientName: "Paciente asesoría", episodeLabel: "Cuenta clínica" }), true);
+  localSaveAnalysis(caseId, analyzeClinicalAccount([]));
+
+  const first = localRequestAdvisory(caseId);
+  const second = localRequestAdvisory(caseId);
+  const current = localGetCase(caseId, owner, true);
+
+  assert.equal(first.requested, true);
+  assert.equal(first.alreadyRequested, false);
+  assert.equal(second.alreadyRequested, true);
+  assert.equal(current?.activities.filter((activity) => activity.title === "Solicitud de asesoría recibida").length, 1);
+  assert.equal(current?.authorization, undefined);
 });

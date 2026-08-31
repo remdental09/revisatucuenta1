@@ -203,3 +203,18 @@ export function localAuthorize(caseId: string, scope: string, authorizedAt: stri
   authorizations.set(caseId, { authorized: 1, scope, authorizedAt });
   addActivity(caseId, "Autorización registrada", "El paciente autorizó preparar solicitudes de aclaración y reclamos.");
 }
+
+export function localRequestAdvisory(caseId: string) {
+  const existing = activities.find((activity) => activity.case_id === caseId && activity.title === "Solicitud de asesoría recibida");
+  if (existing) return { requested: true, alreadyRequested: true, at: existing.event_at };
+  const at = now();
+  activities.unshift({
+    id: crypto.randomUUID(),
+    case_id: caseId,
+    title: "Solicitud de asesoría recibida",
+    detail: "El paciente solicitó información sobre una asesoría para revisar posibles inconsistencias. No implica autorización para reclamos ni aceptación de acuerdos.",
+    event_at: at,
+    pending: 0,
+  });
+  return { requested: true, alreadyRequested: false, at };
+}
