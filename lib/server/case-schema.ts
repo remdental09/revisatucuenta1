@@ -13,7 +13,6 @@ export async function ensureCaseSchema(db: any) {
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_documents_case_id ON documents(case_id)`),
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_extracted_fields_document_id ON extracted_fields(document_id)`),
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_case_activities_case_id ON case_activities(case_id, event_at)`),
-    db.prepare(`CREATE INDEX IF NOT EXISTS idx_service_contracts_case_id ON service_contracts(case_id)`),
   ]);
   try { await db.prepare(`ALTER TABLE cases ADD COLUMN contact_email TEXT NOT NULL DEFAULT ''`).run(); } catch { /* Column already exists. */ }
   try { await db.prepare(`ALTER TABLE cases ADD COLUMN owner_user_id TEXT NOT NULL DEFAULT ''`).run(); } catch { /* Column already exists. */ }

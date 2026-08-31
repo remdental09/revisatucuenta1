@@ -88,7 +88,7 @@ export const serviceContracts = sqliteTable("service_contracts", {
   paymentUrl: text("payment_url"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
-}, (table) => [index("idx_service_contracts_case_id").on(table.caseId)]);
+});
 
 export const caseActivities = sqliteTable("case_activities", {
   id: text("id").primaryKey(),

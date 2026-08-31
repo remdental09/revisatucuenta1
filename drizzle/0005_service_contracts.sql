@@ -22,5 +22,3 @@ CREATE TABLE IF NOT EXISTS `service_contracts` (
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS `service_contracts_case_id_unique` ON `service_contracts` (`case_id`);
---> statement-breakpoint
-CREATE INDEX IF NOT EXISTS `idx_service_contracts_case_id` ON `service_contracts` (`case_id`);
