@@ -939,14 +939,14 @@ export function PortalEntry() {
       <div className="portal-entry-glow" />
       <div className="portal-entry-card">
         <PortalBrand/>
-        <p className="portal-kicker">Portal operativo de casos clínicos</p>
-        <h1>Una cuenta clara empieza por un expediente ordenado.</h1>
-        <p className="portal-entry-copy">Paciente y equipo de revisión trabajan sobre el mismo caso persistido, con documentos separados y trazabilidad por página.</p>
+        <p className="portal-kicker">Revisión de cuentas de hospitalización</p>
+        <h1>Sube tu cuenta de hospitalización y revisémosla juntos.</h1>
+        <p className="portal-entry-copy">Recibe una primera revisión clara de los cobros y posibles inconsistencias de tu cuenta clínica.</p>
         <div className="portal-entry-actions">
           <a className="portal-button portal-button-primary" href="/?view=patient">Entrada paciente</a>
           <a className="portal-button portal-button-secondary developer-entry-button" href="/?view=developer">Entrada desarrolladores ↗</a>
         </div>
-        <div className="portal-entry-foot"><span>●</span> Estado sincronizado con el expediente</div>
+        <div className="portal-entry-foot"><span>●</span> Tu información se mantiene protegida</div>
       </div>
     </main>
   );
