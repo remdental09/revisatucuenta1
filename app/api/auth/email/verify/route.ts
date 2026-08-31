@@ -16,7 +16,12 @@ export async function GET(request: Request) {
   const user = await magicLinkUser(token);
   if (!user) return new Response("El enlace de acceso es inválido o venció.", { status: 400, headers: { "content-type": "text/plain; charset=utf-8" } });
   const session = await createSessionToken(user);
-  const response = Response.redirect(new URL(safeReturnTo(url.searchParams.get("returnTo")), url.origin), 303);
-  response.headers.append("set-cookie", sessionCookie(session, url.protocol === "https:"));
-  return response;
+  // Response.redirect() exposes immutable headers in Node/Undici. Build a
+  // fresh response so the session cookie can be added before redirecting.
+  const headers = new Headers({
+    location: new URL(safeReturnTo(url.searchParams.get("returnTo")), url.origin).toString(),
+    "cache-control": "no-store",
+  });
+  headers.append("set-cookie", sessionCookie(session, url.protocol === "https:"));
+  return new Response(null, { status: 303, headers });
 }
