@@ -68,6 +68,28 @@ export const claimAuthorizations = sqliteTable("claim_authorizations", {
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
+export const serviceContracts = sqliteTable("service_contracts", {
+  id: text("id").primaryKey(),
+  caseId: text("case_id").notNull().unique().references(() => cases.id),
+  contractVersion: text("contract_version").notNull(),
+  status: text("status").notNull().default("draft"),
+  patientName: text("patient_name").notNull(),
+  patientEmail: text("patient_email").notNull(),
+  companyName: text("company_name").notNull(),
+  episodeLabel: text("episode_label").notNull(),
+  contractText: text("contract_text").notNull(),
+  priceClp: integer("price_clp").notNull().default(0),
+  acceptedTerms: integer("accepted_terms").notNull().default(0),
+  dataConsent: integer("data_consent").notNull().default(0),
+  mandateConsent: integer("mandate_consent").notNull().default(0),
+  signerName: text("signer_name"),
+  acceptedAt: text("accepted_at"),
+  paymentStatus: text("payment_status").notNull().default("not_started"),
+  paymentUrl: text("payment_url"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [index("idx_service_contracts_case_id").on(table.caseId)]);
+
 export const caseActivities = sqliteTable("case_activities", {
   id: text("id").primaryKey(),
   caseId: text("case_id").notNull().references(() => cases.id),

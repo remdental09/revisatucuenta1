@@ -6,6 +6,27 @@ import { getNodePersistentEnvironment } from "./node-persistent-env.ts";
 type LocalCase = { id: string; owner_user_id: string; owner_email: string; patient_name: string; contact_email?: string; episode_label: string; status: string; created_at: string; updated_at: string };
 type LocalDocument = { id: string; case_id: string; original_name: string; mime_type: string; byte_size: number; classification: string; classification_confidence: number; processing_status: string; processing_error?: string; source_expires_at?: string; source_deleted_at?: string; page_from?: number; page_to?: number; created_at: string };
 type LocalActivity = { id: string; case_id: string; title: string; detail: string; event_at: string; pending: number };
+type LocalServiceContract = {
+  id: string;
+  case_id: string;
+  contract_version: string;
+  status: string;
+  patient_name: string;
+  patient_email: string;
+  company_name: string;
+  episode_label: string;
+  contract_text: string;
+  price_clp: number;
+  accepted_terms: number;
+  data_consent: number;
+  mandate_consent: number;
+  signer_name?: string;
+  accepted_at?: string;
+  payment_status: string;
+  payment_url?: string;
+  created_at: string;
+  updated_at: string;
+};
 
 type LocalRuntimeState = {
   cases: Map<string, LocalCase>;
@@ -13,6 +34,7 @@ type LocalRuntimeState = {
   extractions: Map<string, DocumentExtraction>;
   analyses: Map<string, { analysis: ClinicalAccountAnalysis; updatedAt: string }>;
   authorizations: Map<string, { authorized: number; scope: string; authorizedAt: string }>;
+  serviceContracts: Map<string, LocalServiceContract>;
   activities: LocalActivity[];
   runtimeFlags: Set<string>;
 };
@@ -33,11 +55,12 @@ const localState = runtimeHost.__revisaTuCuentaLocalState ??= {
   extractions: new Map<string, DocumentExtraction>(),
   analyses: new Map<string, { analysis: ClinicalAccountAnalysis; updatedAt: string }>(),
   authorizations: new Map<string, { authorized: number; scope: string; authorizedAt: string }>(),
+  serviceContracts: new Map<string, LocalServiceContract>(),
   activities: [],
   runtimeFlags: new Set<string>(),
 };
 
-const { cases, documents, extractions, analyses, authorizations, activities } = localState;
+const { cases, documents, extractions, analyses, authorizations, serviceContracts, activities } = localState;
 
 export async function getCloudflareEnv(): Promise<any | null> {
   const nodeEnvironment = await getNodePersistentEnvironment();
@@ -84,6 +107,7 @@ export function localResetPilot(version: string) {
   extractions.clear();
   analyses.clear();
   authorizations.clear();
+  serviceContracts.clear();
   activities.length = 0;
   localState.runtimeFlags.add(version);
   return { reset: true, deletedCases, deletedDocuments };
@@ -113,10 +137,32 @@ export function localGetCase(id: string, ownerUserId: string, includeAll = false
   }));
   const analysis = analyses.get(id);
   const authorization = authorizations.get(id);
+  const serviceContract = serviceContracts.get(id);
   return {
     case: { id: item.id, patientName: item.patient_name, contactEmail: item.contact_email, episodeLabel: item.episode_label, status: item.status, createdAt: item.created_at, updatedAt: item.updated_at },
     documents: caseDocuments, analysis: analysis?.analysis, analysisUpdatedAt: analysis?.updatedAt,
     authorization: authorization ? { authorized: authorization.authorized === 1, scope: authorization.scope, at: authorization.authorizedAt } : undefined,
+    contract: serviceContract ? {
+      id: serviceContract.id,
+      caseId: serviceContract.case_id,
+      contractVersion: serviceContract.contract_version,
+      status: serviceContract.status,
+      patientName: serviceContract.patient_name,
+      patientEmail: serviceContract.patient_email,
+      companyName: serviceContract.company_name,
+      episodeLabel: serviceContract.episode_label,
+      contractText: serviceContract.contract_text,
+      priceClp: serviceContract.price_clp,
+      acceptedTerms: serviceContract.accepted_terms === 1,
+      dataConsent: serviceContract.data_consent === 1,
+      mandateConsent: serviceContract.mandate_consent === 1,
+      signerName: serviceContract.signer_name,
+      acceptedAt: serviceContract.accepted_at,
+      paymentStatus: serviceContract.payment_status,
+      paymentUrl: serviceContract.payment_url,
+      createdAt: serviceContract.created_at,
+      updatedAt: serviceContract.updated_at,
+    } : undefined,
     activities: activities.filter((activity) => activity.case_id === id).map((activity) => ({ id: activity.id, title: activity.title, detail: activity.detail, date: activity.event_at, pending: activity.pending === 1 })),
   };
 }
@@ -202,6 +248,29 @@ export function localSaveAnalysis(caseId: string, analysis: ClinicalAccountAnaly
 export function localAuthorize(caseId: string, scope: string, authorizedAt: string) {
   authorizations.set(caseId, { authorized: 1, scope, authorizedAt });
   addActivity(caseId, "Autorización registrada", "El paciente autorizó preparar solicitudes de aclaración y reclamos.");
+}
+
+export function localGetServiceContract(caseId: string, ownerUserId: string, includeAll = false) {
+  if (!localCanAccessCase(caseId, ownerUserId, includeAll)) return null;
+  return serviceContracts.get(caseId) || null;
+}
+
+export function localSaveServiceContract(input: Omit<LocalServiceContract, "created_at" | "updated_at"> & { created_at?: string; updated_at?: string }) {
+  const timestamp = now();
+  const record: LocalServiceContract = { ...input, created_at: input.created_at || timestamp, updated_at: input.updated_at || timestamp };
+  serviceContracts.set(input.case_id, record);
+  localAuthorize(input.case_id, "Poder especial y limitado para solicitar antecedentes, preparar y presentar aclaraciones y reclamos administrativos del episodio indicado; sin consentir tratamientos, transigir, renunciar derechos ni recibir fondos.", timestamp);
+  addActivity(input.case_id, "Contrato de asesoría aceptado", "La versión del contrato quedó registrada junto con la autorización de datos y mandato limitado.");
+  return record;
+}
+
+export function localUpdateServiceContractPayment(caseId: string, paymentStatus: string) {
+  const contract = serviceContracts.get(caseId);
+  if (!contract) return null;
+  const updated = { ...contract, status: paymentStatus === "paid_demo" ? "paid_demo" : contract.status, payment_status: paymentStatus, updated_at: now() };
+  serviceContracts.set(caseId, updated);
+  addActivity(caseId, paymentStatus === "paid_demo" ? "Pago de demostración registrado" : "Estado de pago actualizado", paymentStatus === "paid_demo" ? "El piloto registró un pago simulado; no se realizó ningún cobro real." : "El estado del pago fue actualizado.");
+  return updated;
 }
 
 export function localRequestAdvisory(caseId: string) {

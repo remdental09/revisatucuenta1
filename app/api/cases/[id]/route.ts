@@ -27,11 +27,12 @@ export async function GET(
   const caseResult = await env.DB.prepare(`SELECT * FROM cases WHERE id = ?`).bind(id).first();
   if (!caseResult) return Response.json({ error: "Caso no encontrado" }, { status: 404 });
 
-  const [documentsResult, extractionsResult, analysisResult, authorizationResult, activitiesResult] = await Promise.all([
+  const [documentsResult, extractionsResult, analysisResult, authorizationResult, contractResult, activitiesResult] = await Promise.all([
     env.DB.prepare(`SELECT id, case_id, original_name, mime_type, byte_size, classification, classification_confidence, processing_status, processing_error, source_expires_at, source_deleted_at, page_from, page_to, created_at FROM documents WHERE case_id = ? ORDER BY created_at ASC`).bind(id).all(),
     env.DB.prepare(`SELECT de.document_id, de.extraction_json FROM document_extractions de JOIN documents d ON d.id = de.document_id WHERE d.case_id = ?`).bind(id).all(),
     env.DB.prepare(`SELECT analysis_json, updated_at FROM case_analyses WHERE case_id = ?`).bind(id).first(),
     env.DB.prepare(`SELECT authorized, scope, authorized_at FROM claim_authorizations WHERE case_id = ?`).bind(id).first(),
+    env.DB.prepare(`SELECT id, case_id, contract_version, status, patient_name, patient_email, company_name, episode_label, contract_text, price_clp, accepted_terms, data_consent, mandate_consent, signer_name, accepted_at, payment_status, payment_url, created_at, updated_at FROM service_contracts WHERE case_id = ?`).bind(id).first(),
     env.DB.prepare(`SELECT id, title, detail, event_at, pending FROM case_activities WHERE case_id = ? ORDER BY event_at DESC`).bind(id).all(),
   ]);
 
@@ -75,6 +76,27 @@ export async function GET(
       authorized: Number(authorizationResult.authorized) === 1,
       scope: String(authorizationResult.scope),
       at: authorizationResult.authorized_at ? String(authorizationResult.authorized_at) : undefined,
+    } : undefined,
+    contract: contractResult ? {
+      id: String(contractResult.id),
+      caseId: String(contractResult.case_id),
+      contractVersion: String(contractResult.contract_version),
+      status: String(contractResult.status),
+      patientName: String(contractResult.patient_name),
+      patientEmail: String(contractResult.patient_email),
+      companyName: String(contractResult.company_name),
+      episodeLabel: String(contractResult.episode_label),
+      contractText: String(contractResult.contract_text),
+      priceClp: Number(contractResult.price_clp || 0),
+      acceptedTerms: Number(contractResult.accepted_terms) === 1,
+      dataConsent: Number(contractResult.data_consent) === 1,
+      mandateConsent: Number(contractResult.mandate_consent) === 1,
+      signerName: contractResult.signer_name ? String(contractResult.signer_name) : undefined,
+      acceptedAt: contractResult.accepted_at ? String(contractResult.accepted_at) : undefined,
+      paymentStatus: String(contractResult.payment_status || "not_started"),
+      paymentUrl: contractResult.payment_url ? String(contractResult.payment_url) : undefined,
+      createdAt: String(contractResult.created_at),
+      updatedAt: String(contractResult.updated_at),
     } : undefined,
     activities: (activitiesResult.results as Array<Record<string, unknown>>).map((activity) => ({
       id: String(activity.id),

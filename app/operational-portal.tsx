@@ -30,11 +30,33 @@ type CaseDocument = {
 };
 type Activity = { id: string; title: string; detail: string; date: string; pending?: boolean };
 type Authorization = { authorized: boolean; scope: string; at?: string };
+type ServiceContract = {
+  id: string;
+  caseId: string;
+  contractVersion: string;
+  status: "draft" | "accepted" | "paid_demo" | string;
+  patientName: string;
+  patientEmail: string;
+  companyName: string;
+  episodeLabel: string;
+  contractText: string;
+  priceClp: number;
+  acceptedTerms: boolean;
+  dataConsent: boolean;
+  mandateConsent: boolean;
+  signerName?: string;
+  acceptedAt?: string;
+  paymentStatus: string;
+  paymentUrl?: string;
+  createdAt: string;
+  updatedAt: string;
+};
 type Snapshot = {
   case: { id: string; patientName: string; contactEmail?: string; episodeLabel: string; status: string; createdAt: string; updatedAt: string };
   documents: CaseDocument[];
   analysis?: ClinicalAccountAnalysis;
   authorization?: Authorization;
+  contract?: ServiceContract;
   activities: Activity[];
   corpusStatus?: "pending_review" | "validated" | "rejected";
 };
@@ -969,7 +991,10 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState("");
   const [error, setError] = useState("");
-  const [advisoryPaymentUrl, setAdvisoryPaymentUrl] = useState("");
+  const [contractDraft, setContractDraft] = useState<ServiceContract>();
+  const [contractOpen, setContractOpen] = useState(false);
+  const [contractBusy, setContractBusy] = useState(false);
+  const [contractError, setContractError] = useState("");
   const [deletingDocumentId, setDeletingDocumentId] = useState("");
   const accountInputRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -1055,18 +1080,34 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
     void runAnalysis();
   }, [caseId, snapshot, status, busy]);
 
-  async function requestAdvisory(contactConsent: boolean) {
-    setBusy(true);
+  async function openContract() {
+    if (!caseId) return;
+    setContractOpen(true);
+    setContractBusy(true);
+    setContractError("");
     try {
-      const response = await fetch(`/api/cases/${encodeURIComponent(caseId)}/advisory`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ contactConsent }) });
+      const response = await fetch(`/api/cases/${encodeURIComponent(caseId)}/contract`, { cache: "no-store" });
       const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.error || "No se pudo registrar la solicitud");
-      setAdvisoryPaymentUrl(typeof payload.paymentUrl === "string" ? payload.paymentUrl : "");
-      await refresh();
-      notify(payload.paymentUrl ? "Solicitud registrada. Puedes continuar al pago." : "Solicitud registrada. Te contactaremos con la propuesta.");
+      if (!response.ok || !payload.contract) throw new Error(payload.error || "No se pudo cargar el contrato");
+      setContractDraft(payload.contract as ServiceContract);
     } catch (reason) {
-      notify(errorMessage(reason, "No se pudo registrar la solicitud"));
-    } finally { setBusy(false); }
+      setContractError(errorMessage(reason, "No se pudo cargar el contrato"));
+    } finally { setContractBusy(false); }
+  }
+
+  async function acceptContract(input: { contractVersion: string; acceptedTerms: boolean; dataConsent: boolean; mandateConsent: boolean; signerName: string }) {
+    setContractBusy(true);
+    setContractError("");
+    try {
+      const response = await fetch(`/api/cases/${encodeURIComponent(caseId)}/contract`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.contract) throw new Error(payload.error || "No se pudo registrar el contrato");
+      setContractDraft(payload.contract as ServiceContract);
+      await refresh();
+      notify("Contrato registrado. El pago de prueba está disponible.");
+    } catch (reason) {
+      setContractError(errorMessage(reason, "No se pudo registrar el contrato"));
+    } finally { setContractBusy(false); }
   }
 
   async function removeDocument(document: CaseDocument) {
@@ -1092,7 +1133,6 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
   const patientReviewLines = possibleDisputeLines(patientAnalysis);
   const patientReviewAmount = patientReviewLines.reduce((sum, assessment) => sum + assessment.line.amount, 0);
   const patientHasIrregularities = patientReviewLines.length > 0;
-  const advisoryRequested = snapshot.activities.some((activity) => activity.title === "Solicitud de asesoría recibida");
   const patientCanAnalyze = !analysisBlocked(account);
   const patientStatus = patientAnalysis
     ? patientHasIrregularities ? "Irregularidades detectadas" : "Análisis completado"
@@ -1102,11 +1142,11 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
     <header className="patient-topbar"><a className="portal-brand" href="/"><span>R</span> RevisaTuCuenta</a><div className="patient-topbar-right"><span className="surface-pill patient-pill">Vista paciente</span><span className="avatar">{snapshot.case.patientName.slice(0, 2).toUpperCase()}</span><span className="patient-email">{user.email}</span><a className="patient-signout-button" href={signOutHref(user)} aria-label="Cerrar sesión">Cerrar sesión</a></div></header>
     <div className="patient-layout"><aside className="patient-sidebar"><div className="case-mini"><span className="case-icon">⌁</span><div><small>CASO ACTIVO</small><b>{snapshot.case.patientName}</b><span>Expediente {caseId.slice(0, 8)}</span></div></div><nav className="patient-nav">{(["Resumen", "Documentos", "Actividad"] as const).map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item}</button>)}</nav><div className="patient-sidebar-help"><span>?</span><div><b>¿Necesitas ayuda?</b><small>Escríbenos sobre tu caso.</small></div></div></aside>
       <section className="patient-main"><div className="patient-heading"><div><p className="portal-kicker">Mi expediente</p><h1>Hola, {firstName}.</h1><p>{snapshot.case.episodeLabel}</p></div><span className="case-status"><i /> {patientStatus}</span></div>
-         {tab === "Resumen" && <PatientSummary account={account} pam={pam} reviewAmount={patientReviewAmount} irregularityCount={patientReviewLines.length} analysisAvailable={Boolean(patientAnalysis)} analysisRunning={status === "running"} progress={progress} stage={stage} advisoryRequested={advisoryRequested} advisoryPaymentUrl={advisoryPaymentUrl} busy={busy} readerReviewRequired={Boolean(readerNeedsRefresh || account?.processingStatus === "failed" || account?.processingStatus === "review_required" || (readerAssessment && readerAssessment.status !== "ready"))} readerChangeNeeded={!patientCanAnalyze} onAccount={() => accountInputRef.current?.click()} onPam={() => inputRef.current?.click()} onAnalyze={() => void runAnalysis()} onRequestAdvisory={(contactConsent) => void requestAdvisory(contactConsent)} />}
+         {tab === "Resumen" && <PatientSummary account={account} pam={pam} reviewAmount={patientReviewAmount} irregularityCount={patientReviewLines.length} analysisAvailable={Boolean(patientAnalysis)} analysisRunning={status === "running"} progress={progress} stage={stage} contract={snapshot.contract} busy={busy} readerReviewRequired={Boolean(readerNeedsRefresh || account?.processingStatus === "failed" || account?.processingStatus === "review_required" || (readerAssessment && readerAssessment.status !== "ready"))} readerChangeNeeded={!patientCanAnalyze} onAccount={() => accountInputRef.current?.click()} onPam={() => inputRef.current?.click()} onAnalyze={() => void runAnalysis()} onOpenContract={() => void openContract()} contractBusy={contractBusy} />}
         {tab === "Documentos" && <PatientDocuments snapshot={snapshot} deletingDocumentId={deletingDocumentId} onAccount={() => accountInputRef.current?.click()} onPam={() => inputRef.current?.click()} onDelete={(document) => void removeDocument(document)} />}
         {tab === "Actividad" && <PatientActivity activities={snapshot.activities} />}
       </section></div>
-    <input ref={accountInputRef} type="file" accept="application/pdf,image/jpeg,image/png" hidden onChange={handleAccount} /><input ref={inputRef} type="file" accept="application/pdf,image/jpeg,image/png" hidden onChange={handlePam} />{toast && <div className="portal-toast"><span>✓</span>{toast}</div>}
+    <input ref={accountInputRef} type="file" accept="application/pdf,image/jpeg,image/png" hidden onChange={handleAccount} /><input ref={inputRef} type="file" accept="application/pdf,image/jpeg,image/png" hidden onChange={handlePam} />{contractOpen && <PatientContractModal contract={contractDraft} busy={contractBusy} error={contractError} onClose={() => setContractOpen(false)} onAccept={(input) => void acceptContract(input)} />}{toast && <div className="portal-toast"><span>✓</span>{toast}</div>}
   </main>;
 }
 
@@ -1118,8 +1158,7 @@ function UploadProgress({ progress, stage }: { progress: number; stage: string }
   return <section className="analysis-progress-card upload-progress-card" aria-live="polite"><div className="analysis-progress-card-head"><div><span className="card-kicker">LECTURA DE DOCUMENTO</span><b>{stage}</b></div><strong>{progress}%</strong></div><div className="analysis-progress-bar" role="progressbar" aria-label="Progreso de la lectura del documento" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><i style={{ width: `${progress}%` }} /></div><small>El documento se está guardando y leyendo. En cuentas escaneadas, esta etapa puede tardar algunos minutos.</small></section>;
 }
 
-function PatientSummary({ account, pam, reviewAmount, irregularityCount, analysisAvailable, analysisRunning, progress, stage, advisoryRequested, advisoryPaymentUrl, busy, readerReviewRequired, readerChangeNeeded, onAccount, onPam, onAnalyze, onRequestAdvisory }: { account?: CaseDocument; pam?: CaseDocument; reviewAmount: number; irregularityCount: number; analysisAvailable: boolean; analysisRunning: boolean; progress: number; stage: string; advisoryRequested: boolean; advisoryPaymentUrl: string; busy: boolean; readerReviewRequired: boolean; readerChangeNeeded: boolean; onAccount: () => void; onPam: () => void; onAnalyze: () => void; onRequestAdvisory: (contactConsent: boolean) => void }) {
-  const [contactConsent, setContactConsent] = useState(false);
+function PatientSummary({ account, pam, reviewAmount, irregularityCount, analysisAvailable, analysisRunning, progress, stage, contract, busy, readerReviewRequired, readerChangeNeeded, onAccount, onPam, onAnalyze, onOpenContract, contractBusy }: { account?: CaseDocument; pam?: CaseDocument; reviewAmount: number; irregularityCount: number; analysisAvailable: boolean; analysisRunning: boolean; progress: number; stage: string; contract?: ServiceContract; busy: boolean; readerReviewRequired: boolean; readerChangeNeeded: boolean; onAccount: () => void; onPam: () => void; onAnalyze: () => void; onOpenContract: () => void; contractBusy: boolean }) {
   const accountReceived = Boolean(account);
   const pamReceived = Boolean(pam);
   const documentsReceived = accountReceived || pamReceived;
@@ -1168,14 +1207,63 @@ function PatientSummary({ account, pam, reviewAmount, irregularityCount, analysi
           <p>{hasIrregularities ? `El monto se relaciona con ${irregularityLabel} que conviene revisar. Es una estimación preliminar y no garantiza una devolución.` : "No identificamos un monto asociado a cargos que requieran revisión con la información disponible."}</p>
         </div>
         {hasIrregularities && reviewAmount > 0 && <section className="patient-advisory-card">
-          <div><span className="card-kicker">ASESORÍA ESPECIALIZADA</span><h3>Podemos ayudarte a revisar estos cargos</h3><p>El preinforme es gratuito. La revisión detallada y la preparación de los siguientes pasos se ofrecen como un servicio de asesoría. Te informaremos el alcance, precio y condiciones antes de contratar; solicitar contacto no te obliga a pagar ni a iniciar un reclamo.</p>{!advisoryRequested && <label className="patient-advisory-consent"><input type="checkbox" checked={contactConsent} onChange={(event) => setContactConsent(event.target.checked)} /><span>Autorizo que me contacten en mi correo verificado para informarme sobre esta asesoría y usar el expediente sólo para preparar esa propuesta.</span></label>}</div>
-          {advisoryRequested ? <div className="patient-advisory-confirmed"><b>Solicitud recibida</b><small>Te contactaremos para confirmar alcance, precio y forma de pago.</small>{advisoryPaymentUrl && <a href={advisoryPaymentUrl} target="_blank" rel="noreferrer">Continuar al pago →</a>}</div> : <button className="portal-button portal-button-primary" onClick={() => onRequestAdvisory(contactConsent)} disabled={busy || !contactConsent}>{busy ? "Registrando…" : "Solicitar asesoría especializada"} →</button>}
+          <div><span className="card-kicker">ASESORÍA ESPECIALIZADA</span><h3>Revisa tu cuenta con Rakun</h3><p>Lee el contrato completo, autoriza de forma separada el tratamiento de tus datos de salud y el mandato limitado, y luego continúa al pago de demostración. El preinforme es preliminar y no garantiza una devolución.</p></div>
+          {contract?.status === "accepted" || contract?.status === "paid_demo" ? <div className="patient-advisory-confirmed"><b>{contract.status === "paid_demo" ? "Pago de prueba registrado" : "Contrato aceptado"}</b><small>{contract.status === "paid_demo" ? "No se realizó ningún cobro real." : "Tu contrato quedó guardado para este expediente."}</small>{contract.paymentUrl && <a href={contract.paymentUrl} target="_blank" rel="noreferrer">{contract.status === "paid_demo" ? "Abrir comprobante de prueba →" : "Continuar al pago de prueba →"}</a>}</div> : <button className="portal-button portal-button-primary" onClick={onOpenContract} disabled={busy || contractBusy}>{contractBusy ? "Cargando contrato…" : "Leer contrato y continuar"} →</button>}
         </section>}
       </>}
       <div className="patient-review-actions"><button className="portal-button portal-button-secondary" onClick={onAccount} disabled={busy}>{account ? "Reemplazar cuenta clínica" : "Agregar cuenta clínica"}</button><button className="portal-button portal-button-primary" onClick={onPam} disabled={busy}>{pam ? "Reemplazar documento de cobertura" : "Agregar documento de cobertura"}</button></div>
     </section>
     <section className="patient-card next-card"><span className="card-kicker">SIGUIENTE PASO</span><h2>{analysisAvailable ? hasIrregularities ? "Revisa los cargos observados" : "Resultado de la revisión" : accountReceived ? "Obtén el resultado de tu cuenta" : pamReceived ? "Falta la cuenta clínica" : "Completa tus documentos"}</h2><p>{analysisAvailable ? hasIrregularities ? "Encontramos posibles irregularidades y te mostramos el monto aproximado asociado. Puedes solicitar una propuesta de asesoría para revisar los antecedentes." : "Con la información disponible no encontramos cargos que requieran revisión." : documentsReceived ? "Carga la cuenta clínica para obtener el resultado y el monto aproximado de la revisión." : "Carga la cuenta clínica para obtener el resultado de la revisión."}</p></section>
   </>;
+}
+
+function PatientContractModal({ contract, busy, error, onClose, onAccept }: { contract?: ServiceContract; busy: boolean; error: string; onClose: () => void; onAccept: (input: { contractVersion: string; acceptedTerms: boolean; dataConsent: boolean; mandateConsent: boolean; signerName: string }) => void }) {
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
+  const [dataConsent, setDataConsent] = useState(false);
+  const [mandateConsent, setMandateConsent] = useState(false);
+  const [signerName, setSignerName] = useState("");
+
+  useEffect(() => {
+    if (!contract) return;
+    setAcceptedTerms(contract.acceptedTerms);
+    setDataConsent(contract.dataConsent);
+    setMandateConsent(contract.mandateConsent);
+    setSignerName(contract.signerName || "");
+  }, [contract?.id]);
+
+  function downloadContract() {
+    if (!contract) return;
+    const blob = new Blob([contract.contractText], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `contrato-rakun-${contract.caseId.slice(0, 8)}.txt`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
+  const alreadyAccepted = contract?.status === "accepted" || contract?.status === "paid_demo";
+  return <div className="contract-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <section className="contract-modal" role="dialog" aria-modal="true" aria-labelledby="contract-modal-title">
+      <header className="contract-modal-header"><div><span className="card-kicker">CONTRATO Y AUTORIZACIÓN</span><h2 id="contract-modal-title">{alreadyAccepted ? "Contrato registrado" : "Lee antes de continuar"}</h2><p>{contract ? `${contract.companyName} · ${contract.episodeLabel}` : "Preparando el documento…"}</p></div><button className="contract-modal-close" onClick={onClose} aria-label="Cerrar contrato">×</button></header>
+      {!contract ? <div className="contract-loading">{busy ? "Cargando el contrato…" : "No se pudo cargar el contrato."}</div> : <>
+        <div className="contract-meta"><span><b>Cliente</b>{contract.patientName}</span><span><b>Precio piloto</b>${contract.priceClp.toLocaleString("es-CL")} CLP</span><span><b>Versión</b>{contract.contractVersion}</span></div>
+        <div className="contract-notice"><b>Importante</b><span>Este es un flujo de demostración. La aceptación en pantalla queda registrada, pero la versión de producción deberá incorporar firma electrónica avanzada o poder ante notario cuando el trámite lo requiera.</span></div>
+        <pre className="contract-text">{contract.contractText}</pre>
+        <div className="contract-modal-footer">
+          <button className="portal-button portal-button-secondary" onClick={downloadContract}>Descargar copia</button>
+          {alreadyAccepted ? <div className="contract-accepted-actions"><span>✓ Aceptación registrada{contract.acceptedAt ? ` · ${new Date(contract.acceptedAt).toLocaleString("es-CL")}` : ""}</span>{contract.paymentUrl && <a className="portal-button portal-button-primary" href={contract.paymentUrl} target="_blank" rel="noreferrer">Continuar al pago de prueba →</a>}</div> : <form className="contract-acceptance-form" onSubmit={(event) => { event.preventDefault(); onAccept({ contractVersion: contract.contractVersion, acceptedTerms, dataConsent, mandateConsent, signerName }); }}>
+            <label className="contract-checkbox"><input type="checkbox" checked={acceptedTerms} onChange={(event) => setAcceptedTerms(event.target.checked)} /><span>He leído y acepto el contrato de prestación de servicios.</span></label>
+            <label className="contract-checkbox"><input type="checkbox" checked={dataConsent} onChange={(event) => setDataConsent(event.target.checked)} /><span>Autorizo expresamente el tratamiento de mis datos personales y sensibles, incluidos datos de salud, sólo para los fines descritos.</span></label>
+            <label className="contract-checkbox"><input type="checkbox" checked={mandateConsent} onChange={(event) => setMandateConsent(event.target.checked)} /><span>Otorgo el mandato especial y limitado para gestionar aclaraciones y reclamos administrativos de este caso, sin renunciar derechos ni recibir fondos.</span></label>
+            <label className="contract-signer">Nombre completo para registrar la aceptación<input required value={signerName} onChange={(event) => setSignerName(event.target.value)} placeholder="Escribe tu nombre completo" autoComplete="name" /></label>
+            {error && <p className="contract-error" role="alert">{error}</p>}
+            <button className="portal-button portal-button-primary contract-submit" disabled={busy || !acceptedTerms || !dataConsent || !mandateConsent || signerName.trim().length < 3}>{busy ? "Guardando contrato…" : "Aceptar contrato y generar pago de prueba →"}</button>
+          </form>}
+        </div>
+      </>}
+    </section>
+  </div>;
 }
 
 function PatientDocuments({ snapshot, deletingDocumentId, onAccount, onPam, onDelete }: { snapshot: Snapshot; deletingDocumentId: string; onAccount: () => void; onPam: () => void; onDelete: (document: CaseDocument) => void }) {

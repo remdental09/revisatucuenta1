@@ -29,6 +29,7 @@ export async function resetPilotData(env: any) {
     env.DB.prepare(`DELETE FROM document_extractions`),
     env.DB.prepare(`DELETE FROM case_analyses`),
     env.DB.prepare(`DELETE FROM claim_authorizations`),
+    env.DB.prepare(`DELETE FROM service_contracts`),
     env.DB.prepare(`DELETE FROM case_activities`),
     env.DB.prepare(`DELETE FROM documents`),
     env.DB.prepare(`DELETE FROM cases`),
