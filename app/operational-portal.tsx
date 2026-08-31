@@ -972,6 +972,7 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
   const [deletingDocumentId, setDeletingDocumentId] = useState("");
   const accountInputRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const autoAnalysisKeyRef = useRef("");
 
   async function refresh() {
     if (!caseId) return;
@@ -1043,6 +1044,15 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
     catch (reason) { setStatus("error"); setError(errorMessage(reason, "No se pudo analizar la cuenta")); }
     finally { window.clearInterval(timer); setBusy(false); }
   }
+
+  useEffect(() => {
+    const account = accountDoc(snapshot);
+    if (!snapshot || !caseId || snapshot.analysis || status === "running" || busy || !account || analysisBlocked(account)) return;
+    const key = `${caseId}:${account.id}`;
+    if (autoAnalysisKeyRef.current === key) return;
+    autoAnalysisKeyRef.current = key;
+    void runAnalysis();
+  }, [caseId, snapshot, status, busy]);
 
   async function authorize() {
     setBusy(true);
