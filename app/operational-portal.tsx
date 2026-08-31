@@ -150,9 +150,13 @@ function hideStaleAnalysis(snapshot: Snapshot) {
   };
 }
 
-function possibleDisputeAmount(analysis?: ClinicalAccountAnalysis) {
+function possibleDisputeLines(analysis?: ClinicalAccountAnalysis) {
   return (analysis?.lineAssessments ?? [])
-    .filter((assessment) => Boolean(bestCombinedCandidate(analysis, assessment)))
+    .filter((assessment) => Boolean(bestCombinedCandidate(analysis, assessment)));
+}
+
+function possibleDisputeAmount(analysis?: ClinicalAccountAnalysis) {
+  return possibleDisputeLines(analysis)
     .reduce((sum, assessment) => sum + assessment.line.amount, 0);
 }
 
@@ -1068,12 +1072,20 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
   const account = accountDoc(snapshot); const pam = pamDoc(snapshot); const accountTotal = totalFrom(account, "account"); const pamTotal = totalFrom(pam, "pam");
   const readerAssessment = account?.extraction?.readerAssessment;
   const readerNeedsRefresh = extractionNeedsRefresh(account);
+  const patientAnalysis = readerNeedsRefresh ? undefined : snapshot.analysis;
+  const patientReviewLines = possibleDisputeLines(patientAnalysis);
+  const patientReviewAmount = patientReviewLines.reduce((sum, assessment) => sum + assessment.line.amount, 0);
+  const patientHasIrregularities = patientReviewLines.length > 0;
+  const patientCanAnalyze = !analysisBlocked(account);
+  const patientStatus = patientAnalysis
+    ? patientHasIrregularities ? "Irregularidades detectadas" : "Análisis completado"
+    : account ? "Resultado en preparación" : "Expediente pendiente";
   const firstName = snapshot.case.patientName.split(" ")[0];
   return <main className="patient-portal">
     <header className="patient-topbar"><a className="portal-brand" href="/"><span>R</span> RevisaTuCuenta</a><div className="patient-topbar-right"><span className="surface-pill patient-pill">Vista paciente</span><span className="avatar">{snapshot.case.patientName.slice(0, 2).toUpperCase()}</span><span className="patient-email">{user.email}</span><a className="patient-signout-button" href={signOutHref(user)} aria-label="Cerrar sesión">Cerrar sesión</a></div></header>
     <div className="patient-layout"><aside className="patient-sidebar"><div className="case-mini"><span className="case-icon">⌁</span><div><small>CASO ACTIVO</small><b>{snapshot.case.patientName}</b><span>Expediente {caseId.slice(0, 8)}</span></div></div><nav className="patient-nav">{(["Resumen", "Documentos", "Actividad"] as const).map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item}</button>)}</nav><div className="patient-sidebar-help"><span>?</span><div><b>¿Necesitas ayuda?</b><small>Escríbenos sobre tu caso.</small></div></div></aside>
-      <section className="patient-main"><div className="patient-heading"><div><p className="portal-kicker">Mi expediente</p><h1>Hola, {firstName}.</h1><p>{snapshot.case.episodeLabel}</p></div><span className="case-status"><i /> En análisis</span></div>
-         {tab === "Resumen" && <PatientSummary account={account} pam={pam} reviewAmount={readerNeedsRefresh ? 0 : possibleDisputeAmount(snapshot.analysis)} analysisAvailable={Boolean(snapshot.analysis) && !readerNeedsRefresh} analysisRunning={status === "running"} progress={progress} stage={stage} authorized={Boolean(snapshot.authorization?.authorized)} busy={busy} readerReviewRequired={Boolean(readerNeedsRefresh || account?.processingStatus === "failed" || account?.processingStatus === "review_required" || (readerAssessment && readerAssessment.status !== "ready"))} readerChangeNeeded={Boolean(readerNeedsRefresh || account?.processingStatus === "failed" || readerAssessment?.status === "reader_change_needed")} onAccount={() => accountInputRef.current?.click()} onPam={() => inputRef.current?.click()} onAnalyze={() => void runAnalysis()} onAuthorize={() => void authorize()} />}
+      <section className="patient-main"><div className="patient-heading"><div><p className="portal-kicker">Mi expediente</p><h1>Hola, {firstName}.</h1><p>{snapshot.case.episodeLabel}</p></div><span className="case-status"><i /> {patientStatus}</span></div>
+         {tab === "Resumen" && <PatientSummary account={account} pam={pam} reviewAmount={patientReviewAmount} irregularityCount={patientReviewLines.length} analysisAvailable={Boolean(patientAnalysis)} analysisRunning={status === "running"} progress={progress} stage={stage} authorized={Boolean(snapshot.authorization?.authorized)} busy={busy} readerReviewRequired={Boolean(readerNeedsRefresh || account?.processingStatus === "failed" || account?.processingStatus === "review_required" || (readerAssessment && readerAssessment.status !== "ready"))} readerChangeNeeded={!patientCanAnalyze} onAccount={() => accountInputRef.current?.click()} onPam={() => inputRef.current?.click()} onAnalyze={() => void runAnalysis()} onAuthorize={() => void authorize()} />}
         {tab === "Documentos" && <PatientDocuments snapshot={snapshot} deletingDocumentId={deletingDocumentId} onAccount={() => accountInputRef.current?.click()} onPam={() => inputRef.current?.click()} onDelete={(document) => void removeDocument(document)} />}
         {tab === "Actividad" && <PatientActivity activities={snapshot.activities} />}
       </section></div>
@@ -1089,17 +1101,63 @@ function UploadProgress({ progress, stage }: { progress: number; stage: string }
   return <section className="analysis-progress-card upload-progress-card" aria-live="polite"><div className="analysis-progress-card-head"><div><span className="card-kicker">LECTURA DE DOCUMENTO</span><b>{stage}</b></div><strong>{progress}%</strong></div><div className="analysis-progress-bar" role="progressbar" aria-label="Progreso de la lectura del documento" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><i style={{ width: `${progress}%` }} /></div><small>El documento se está guardando y leyendo. En cuentas escaneadas, esta etapa puede tardar algunos minutos.</small></section>;
 }
 
-function PatientSummary({ account, pam, reviewAmount, analysisAvailable, analysisRunning, progress, stage, authorized, busy, readerReviewRequired, readerChangeNeeded, onAccount, onPam, onAnalyze, onAuthorize }: { account?: CaseDocument; pam?: CaseDocument; reviewAmount: number; analysisAvailable: boolean; analysisRunning: boolean; progress: number; stage: string; authorized: boolean; busy: boolean; readerReviewRequired: boolean; readerChangeNeeded: boolean; onAccount: () => void; onPam: () => void; onAnalyze: () => void; onAuthorize: () => void }) {
+function PatientSummary({ account, pam, reviewAmount, irregularityCount, analysisAvailable, analysisRunning, progress, stage, authorized, busy, readerReviewRequired, readerChangeNeeded, onAccount, onPam, onAnalyze, onAuthorize }: { account?: CaseDocument; pam?: CaseDocument; reviewAmount: number; irregularityCount: number; analysisAvailable: boolean; analysisRunning: boolean; progress: number; stage: string; authorized: boolean; busy: boolean; readerReviewRequired: boolean; readerChangeNeeded: boolean; onAccount: () => void; onPam: () => void; onAnalyze: () => void; onAuthorize: () => void }) {
   const accountReceived = Boolean(account);
   const pamReceived = Boolean(pam);
   const documentsReceived = accountReceived || pamReceived;
-  const summaryTitle = accountReceived ? "Tu cuenta está en análisis" : pamReceived ? "PAM recibido; falta la cuenta clínica" : "Completa tu expediente";
-  const summaryCopy = accountReceived
-    ? "Hemos recibido la cuenta clínica. El análisis de posibles desfragmentaciones se realiza sobre ese documento; el PAM se conserva aparte como información de cobertura."
-    : pamReceived
-      ? "Hemos recibido el PAM o programa de atención médica. Este documento informa cobertura, pero no permite analizar por sí solo la composición de la cuenta clínica."
-      : "Carga la cuenta clínica para iniciar la revisión del expediente.";
-  return <><section className="patient-card patient-review-status-card"><span className="card-kicker">ESTADO DEL EXPEDIENTE</span><h2>{summaryTitle}</h2><p>{summaryCopy}</p><div className="patient-review-status"><span><i /> {accountReceived ? "Revisión de cuenta en curso" : pamReceived ? "Cobertura recibida; cuenta pendiente" : "Esperando documentos"}</span><small>El PAM no determina por sí solo una desfragmentación.</small>{readerReviewRequired && <small>Estamos revisando el formato de la cuenta para asegurar una lectura completa.</small>}</div><div className="patient-review-flow" aria-label="Estado general del expediente"><div className={accountReceived ? "complete" : ""}><i>1</i><span>{accountReceived ? "Cuenta clínica recibida" : "Cuenta clínica pendiente"}</span></div><div className={analysisAvailable ? "complete" : accountReceived ? "current" : ""}><i>2</i><span>{analysisAvailable ? "Análisis de cuenta listo" : accountReceived ? "Análisis de cuenta" : "Análisis pendiente"}</span></div><div className={pamReceived ? "complete" : ""}><i>3</i><span>{pamReceived ? "Cobertura PAM recibida" : "PAM / cobertura opcional"}</span></div></div>{account && !analysisAvailable && readerChangeNeeded && <section className="patient-analysis-pending"><div><span className="card-kicker">REVISIÓN EN CURSO</span><h3>Estamos preparando la lectura de tu cuenta</h3><p>Recibimos el documento, pero necesitamos revisar su formato antes de entregar un resultado preliminar. Te informaremos cuando exista una actualización.</p></div></section>}{account && !analysisAvailable && !readerChangeNeeded && <section className="patient-analysis-launch"><div><span className="card-kicker">REVISIÓN PRELIMINAR</span><h3>{analysisRunning ? stage : "Analiza tu cuenta"}</h3><p>{analysisRunning ? "Estamos ordenando la información para estimar el monto sujeto a revisión." : "Ejecuta una revisión preliminar para conocer si existen cargos que conviene aclarar."}</p></div>{analysisRunning ? <div className="patient-analysis-progress-wrap"><div className="patient-analysis-progress-label"><span>{progress}%</span><b>Procesando</b></div><div className="patient-analysis-progress-bar" role="progressbar" aria-label="Progreso del análisis" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><i style={{ width: `${progress}%` }} /></div></div> : <button className="patient-analyze-button" onClick={onAnalyze} disabled={busy}>Analizar cuenta →</button>}</section>}{analysisAvailable && reviewAmount > 0 && <><div className="patient-review-amount"><div><span className="card-kicker">MONTO APROXIMADO BAJO REVISIÓN</span><strong>{money(reviewAmount)}</strong></div><p>Existen montos que requieren revisión por posibles devoluciones o errores de facturación. Algunos podrían ser recuperables, pero esto debe confirmarse al revisar el caso; no constituye una devolución garantizada.</p></div><section className="patient-advisory-card"><div><span className="card-kicker">ASESORÍA INICIAL GRATUITA</span><h3>Revisemos si existen montos recuperables</h3><p>La asesoría inicial es gratuita. Si la revisión identifica montos con posibilidad de recuperación, nuestro equipo se pondrá en contacto contigo para explicarte los antecedentes y los pasos siguientes. La eventual recuperación dependerá de la revisión y del reclamo correspondiente.</p></div>{authorized ? <div className="patient-advisory-confirmed"><b>Solicitud de asesoría registrada</b><small>Nuestro equipo se pondrá en contacto contigo.</small></div> : <button className="portal-button portal-button-primary" onClick={onAuthorize} disabled={busy}>{busy ? "Registrando…" : "Solicitar asesoría inicial gratis"} →</button>}</section></>}<div className="patient-review-actions"><button className="portal-button portal-button-secondary" onClick={onAccount} disabled={busy}>{account ? "Reemplazar cuenta" : "Agregar cuenta clínica"}</button><button className="portal-button portal-button-primary" onClick={onPam} disabled={busy}>{pam ? "Reemplazar PAM" : "Agregar PAM / liquidación"}</button></div></section><section className="patient-card next-card"><span className="card-kicker">SIGUIENTE PASO</span><h2>{analysisAvailable ? "Revisión interna" : accountReceived ? "Analiza la cuenta clínica" : pamReceived ? "Falta la cuenta clínica" : "Completa tus documentos"}</h2><p>{analysisAvailable ? "La cuenta clínica ya tiene un análisis preliminar. El PAM podrá contrastarse después, sin alterar ese resultado." : documentsReceived ? "La cuenta clínica y el PAM se mantienen como fuentes distintas. Carga la cuenta para iniciar el análisis." : "Carga los documentos disponibles para completar el expediente."}</p></section></>;
+  const hasIrregularities = analysisAvailable && irregularityCount > 0;
+  const irregularityLabel = `${irregularityCount} ${irregularityCount === 1 ? "cargo" : "cargos"}`;
+  const summaryTitle = analysisAvailable
+    ? hasIrregularities ? "Detectamos posibles irregularidades en tu cuenta" : "No detectamos irregularidades evidentes"
+    : accountReceived ? "Tu cuenta está en revisión" : pamReceived ? "Documento de cobertura recibido" : "Completa tu expediente";
+  const summaryCopy = analysisAvailable
+    ? hasIrregularities
+      ? `Encontramos ${irregularityLabel} que conviene revisar con más detalle. A continuación te mostramos el monto aproximado asociado.`
+      : "Revisamos la información disponible y no encontramos cargos que indiquen una irregularidad evidente."
+    : accountReceived
+      ? "Ya recibimos tu cuenta. Te mostraremos si encontramos cargos que conviene revisar y el monto aproximado asociado."
+      : pamReceived
+        ? "Recibimos tu documento de cobertura. Para revisar posibles irregularidades necesitamos la cuenta clínica."
+        : "Carga la cuenta clínica para conocer el resultado de la revisión.";
+  const statusLabel = analysisAvailable
+    ? hasIrregularities ? "Posibles irregularidades detectadas" : "Análisis preliminar completado"
+    : accountReceived ? "Resultado en preparación" : pamReceived ? "Cobertura recibida; cuenta pendiente" : "Esperando documentos";
+  return <>
+    <section className="patient-card patient-review-status-card">
+      <span className="card-kicker">ESTADO DEL EXPEDIENTE</span>
+      <h2>{summaryTitle}</h2>
+      <p>{summaryCopy}</p>
+      <div className="patient-review-status">
+        <span><i /> {statusLabel}</span>
+        {analysisAvailable && <small>El resultado es preliminar y se basa en la información disponible en tu cuenta.</small>}
+        {!analysisAvailable && readerReviewRequired && <small>Estamos verificando algunos datos antes de entregarte el resultado.</small>}
+      </div>
+      <div className="patient-review-flow" aria-label="Estado general del expediente">
+        <div className={accountReceived ? "complete" : ""}><i>1</i><span>{accountReceived ? "Cuenta recibida" : "Cuenta pendiente"}</span></div>
+        <div className={analysisAvailable ? "complete" : accountReceived ? "current" : ""}><i>2</i><span>{analysisAvailable ? "Resultado disponible" : accountReceived ? "Resultado en preparación" : "Resultado pendiente"}</span></div>
+        <div className={pamReceived ? "complete" : ""}><i>3</i><span>{pamReceived ? "Cobertura recibida" : "Cobertura opcional"}</span></div>
+      </div>
+      {account && !analysisAvailable && readerChangeNeeded && <section className="patient-analysis-pending">
+        <div><span className="card-kicker">RESULTADO EN PREPARACIÓN</span><h3>Estamos preparando el resultado de tu cuenta</h3><p>Ya recibimos tu cuenta. Estamos terminando de procesar algunos datos antes de mostrarte las posibles irregularidades y el monto aproximado.</p></div>
+      </section>}
+      {account && !analysisAvailable && !readerChangeNeeded && <section className="patient-analysis-launch">
+        <div><span className="card-kicker">RESULTADO DE TU CUENTA</span><h3>{analysisRunning ? stage : "Obtén el resultado de tu cuenta"}</h3><p>{analysisRunning ? "Estamos revisando los cargos para identificar posibles irregularidades y estimar el monto asociado." : "Inicia el análisis para saber si hay cargos que conviene revisar y cuál es el monto aproximado."}</p></div>
+        {analysisRunning ? <div className="patient-analysis-progress-wrap"><div className="patient-analysis-progress-label"><span>{progress}%</span><b>Procesando</b></div><div className="patient-analysis-progress-bar" role="progressbar" aria-label="Progreso del análisis" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><i style={{ width: `${progress}%` }} /></div></div> : <button className="patient-analyze-button" onClick={onAnalyze} disabled={busy}>Analizar mi cuenta →</button>}
+      </section>}
+      {analysisAvailable && <>
+        <div className="patient-review-amount">
+          <div><span className="card-kicker">{hasIrregularities ? "MONTO APROXIMADO A REVISAR" : "MONTO APROXIMADO IDENTIFICADO"}</span><strong>{money(reviewAmount)}</strong></div>
+          <p>{hasIrregularities ? `El monto se relaciona con ${irregularityLabel} que conviene revisar. Es una estimación preliminar y no garantiza una devolución.` : "No identificamos un monto asociado a cargos que requieran revisión con la información disponible."}</p>
+        </div>
+        {hasIrregularities && reviewAmount > 0 && <section className="patient-advisory-card">
+          <div><span className="card-kicker">ASESORÍA INICIAL GRATUITA</span><h3>Revisemos los cargos observados</h3><p>La asesoría inicial es gratuita. Si la revisión confirma que existen montos que podrían recuperarse, nuestro equipo se pondrá en contacto contigo para explicarte los antecedentes y los pasos siguientes.</p></div>
+          {authorized ? <div className="patient-advisory-confirmed"><b>Solicitud de asesoría registrada</b><small>Nuestro equipo se pondrá en contacto contigo.</small></div> : <button className="portal-button portal-button-primary" onClick={onAuthorize} disabled={busy}>{busy ? "Registrando…" : "Solicitar asesoría inicial gratis"} →</button>}
+        </section>}
+      </>}
+      <div className="patient-review-actions"><button className="portal-button portal-button-secondary" onClick={onAccount} disabled={busy}>{account ? "Reemplazar cuenta clínica" : "Agregar cuenta clínica"}</button><button className="portal-button portal-button-primary" onClick={onPam} disabled={busy}>{pam ? "Reemplazar documento de cobertura" : "Agregar documento de cobertura"}</button></div>
+    </section>
+    <section className="patient-card next-card"><span className="card-kicker">SIGUIENTE PASO</span><h2>{analysisAvailable ? hasIrregularities ? "Revisa los cargos observados" : "Resultado de la revisión" : accountReceived ? "Obtén el resultado de tu cuenta" : pamReceived ? "Falta la cuenta clínica" : "Completa tus documentos"}</h2><p>{analysisAvailable ? hasIrregularities ? "Encontramos posibles irregularidades y te mostramos el monto aproximado asociado. Puedes solicitar una asesoría inicial para revisar los antecedentes." : "Con la información disponible no encontramos cargos que requieran revisión." : documentsReceived ? "Carga la cuenta clínica para obtener el resultado y el monto aproximado de la revisión." : "Carga la cuenta clínica para obtener el resultado de la revisión."}</p></section>
+  </>;
 }
 
 function PatientDocuments({ snapshot, deletingDocumentId, onAccount, onPam, onDelete }: { snapshot: Snapshot; deletingDocumentId: string; onAccount: () => void; onPam: () => void; onDelete: (document: CaseDocument) => void }) {
