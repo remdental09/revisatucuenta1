@@ -1318,7 +1318,10 @@ function AuthenticatedDeveloperPortal({ initialCaseId = "", user }: { initialCas
   const [visionAssistDocumentId, setVisionAssistDocumentId] = useState("");
   const sourceFileRef = useRef<{ documentId: string; file: File }>();
   const [pendingUpload, setPendingUpload] = useState<PendingUpload>();
-  const selected = cases.some((item) => item.id === selectedId) ? selectedId : cases[0]?.id || "";
+  // A clean developer entry must never open an existing case implicitly.
+  // Cases remain available through an explicit `?case=` link or by creating a
+  // new expediente from the empty console.
+  const selected = cases.some((item) => item.id === selectedId) ? selectedId : "";
   async function refresh() { if (!selected) return; try { const next = hideStaleAnalysis(await getSnapshot(selected)); setSnapshot(next); if (extractionNeedsRefresh(accountDoc(next))) setNotice("La extracción anterior quedó fuera de vigencia. Reemplaza la cuenta clínica para aplicar el lector actualizado."); } catch (reason) { setNotice(errorMessage(reason, "No se pudo cargar el expediente")); } }
   useEffect(() => { void refresh(); }, [selected]);
   async function clearPilotConsole() {
