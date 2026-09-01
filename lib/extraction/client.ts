@@ -446,7 +446,10 @@ async function extractPdf(file: File, expected: ExpectedKind, onProgress?: (prog
       // thousands separator. A larger render materially improves OCR of the
       // unit, tax and total columns without changing the extracted layout.
       const canvas = await withTimeout(
-        renderPageCanvas(page),
+        // Keep the first OCR pass light enough for long scanned accounts on
+        // mobile/embedded browsers. Low-confidence pages still receive the
+        // larger second pass below before any result is presented.
+        renderPageCanvas(page, 1.7),
         PDF_LOAD_TIMEOUT_MS,
         `El lector PDF no pudo renderizar la página ${pageNumber} para OCR. Conserva el original para revisión humana/LLM.`,
       );

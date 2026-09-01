@@ -958,18 +958,25 @@ function PatientStart({ userEmail, onCreated }: { userEmail: string; onCreated: 
   const [episode, setEpisode] = useState("Revisión de cuenta clínica");
   const [file, setFile] = useState<File>();
   const [busy, setBusy] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadStage, setUploadStage] = useState("");
   const [error, setError] = useState("");
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setBusy(true);
+    setUploadProgress(1);
+    setUploadStage(file ? "Guardando tu cuenta clínica" : "Preparando tu revisión");
     setError("");
     const id = crypto.randomUUID();
     try {
       const created = await fetch("/api/cases", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id, patientName: name.trim(), patientRun: normalizeChileanRun(run), episodeLabel: episode, requirePatientIdentity: true }) });
       const payload = await created.json().catch(() => ({}));
       if (!created.ok) throw new Error(payload.error || "No se pudo iniciar la revisión");
-      if (file) await uploadDocument(id, file, "Cuenta clínica");
+      if (file) await uploadDocument(id, file, "Cuenta clínica", (value) => {
+        setUploadProgress(value);
+        setUploadStage(value < 6 ? "Preparando el lector" : value < 80 ? "Leyendo tu cuenta clínica" : "Verificando la lectura");
+      });
       onCreated(id);
     } catch (reason) {
       setError(errorMessage(reason, "No se pudo iniciar la revisión"));
@@ -978,7 +985,7 @@ function PatientStart({ userEmail, onCreated }: { userEmail: string; onCreated: 
     }
   }
 
-  return <main className="patient-login"><form className="patient-login-card" onSubmit={submit}><PortalBrand/><div className="login-seal">⌁</div><p className="portal-kicker">Comienza tu revisión</p><h1>Comienza tu revisión.</h1><p>Tu revisión quedará asociada al correo verificado.</p><div className="patient-verified-email"><span>Correo verificado</span><strong>{userEmail}</strong></div><label className="patient-field">Nombre completo<input aria-label="Nombre completo" required autoComplete="name" placeholder="Ej. María Rodríguez" value={name} onChange={(event) => setName(event.target.value)} /></label><label className="patient-field">RUN<input aria-label="RUN" required inputMode="numeric" autoComplete="off" placeholder="12.345.678-9" value={run} onChange={(event) => setRun(event.target.value)} onBlur={() => setRun(normalizeChileanRun(run))} /></label><label className="patient-field">Episodio o atención<input aria-label="Episodio" placeholder="Ej. Revisión de cuenta clínica" value={episode} onChange={(event) => setEpisode(event.target.value)} /></label><label className="portal-button portal-button-secondary"><input type="file" accept="application/pdf,image/jpeg,image/png" hidden onChange={(event) => setFile(event.target.files?.[0])} />{file ? file.name : "Cargar cuenta clínica"}</label>{error && <p className="patient-analysis-notice">{error}</p>}<button className="portal-button portal-button-primary" disabled={busy}>{busy ? "Preparando revisión…" : "Iniciar revisión"}</button><p className="patient-contact-note">El RUN se usa sólo para identificar tu cuenta y se trata junto con tus datos personales según la autorización informada. Recibirás un resultado preliminar; el documento original se cifra mientras se procesa.</p><a className="back-link" href="/">← Volver</a></form></main>;
+  return <main className="patient-login"><form className="patient-login-card" onSubmit={submit}><PortalBrand/><div className="login-seal">⌁</div><p className="portal-kicker">Comienza tu revisión</p><h1>Comienza tu revisión.</h1><p>Tu revisión quedará asociada al correo verificado.</p><div className="patient-verified-email"><span>Correo verificado</span><strong>{userEmail}</strong></div><label className="patient-field">Nombre completo<input aria-label="Nombre completo" required autoComplete="name" placeholder="Ej. María Rodríguez" value={name} onChange={(event) => setName(event.target.value)} /></label><label className="patient-field">RUN<input aria-label="RUN" required inputMode="numeric" autoComplete="off" placeholder="12.345.678-9" value={run} onChange={(event) => setRun(event.target.value)} onBlur={() => setRun(normalizeChileanRun(run))} /></label><label className="patient-field">Episodio o atención<input aria-label="Episodio" placeholder="Ej. Revisión de cuenta clínica" value={episode} onChange={(event) => setEpisode(event.target.value)} /></label><label className="portal-button portal-button-secondary"><input type="file" accept="application/pdf,image/jpeg,image/png" hidden onChange={(event) => setFile(event.target.files?.[0])} />{file ? file.name : "Cargar cuenta clínica"}</label>{error && <p className="patient-analysis-notice">{error}</p>}{busy && <UploadProgress progress={uploadProgress} stage={uploadStage || "Preparando tu revisión"} />}<button className="portal-button portal-button-primary" disabled={busy}>{busy ? "Preparando revisión…" : "Iniciar revisión"}</button><p className="patient-contact-note">El RUN se usa sólo para identificar tu cuenta y se trata junto con tus datos personales según la autorización informada. Recibirás un resultado preliminar; el documento original se cifra mientras se procesa.</p><a className="back-link" href="/">← Volver</a></form></main>;
 }
 
 export function PatientPortal({ initialCaseId = "" }: { initialCaseId?: string }) {
