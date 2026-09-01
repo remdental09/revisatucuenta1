@@ -234,7 +234,7 @@ export async function requireApiUser(request: Request) {
   if (user) return { user } as const;
   return {
     response: Response.json(
-      { error: "Debes verificar tu correo para acceder al expediente", code: "authentication_required" },
+      { error: "Debes verificar tu correo para continuar la revisión de tu cuenta", code: "authentication_required" },
       { status: 401 },
     ),
   } as const;

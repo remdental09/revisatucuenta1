@@ -1010,7 +1010,7 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
   async function refresh() {
     if (!caseId) return;
     try { setError(""); const next = hideStaleAnalysis(await getSnapshot(caseId)); setSnapshot(next); if (next.analysis) setStatus("complete"); else setStatus("idle"); }
-    catch (reason) { setError(errorMessage(reason, "No se pudo cargar el expediente")); }
+      catch (reason) { setError(errorMessage(reason, "No se pudo cargar la revisión")); }
   }
   useEffect(() => { void refresh(); }, [caseId]);
 
@@ -1022,7 +1022,7 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
     try {
       await uploadDocument(caseId, file, "PAM / liquidación", (value) => { setProgress(value); setStage(value < 100 ? `Leyendo PAM / liquidación · ${value}%` : "Lectura del PAM completada"); });
       await refresh();
-      notify("PAM cargado y vinculado al expediente");
+      notify("PAM cargado y vinculado a la revisión");
     }
     catch (reason) {
       notify(errorMessage(reason, "No se pudo cargar el PAM"));
@@ -1044,7 +1044,7 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
       notify(previousAccount
         ? "Cuenta clínica anterior eliminada y reemplazada correctamente"
         : result.corpusRegistered
-          ? "Cuenta clínica cargada y vinculada al expediente"
+          ? "Cuenta clínica cargada y vinculada a la revisión"
           : "Cuenta clínica cargada; el aprendizaje quedó pendiente de sincronización");
     }
     catch (reason) {
@@ -1072,7 +1072,7 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
         case: { ...current.case, status: "analysis_ready", updatedAt: new Date().toISOString() },
       } : current);
       setProgress(100); setStage("Resultado disponible para revisión"); setStatus("complete");
-      await refresh(); notify("Análisis guardado en el expediente");
+      await refresh(); notify("Análisis guardado en la revisión");
     }
     catch (reason) { setStatus("error"); setError(errorMessage(reason, "No se pudo analizar la cuenta")); }
     finally { window.clearInterval(timer); setBusy(false); }
@@ -1118,20 +1118,20 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
   }
 
   async function removeDocument(document: CaseDocument) {
-    if (!caseId || !window.confirm(`¿Quieres borrar "${document.name}" del expediente? Esta acción también quitará su análisis asociado.`)) return;
+    if (!caseId || !window.confirm(`¿Quieres borrar "${document.name}" de la revisión? Esta acción también quitará su análisis asociado.`)) return;
     setBusy(true); setDeletingDocumentId(document.id);
     try {
       await deleteDocumentRequest(caseId, document.id);
       await refresh();
-      notify("Documento borrado del expediente");
+      notify("Documento borrado de la revisión");
     } catch (reason) {
       notify(errorMessage(reason, "No se pudo borrar el documento"));
     } finally { setBusy(false); setDeletingDocumentId(""); }
   }
 
   if (!caseId) return <PatientStart userEmail={user.email} onCreated={setCaseId} />;
-  if (error && !snapshot) return <main className="patient-portal"><section className="patient-card patient-main"><h2>No se pudo abrir el expediente</h2><p>{error}</p><button className="portal-button portal-button-primary" onClick={() => void refresh()}>Reintentar</button></section></main>;
-  if (!snapshot) return <main className="patient-portal"><section className="patient-card patient-main"><h2>Cargando expediente…</h2></section></main>;
+  if (error && !snapshot) return <main className="patient-portal"><section className="patient-card patient-main"><h2>No se pudo abrir la revisión</h2><p>{error}</p><button className="portal-button portal-button-primary" onClick={() => void refresh()}>Reintentar</button></section></main>;
+  if (!snapshot) return <main className="patient-portal"><section className="patient-card patient-main"><h2>Cargando revisión…</h2></section></main>;
 
   const account = accountDoc(snapshot); const pam = pamDoc(snapshot); const accountTotal = totalFrom(account, "account"); const pamTotal = totalFrom(pam, "pam");
   const readerAssessment = account?.extraction?.readerAssessment;
@@ -1143,12 +1143,12 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
   const patientCanAnalyze = !analysisBlocked(account);
   const patientStatus = patientAnalysis
     ? patientHasIrregularities ? "Irregularidades detectadas" : "Análisis completado"
-    : account ? "Resultado en preparación" : "Expediente pendiente";
+    : account ? "Resultado en preparación" : "Revisión pendiente";
   const firstName = snapshot.case.patientName.split(" ")[0];
   return <main className="patient-portal">
     <header className="patient-topbar"><PortalBrand href="/"/><div className="patient-topbar-right"><span className="surface-pill patient-pill">Vista paciente</span><span className="avatar">{snapshot.case.patientName.slice(0, 2).toUpperCase()}</span><span className="patient-email">{user.email}</span><a className="patient-signout-button" href={signOutHref(user)} aria-label="Cerrar sesión">Cerrar sesión</a></div></header>
-    <div className="patient-layout"><aside className="patient-sidebar"><div className="case-mini"><span className="case-icon">⌁</span><div><small>CASO ACTIVO</small><b>{snapshot.case.patientName}</b><span>RUN {snapshot.case.patientRun || "No informado"}</span><span>Expediente {caseId.slice(0, 8)}</span></div></div><nav className="patient-nav">{(["Resumen", "Documentos", "Actividad"] as const).map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item}</button>)}</nav><div className="patient-sidebar-help"><span>?</span><div><b>¿Necesitas ayuda?</b><small>Escríbenos sobre tu caso.</small></div></div></aside>
-      <section className="patient-main"><div className="patient-heading"><div><p className="portal-kicker">Mi expediente</p><h1>Hola, {firstName}.</h1><p>{snapshot.case.episodeLabel}</p><div className="patient-identity-summary"><span>Paciente</span><strong>{snapshot.case.patientName}</strong><small>RUN {snapshot.case.patientRun || "No informado"}</small></div></div><span className="case-status"><i /> {patientStatus}</span></div>
+    <div className="patient-layout"><aside className="patient-sidebar"><div className="case-mini"><span className="case-icon">⌁</span><div><small>CASO ACTIVO</small><b>{snapshot.case.patientName}</b><span>RUN {snapshot.case.patientRun || "No informado"}</span><span>Caso {caseId.slice(0, 8)}</span></div></div><nav className="patient-nav">{(["Resumen", "Documentos", "Actividad"] as const).map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item}</button>)}</nav><div className="patient-sidebar-help"><span>?</span><div><b>¿Necesitas ayuda?</b><small>Escríbenos sobre tu caso.</small></div></div></aside>
+      <section className="patient-main"><div className="patient-heading"><div><p className="portal-kicker">Mi revisión</p><h1>Hola, {firstName}.</h1><p>{snapshot.case.episodeLabel}</p><div className="patient-identity-summary"><span>Paciente</span><strong>{snapshot.case.patientName}</strong><small>RUN {snapshot.case.patientRun || "No informado"}</small></div></div><span className="case-status"><i /> {patientStatus}</span></div>
          {tab === "Resumen" && <PatientSummary account={account} pam={pam} reviewAmount={patientReviewAmount} irregularityCount={patientReviewLines.length} analysisAvailable={Boolean(patientAnalysis)} analysisRunning={status === "running"} progress={progress} stage={stage} contract={snapshot.contract} busy={busy} readerReviewRequired={Boolean(readerNeedsRefresh || account?.processingStatus === "failed" || account?.processingStatus === "review_required" || (readerAssessment && readerAssessment.status !== "ready"))} readerChangeNeeded={!patientCanAnalyze} onAccount={() => accountInputRef.current?.click()} onPam={() => inputRef.current?.click()} onAnalyze={() => void runAnalysis()} onOpenContract={() => void openContract()} contractBusy={contractBusy} />}
         {tab === "Documentos" && <PatientDocuments snapshot={snapshot} deletingDocumentId={deletingDocumentId} onAccount={() => accountInputRef.current?.click()} onPam={() => inputRef.current?.click()} onDelete={(document) => void removeDocument(document)} />}
         {tab === "Actividad" && <PatientActivity activities={snapshot.activities} />}
@@ -1173,7 +1173,7 @@ function PatientSummary({ account, pam, reviewAmount, irregularityCount, analysi
   const irregularityLabel = `${irregularityCount} ${irregularityCount === 1 ? "cargo" : "cargos"}`;
   const summaryTitle = analysisAvailable
     ? hasIrregularities ? "Detectamos posibles irregularidades en tu cuenta" : "No detectamos irregularidades evidentes"
-    : accountReceived ? "Tu cuenta está en revisión" : pamReceived ? "Documento de cobertura recibido" : "Completa tu expediente";
+    : accountReceived ? "Tu cuenta está en revisión" : pamReceived ? "Documento de cobertura recibido" : "Completa tu revisión";
   const summaryCopy = analysisAvailable
     ? hasIrregularities
       ? `Encontramos ${irregularityLabel} que conviene revisar con más detalle. A continuación te mostramos el monto aproximado asociado.`
@@ -1188,7 +1188,7 @@ function PatientSummary({ account, pam, reviewAmount, irregularityCount, analysi
     : accountReceived ? "Resultado en preparación" : pamReceived ? "Cobertura recibida; cuenta pendiente" : "Esperando documentos";
   return <>
     <section className="patient-card patient-review-status-card">
-      <span className="card-kicker">ESTADO DEL EXPEDIENTE</span>
+      <span className="card-kicker">ESTADO DE LA REVISIÓN</span>
       <h2>{summaryTitle}</h2>
       <p>{summaryCopy}</p>
       <div className="patient-review-status">
@@ -1196,7 +1196,7 @@ function PatientSummary({ account, pam, reviewAmount, irregularityCount, analysi
         {analysisAvailable && <small>El resultado es preliminar y se basa en la información disponible en tu cuenta.</small>}
         {!analysisAvailable && readerReviewRequired && <small>Estamos verificando algunos datos antes de entregarte el resultado.</small>}
       </div>
-      <div className="patient-review-flow" aria-label="Estado general del expediente">
+      <div className="patient-review-flow" aria-label="Estado general de la revisión">
         <div className={accountReceived ? "complete" : ""}><i>1</i><span>{accountReceived ? "Cuenta recibida" : "Cuenta pendiente"}</span></div>
         <div className={analysisAvailable ? "complete" : accountReceived ? "current" : ""}><i>2</i><span>{analysisAvailable ? "Resultado disponible" : accountReceived ? "Resultado en preparación" : "Resultado pendiente"}</span></div>
         <div className={pamReceived ? "complete" : ""}><i>3</i><span>{pamReceived ? "Cobertura recibida" : "Cobertura opcional"}</span></div>
@@ -1215,7 +1215,7 @@ function PatientSummary({ account, pam, reviewAmount, irregularityCount, analysi
         </div>
         {hasIrregularities && reviewAmount > 0 && <section className="patient-advisory-card">
           <div><span className="card-kicker">ASESORÍA ESPECIALIZADA</span><h3>Revisa tu cuenta con Rakun</h3><p>Lee el contrato completo, autoriza de forma separada el tratamiento de tus datos de salud y el mandato limitado, y luego continúa al pago de demostración. El preinforme es preliminar y no garantiza una devolución.</p></div>
-          {contract?.status === "accepted" || contract?.status === "paid_demo" ? <div className="patient-advisory-confirmed"><b>{contract.status === "paid_demo" ? "Pago de prueba registrado" : "Contrato aceptado"}</b><small>{contract.status === "paid_demo" ? "No se realizó ningún cobro real." : "Tu contrato quedó guardado para este expediente."}</small>{contract.paymentUrl && <a href={contract.paymentUrl} target="_blank" rel="noreferrer">{contract.status === "paid_demo" ? "Abrir comprobante de prueba →" : "Continuar al pago de prueba →"}</a>}</div> : <button className="portal-button portal-button-primary" onClick={onOpenContract} disabled={busy || contractBusy}>{contractBusy ? "Cargando contrato…" : "Leer contrato y continuar"} →</button>}
+          {contract?.status === "accepted" || contract?.status === "paid_demo" ? <div className="patient-advisory-confirmed"><b>{contract.status === "paid_demo" ? "Pago de prueba registrado" : "Contrato aceptado"}</b><small>{contract.status === "paid_demo" ? "No se realizó ningún cobro real." : "Tu contrato quedó guardado para esta revisión."}</small>{contract.paymentUrl && <a href={contract.paymentUrl} target="_blank" rel="noreferrer">{contract.status === "paid_demo" ? "Abrir comprobante de prueba →" : "Continuar al pago de prueba →"}</a>}</div> : <button className="portal-button portal-button-primary" onClick={onOpenContract} disabled={busy || contractBusy}>{contractBusy ? "Cargando contrato…" : "Leer contrato y continuar"} →</button>}
         </section>}
       </>}
       <div className="patient-review-actions"><button className="portal-button portal-button-secondary" onClick={onAccount} disabled={busy}>{account ? "Reemplazar cuenta clínica" : "Agregar cuenta clínica"}</button><button className="portal-button portal-button-primary" onClick={onPam} disabled={busy}>{pam ? "Reemplazar documento de cobertura" : "Agregar documento de cobertura"}</button></div>
@@ -1277,7 +1277,7 @@ function PatientDocuments({ snapshot, deletingDocumentId, onAccount, onPam, onDe
   return <section className="patient-card documents-view"><div className="card-heading"><div><span className="card-kicker">DOCUMENTOS DEL CASO</span><h2>Fuentes cargadas</h2></div><div className="document-actions"><button className="portal-button portal-button-secondary" onClick={onAccount}>Agregar cuenta +</button><button className="portal-button portal-button-primary" onClick={onPam}>Agregar PAM +</button></div></div><div className="document-list">{snapshot.documents.map((doc) => <article className="patient-document clinic" key={doc.id}><span className="file-mark">PDF</span><div><span>{doc.classification}</span><b>{doc.name}</b><small>{doc.extraction?.pageCount || "-"} páginas · {processingLabel(doc)}</small>{doc.processingStatus === "review_required" && doc.sourceExpiresAt && <small>Original cifrado disponible temporalmente hasta {new Date(doc.sourceExpiresAt).toLocaleString("es-CL")}</small>}</div><div className="document-status"><em>{doc.processingStatus === "failed" ? "Requiere atención" : "Protegido"}</em><button className="patient-document-delete" onClick={() => onDelete(doc)} disabled={Boolean(deletingDocumentId)}>{deletingDocumentId === doc.id ? "Borrando…" : "Borrar documento"}</button></div></article>)}</div><div className="document-tip"><span>i</span><p>La cuenta muestra los cargos del prestador y el PAM la liquidación de cobertura. Cada documento mantiene su origen y estado de procesamiento.</p></div></section>;
 }
 function PatientActivity({ activities }: { activities: Activity[] }) {
-  return <section className="patient-card activity-view"><span className="card-kicker">ACTIVIDAD</span><h2>Movimientos del expediente</h2><div className="activity-list">{activities.length ? activities.slice(0, 20).map((activity) => <div className={`activity-item ${activity.pending ? "pending" : ""}`} key={activity.id}><span className="activity-dot" /><div><small>{new Date(activity.date).toLocaleString("es-CL")}</small><b>{activity.title}</b><p>{activity.detail}</p></div></div>) : <div className="activity-item pending"><span className="activity-dot" /><div><small>Ahora</small><b>Esperando documentos</b><p>Los movimientos de carga, extracción, revisión y análisis aparecerán aquí.</p></div></div>}</div></section>;
+  return <section className="patient-card activity-view"><span className="card-kicker">ACTIVIDAD</span><h2>Movimientos de la revisión</h2><div className="activity-list">{activities.length ? activities.slice(0, 20).map((activity) => <div className={`activity-item ${activity.pending ? "pending" : ""}`} key={activity.id}><span className="activity-dot" /><div><small>{new Date(activity.date).toLocaleString("es-CL")}</small><b>{activity.title}</b><p>{activity.detail}</p></div></div>) : <div className="activity-item pending"><span className="activity-dot" /><div><small>Ahora</small><b>Esperando documentos</b><p>Los movimientos de carga, extracción, revisión y análisis aparecerán aquí.</p></div></div>}</div></section>;
 }
 
 function useCases() {

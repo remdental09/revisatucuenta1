@@ -117,7 +117,7 @@ export function localCreateCase(input: { id: string; ownerUserId: string; ownerE
   if (cases.has(input.id)) return false;
   const timestamp = now();
   cases.set(input.id, { id: input.id, owner_user_id: input.ownerUserId, owner_email: input.ownerEmail, patient_name: input.patientName || "Paciente", patient_run: input.patientRun || "", contact_email: input.contactEmail, episode_label: input.episodeLabel, status: "collecting", created_at: timestamp, updated_at: timestamp });
-  addActivity(input.id, "Caso creado", "Se abrió el expediente para revisión.");
+  addActivity(input.id, "Caso creado", "Se abrió la revisión de la cuenta.");
   return true;
 }
 
@@ -185,7 +185,7 @@ export function localSaveDocument(input: { id: string; caseId: string; name: str
   const item = cases.get(input.caseId);
   if (item && item.status === "collecting") {
     cases.set(input.caseId, { ...item, status: "under_review", updated_at: timestamp });
-    addActivity(input.caseId, "Revisión iniciada", "El expediente quedó en cola para revisión interna.");
+    addActivity(input.caseId, "Revisión iniciada", "La revisión quedó en cola para procesamiento.");
   }
 }
 
@@ -195,7 +195,7 @@ export function localDeleteDocument(documentId: string, caseId: string) {
   documents.delete(documentId);
   extractions.delete(documentId);
   if (/cuenta|mixto/i.test(document.classification)) analyses.delete(caseId);
-  addActivity(caseId, "Documento eliminado", `${document.original_name} fue retirado del expediente.`);
+  addActivity(caseId, "Documento eliminado", `${document.original_name} fue retirado de la revisión.`);
   const remaining = [...documents.values()].some((item) => item.case_id === caseId);
   const currentCase = cases.get(caseId);
   if (currentCase) cases.set(caseId, { ...currentCase, status: remaining ? "under_review" : "collecting", updated_at: now() });
@@ -232,7 +232,7 @@ export function localSaveExtraction(documentId: string, extraction: DocumentExtr
   const item = cases.get(document.case_id);
   if (patientName && item && isPlaceholderPatientName(item.patient_name)) {
     cases.set(document.case_id, { ...item, patient_name: patientName, updated_at: now() });
-    addActivity(document.case_id, "Paciente identificado", "El nombre informado en la cuenta clínica quedó asociado al expediente.");
+    addActivity(document.case_id, "Paciente identificado", "El nombre informado en la cuenta clínica quedó asociado a la revisión.");
   }
   addActivity(document.case_id, "Extracción completada", `${savedFields} campos quedaron vinculados a su documento de origen.`);
 }

@@ -45,7 +45,7 @@ export async function POST(request: Request) {
   if (emailAuthenticationConfigured()) await sendAccessLink({ email, url: verifyUrl });
   return Response.json({
     sent: true,
-    message: "Revisa tu correo para ingresar al expediente.",
+    message: "Revisa tu correo para continuar la revisión de tu cuenta.",
     ...(developmentAuthenticationEnabled() ? { developmentVerifyUrl: verifyUrl } : {}),
   });
 }
