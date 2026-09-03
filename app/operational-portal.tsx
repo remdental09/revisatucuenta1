@@ -1301,6 +1301,7 @@ function DeveloperEmpty({ error, onCreated }: { error?: string; onCreated: (case
   const [patientRun, setPatientRun] = useState("");
   const [episodeLabel, setEpisodeLabel] = useState("Revisión de cuenta clínica");
   const [busy, setBusy] = useState(false);
+  const [syntheticBusy, setSyntheticBusy] = useState(false);
   const [notice, setNotice] = useState("");
 
   async function submit(event: React.FormEvent) {
@@ -1320,6 +1321,26 @@ function DeveloperEmpty({ error, onCreated }: { error?: string; onCreated: (case
       setNotice(errorMessage(reason, "No se pudo crear el expediente"));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function generateSyntheticSuite() {
+    setSyntheticBusy(true);
+    setNotice("");
+    try {
+      const response = await fetch("/api/synthetic", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ count: 12 }),
+      });
+      const payload = await response.json().catch(() => ({})) as { error?: string; firstCaseId?: string };
+      if (!response.ok) throw new Error(payload.error || "No se pudo generar la batería sintética");
+      if (!payload.firstCaseId) throw new Error("La batería se generó, pero no se encontró su primer caso");
+      await onCreated(payload.firstCaseId);
+    } catch (reason) {
+      setNotice(errorMessage(reason, "No se pudo generar la batería sintética"));
+    } finally {
+      setSyntheticBusy(false);
     }
   }
 
@@ -1352,6 +1373,13 @@ function DeveloperEmpty({ error, onCreated }: { error?: string; onCreated: (case
           {notice && <p className="developer-empty-error">{notice}</p>}
           <button className="portal-button portal-button-primary developer-empty-submit" disabled={busy}>{busy ? "Creando expediente…" : "Crear expediente y continuar"}<span>→</span></button>
           <div className="developer-empty-note"><span>i</span><small>El expediente comienza vacío. Ninguna cuenta se incorpora sin que la cargues.</small></div>
+          <div className="developer-synthetic-panel">
+            <span className="card-kicker">LABORATORIO SINTÉTICO</span>
+            <b>Multiplicar cuentas para probar el motor</b>
+            <small>Genera 12 cuentas simuladas con perfiles de hospitalización, pabellón, medicamentos, materiales y urgencia, usando los 664 patrones y 1.468 observaciones del corpus.</small>
+            <button type="button" className="portal-button portal-button-secondary developer-synthetic-button" onClick={() => void generateSyntheticSuite()} disabled={busy || syntheticBusy}>{syntheticBusy ? "Generando batería…" : "Generar 12 cuentas sintéticas"}<span>↗</span></button>
+            <small className="developer-synthetic-warning">Sólo para desarrolladores: quedan marcadas como SIMULADAS y no se incorporan al corpus ni se muestran a pacientes.</small>
+          </div>
           <a className="developer-empty-patient-link" href="/?view=patient">Crear desde vista paciente <span>↗</span></a>
         </form>
       </div>
