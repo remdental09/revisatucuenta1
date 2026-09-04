@@ -1012,14 +1012,14 @@ export function PortalEntry() {
 
       <section id="privacidad" className="home-privacy home-shell">
         <div className="home-privacy-mark">⌁</div>
-        <div><p className="home-section-kicker">PRIVACIDAD PRIMERO</p><h2>Tu cuenta merece cuidado y contexto.</h2><p>El acceso se verifica por correo. Antes de continuar, podrás revisar la información del servicio y autorizar de forma informada el tratamiento que corresponda.</p></div>
+        <div><p className="home-section-kicker">PRIVACIDAD PRIMERO</p><h2>Tu cuenta merece cuidado y contexto.</h2><p>El acceso se verifica por correo. Antes de continuar, podrás revisar la información del servicio y autorizar de forma informada el tratamiento que corresponda.</p><a className="home-legal-link" href="/privacidad">Leer la política de privacidad ↗</a></div>
         <a className="home-text-link" href="/?view=patient">Comenzar revisión <span>↗</span></a>
       </section>
 
       <footer className="home-footer home-shell">
         <PortalBrand href="/" className="home-footer-brand" />
         <p>Revisa tus cuentas de hospitalización en clínicas.</p>
-        <a href="/?view=developer">Entrada desarrolladores <span>↗</span></a>
+        <div className="home-footer-links"><a href="/privacidad">Privacidad</a><a href="/cookies">Cookies</a><a href="/?view=developer">Entrada desarrolladores <span>↗</span></a></div>
       </footer>
     </main>
   );
