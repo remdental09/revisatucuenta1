@@ -5,7 +5,7 @@ type LegalSection = "privacy" | "cookies";
 
 function LegalBrand() {
   return (
-    <Link className="legal-brand" href="/">
+    <Link className="legal-brand" href="/" prefetch={false}>
       <span>R</span>
       <strong>RevisaTuCuenta</strong>
     </Link>
@@ -105,7 +105,7 @@ export function LegalPage({ section }: { section: LegalSection }) {
         <nav aria-label="Documentos legales">
           <a href="/privacidad">Privacidad</a>
           <a href="/cookies">Cookies</a>
-          <Link href="/">Volver al inicio</Link>
+          <Link href="/" prefetch={false}>Volver al inicio</Link>
         </nav>
       </header>
       <article className="legal-document">
