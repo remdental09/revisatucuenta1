@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 
-const CONSENT_VERSION = "2026-09-04-v1";
+const CONSENT_VERSION = "2026-09-04-v2";
 const STORAGE_KEY = `rtc_cookie_preferences:${CONSENT_VERSION}`;
 
 type CookiePreferences = {
@@ -137,6 +137,9 @@ export function CookieConsent() {
           </div>
           <div className="cookie-banner-actions">
             <button className="portal-button portal-button-primary" type="button" onClick={commit}>
+              Aceptar cookies
+            </button>
+            <button className="portal-button portal-button-secondary" type="button" onClick={commit}>
               Rechazar opcionales
             </button>
             <button className="portal-button portal-button-secondary" type="button" onClick={openSettings}>
@@ -166,6 +169,10 @@ export function CookieConsent() {
               description="Acceso, sesión y seguridad contra abuso. No se usan para publicidad ni para analizar tu cuenta clínica."
               status="Siempre activas"
             >
+              <label className="cookie-disabled-option cookie-required-option">
+                <input type="checkbox" checked disabled readOnly aria-label="Cookies necesarias activas" />
+                <span>Cookies necesarias activas.</span>
+              </label>
               <p className="cookie-details"><code>rtc_session</code> · sesión verificada, hasta 7 días · <code>__cf_bm</code> · protección anti-bots, hasta 30 minutos de inactividad.</p>
             </CookieCategory>
 
@@ -196,6 +203,9 @@ export function CookieConsent() {
             </p>
             <div className="cookie-dialog-actions">
               <button className="portal-button portal-button-primary" type="button" onClick={commit}>
+                Aceptar cookies
+              </button>
+              <button className="portal-button portal-button-secondary" type="button" onClick={commit}>
                 Guardar selección
               </button>
               <a className="portal-button portal-button-secondary" href="/cookies">Leer política completa</a>
