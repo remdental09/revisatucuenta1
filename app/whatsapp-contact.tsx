@@ -1,9 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type MouseEvent } from "react";
 
 const WHATSAPP_NUMBER = "56996963089";
 const WHATSAPP_BASE_URL = `https://wa.me/${WHATSAPP_NUMBER}`;
+const QUESTION_PROMPTS = [
+  "1. ¿El prestador o la clínica te envió la cuenta de hospitalización detallada y no sólo el total? Responde: Sí / No.",
+  "2. ¿Tienes el PAM de tu Isapre? Responde: Sí / No.",
+];
 
 export function WhatsAppContact() {
   const [open, setOpen] = useState(false);
@@ -11,10 +15,18 @@ export function WhatsAppContact() {
   const [need, setNeed] = useState("Necesito orientación para revisar mi cuenta de hospitalización y mi PAM.");
   const [error, setError] = useState("");
 
-  const message = `Hola, soy ${name.trim()}. ${need.trim()}`;
+  const message = [
+    `Hola, soy ${name.trim()}.`,
+    need.trim(),
+    "",
+    "Para continuar, responderé estas preguntas:",
+    ...QUESTION_PROMPTS,
+    "",
+    "Mis respuestas: 1) ___  2) ___.",
+  ].join("\n");
   const whatsappHref = `${WHATSAPP_BASE_URL}?text=${encodeURIComponent(message)}`;
 
-  function handleOpenWhatsApp(event: React.MouseEvent<HTMLAnchorElement>) {
+  function handleOpenWhatsApp(event: MouseEvent<HTMLAnchorElement>) {
     if (name.trim().length < 2) {
       event.preventDefault();
       setError("Escribe tu nombre para que podamos identificar tu solicitud.");
@@ -37,7 +49,7 @@ export function WhatsAppContact() {
             </div>
             <button className="whatsapp-close" type="button" aria-label="Cerrar contacto por WhatsApp" onClick={() => setOpen(false)}>×</button>
           </div>
-          <p className="whatsapp-card-copy">Déjanos tu nombre y te conectamos con nuestro WhatsApp de atención.</p>
+          <p className="whatsapp-card-copy">Al abrir WhatsApp verás dos preguntas para responder con Sí o No.</p>
           <label className="whatsapp-field">
             Tu nombre
             <input type="text" autoComplete="name" placeholder="Ej. María Rodríguez" value={name} onChange={(event) => handleNameChange(event.target.value)} />
@@ -46,6 +58,10 @@ export function WhatsAppContact() {
             ¿Qué necesitas revisar?
             <textarea value={need} onChange={(event) => setNeed(event.target.value)} rows={3} />
           </label>
+          <div className="whatsapp-question-preview" aria-label="Preguntas que se prepararán en WhatsApp">
+            <p>{QUESTION_PROMPTS[0]}</p>
+            <p>{QUESTION_PROMPTS[1]}</p>
+          </div>
           <p className="whatsapp-privacy-note">No envíes tu RUN ni documentos por WhatsApp. Súbelos sólo en el acceso seguro.</p>
           {error && <p className="whatsapp-error" role="alert">{error}</p>}
           <a className="whatsapp-submit" href={whatsappHref} target="_blank" rel="noreferrer" onClick={handleOpenWhatsApp}>
