@@ -933,93 +933,120 @@ function downloadClaim(filename: string, snapshot: Snapshot) {
   URL.revokeObjectURL(url);
 }
 
+function AmbientVideo({ src, label, className = "" }: { src: string; label: string; className?: string }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [paused, setPaused] = useState(false);
+
+  function togglePlayback() {
+    const video = videoRef.current;
+    if (!video) return;
+    video.muted = true;
+    if (video.paused) {
+      video.autoplay = true;
+      void video.play().catch(() => setPaused(true));
+    } else {
+      video.autoplay = false;
+      video.pause();
+      setPaused(true);
+    }
+  }
+
+  return (
+    <div className={`home-film-media ${className}`.trim()}>
+      <video
+        ref={videoRef}
+        autoPlay
+        loop
+        muted
+        playsInline
+        preload="metadata"
+        aria-hidden="true"
+        tabIndex={-1}
+        onPlay={() => setPaused(false)}
+        onPause={() => setPaused(true)}
+      >
+        <source src={src} type="video/mp4" />
+      </video>
+      <div className="home-film-media-shade" aria-hidden="true" />
+      <span className="home-film-media-label">{label} · sin audio</span>
+      <button
+        className="home-film-media-toggle"
+        type="button"
+        aria-label={`${paused ? "Reproducir" : "Pausar"} video de ${label.toLowerCase()}`}
+        aria-pressed={paused}
+        onClick={togglePlayback}
+      >
+        <span aria-hidden="true">{paused ? "▶" : "Ⅱ"}</span> {paused ? "Reproducir" : "Pausar"}
+      </button>
+    </div>
+  );
+}
+
 export function PortalEntry() {
   return (
-    <main className="home-portal">
-      <div className="home-ticker" aria-hidden="true">
-        <div className="home-ticker-track">
-          <span>REVISA TU CUENTA CON CLARIDAD</span><i>✦</i><span>LECTURA PRELIMINAR</span><i>✦</i><span>PRIVACIDAD PRIMERO</span><i>✦</i><span>REVISA TU CUENTA CON CLARIDAD</span><i>✦</i><span>LECTURA PRELIMINAR</span><i>✦</i><span>PRIVACIDAD PRIMERO</span>
-        </div>
-      </div>
+    <main className="home-portal home-space-portal">
+      <section className="home-space-hero">
+        <AmbientVideo src="/media/clinic-facade.mp4" label="Llegada a la clínica" className="home-space-hero-media" />
+        <header className="home-space-nav home-shell">
+          <PortalBrand href="/" className="home-space-brand" />
+          <nav className="home-space-nav-links" aria-label="Navegación principal">
+            <a href="#como-funciona">Cómo funciona</a>
+            <a href="#privacidad">Privacidad</a>
+          </nav>
+          <a className="home-space-dev-link" href="/?view=developer">Desarrolladores <span>↗</span></a>
+        </header>
 
-      <header className="home-nav home-shell">
-        <PortalBrand href="/" className="home-brand" />
-        <nav className="home-nav-links" aria-label="Navegación principal">
-          <a href="#como-funciona">Cómo funciona</a>
-          <a href="#privacidad">Privacidad</a>
-        </nav>
-        <a className="home-dev-link" href="/?view=developer">Desarrolladores <span>↗</span></a>
-      </header>
-
-      <section className="home-hero home-shell">
-        <div className="home-hero-copy">
-          <p className="home-eyebrow"><span>●</span> Revisión de cuentas de hospitalización</p>
-          <h1>Entiende lo que te cobraron. <em>Revisa con fundamento.</em></h1>
-          <p className="home-hero-lead">Sube tu cuenta de hospitalización y revísala con una primera lectura clara de los cargos y montos aproximados que conviene mirar con más detalle.</p>
-          <div className="home-hero-actions">
-            <a className="portal-button portal-button-primary home-primary-button" href="/?view=patient">Sube tu cuenta <span>↗</span></a>
-            <a className="home-text-link" href="#como-funciona">Ver cómo funciona <span>↓</span></a>
+        <div className="home-space-hero-content home-shell">
+          <p className="home-space-kicker"><span>●</span> Revisión de cuentas de hospitalización</p>
+          <h1>Tu cuenta.<br /><em>Más clara.</em></h1>
+          <p className="home-space-hero-lead">Sube tu cuenta de hospitalización y recibe una primera lectura de los cargos y montos aproximados que conviene mirar con más detalle.</p>
+          <div className="home-space-actions">
+            <a className="home-space-primary" href="/?view=patient">Subir mi cuenta <span>↗</span></a>
+            <a className="home-space-text-link" href="#como-funciona">Cómo funciona <span>↓</span></a>
           </div>
-          <p className="home-microcopy"><span>⌁</span> Acceso por correo verificado · Resultado preliminar · Sin promesas de devolución</p>
+          <p className="home-space-microcopy">Acceso por correo verificado · Resultado preliminar · Sin promesas de devolución</p>
         </div>
 
-        <div className="home-hero-visual" aria-label="Vista previa de una revisión de cuenta clínica">
-          <div className="home-visual-wash" />
-          <div className="home-review-card">
-            <div className="home-review-card-top">
-              <div><span>CUENTA CLÍNICA · EJEMPLO</span><strong>Resultado preliminar</strong></div>
-              <b>01 / 03</b>
-            </div>
-            <div className="home-review-divider" />
-            <div className="home-review-result">
-              <small>LECTURA DE LA CUENTA</small>
-              <strong>3 cargos</strong>
-              <span>que conviene revisar</span>
-            </div>
-            <div className="home-review-lines">
-              <div><span>Derecho de pabellón</span><b>Revisar</b></div>
-              <div><span>Materiales e insumos</span><b>Revisar</b></div>
-              <div><span>Medicamentos</span><b>Comparar</b></div>
-            </div>
-            <div className="home-review-foot"><i /> Estimación preliminar · requiere revisión humana</div>
-          </div>
-          <div className="home-floating-note"><span>✓</span><div><small>PROCESO PROTEGIDO</small><b>Tu revisión queda asociada a ti</b></div></div>
-          <p className="home-visual-caption">Una lectura inicial para saber por dónde empezar.</p>
+        <div className="home-space-hero-foot home-shell" aria-hidden="true">
+          <span>01 / 03</span>
+          <span>Explora la revisión <b>↓</b></span>
         </div>
       </section>
 
-      <section className="home-proof" aria-label="Principios del servicio">
-        <div className="home-proof-inner home-shell">
-          <div><b>01</b><span>Información clara</span></div>
-          <div><b>02</b><span>Datos bajo tu control</span></div>
-          <div><b>03</b><span>Decisiones informadas</span></div>
-          <div><b>04</b><span>Acompañamiento responsable</span></div>
-        </div>
-      </section>
-
-      <section id="como-funciona" className="home-process home-shell">
-        <div className="home-section-intro">
-          <p className="home-section-kicker">UNA REVISIÓN MÁS CLARA</p>
+      <section id="como-funciona" className="home-space-process home-shell">
+        <div className="home-space-process-intro">
+          <p className="home-space-kicker">UNA REVISIÓN MÁS CLARA</p>
           <h2>De una cuenta difícil de leer a mejores preguntas.</h2>
           <p>Ordenamos la información para que puedas entender qué aparece en tu cuenta y decidir qué antecedentes vale la pena revisar.</p>
         </div>
-        <div className="home-process-grid">
+        <div className="home-space-process-list">
           <article><span>01</span><h3>Sube tu cuenta</h3><p>Comparte el documento de hospitalización desde el acceso seguro para pacientes.</p></article>
           <article><span>02</span><h3>La ordenamos</h3><p>Leemos sus cargos y agrupamos las líneas que merecen una segunda mirada.</p></article>
           <article><span>03</span><h3>Revisa el resultado</h3><p>Recibe un preinforme con hallazgos y montos aproximados, siempre sujetos a revisión.</p></article>
         </div>
       </section>
 
-      <section id="privacidad" className="home-privacy home-shell">
-        <div className="home-privacy-mark">⌁</div>
-        <div><p className="home-section-kicker">PRIVACIDAD PRIMERO</p><h2>Tu cuenta merece cuidado y contexto.</h2><p>El acceso se verifica por correo. Antes de continuar, podrás revisar la información del servicio y autorizar de forma informada el tratamiento que corresponda.</p><a className="home-legal-link" href="/privacidad">Leer la política de privacidad ↗</a></div>
-        <a className="home-text-link" href="/?view=patient">Comenzar revisión <span>↗</span></a>
+      <section className="home-space-film-grid home-shell" aria-label="El contexto de tu revisión">
+        <article className="home-space-film-card home-space-film-card-large">
+          <AmbientVideo src="/media/santiago-skyline.mp4" label="Santiago" />
+          <div className="home-space-film-copy"><span>02 / CONTEXTO</span><h2>Una cuenta completa cambia la conversación.</h2><p>Identifica los cargos, los respaldos y las preguntas que conviene llevar a tu prestador.</p></div>
+        </article>
+        <article className="home-space-film-card home-space-film-card-small">
+          <AmbientVideo src="/media/patient-office.mp4" label="Tu revisión" />
+          <div className="home-space-film-copy"><span>03 / DECISIÓN</span><h3>Mejores preguntas empiezan con mejores datos.</h3><p>El resultado es preliminar y siempre queda sujeto a revisión.</p></div>
+        </article>
       </section>
 
-      <footer className="home-footer home-shell">
-        <PortalBrand href="/" className="home-footer-brand" />
+      <section id="privacidad" className="home-space-privacy home-shell">
+        <div className="home-space-privacy-mark">⌁</div>
+        <div><p className="home-space-kicker">PRIVACIDAD PRIMERO</p><h2>Tu cuenta merece cuidado y contexto.</h2><p>El acceso se verifica por correo. Antes de continuar, podrás revisar la información del servicio y autorizar de forma informada el tratamiento que corresponda.</p><a href="/privacidad">Leer la política de privacidad ↗</a></div>
+        <a className="home-space-text-link" href="/?view=patient">Comenzar revisión <span>↗</span></a>
+      </section>
+
+      <footer className="home-space-footer home-shell">
+        <PortalBrand href="/" className="home-space-footer-brand" />
         <p>Revisa tus cuentas de hospitalización en clínicas.</p>
-        <div className="home-footer-links"><a href="/privacidad">Privacidad</a><a href="/cookies">Cookies</a><a href="/?view=developer">Entrada desarrolladores <span>↗</span></a></div>
+        <div><a href="/privacidad">Privacidad</a><a href="/cookies">Cookies</a><a href="/?view=developer">Entrada desarrolladores <span>↗</span></a></div>
       </footer>
     </main>
   );
