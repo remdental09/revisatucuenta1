@@ -49,7 +49,7 @@ export function WhatsAppContact() {
             </div>
             <button className="whatsapp-close" type="button" aria-label="Cerrar contacto por WhatsApp" onClick={() => setOpen(false)}>×</button>
           </div>
-          <p className="whatsapp-card-copy">Al abrir WhatsApp verás dos preguntas para responder con Sí o No.</p>
+          <p className="whatsapp-card-copy">Si necesitas atención humana, pulsa el botón. WhatsApp abrirá una conversación con nuestro equipo y llevará las preguntas iniciales.</p>
           <label className="whatsapp-field">
             Tu nombre
             <input type="text" autoComplete="name" placeholder="Ej. María Rodríguez" value={name} onChange={(event) => handleNameChange(event.target.value)} />
@@ -65,7 +65,7 @@ export function WhatsAppContact() {
           <p className="whatsapp-privacy-note">No envíes tu RUN ni documentos por WhatsApp. Súbelos sólo en el acceso seguro.</p>
           {error && <p className="whatsapp-error" role="alert">{error}</p>}
           <a className="whatsapp-submit" href={whatsappHref} target="_blank" rel="noreferrer" onClick={handleOpenWhatsApp}>
-            Abrir WhatsApp <span aria-hidden="true">↗</span>
+            Necesito hablar con un humano <span aria-hidden="true">↗</span>
           </a>
         </section>
       )}
