@@ -997,9 +997,9 @@ export function PortalEntry() {
         </header>
 
         <div className="home-space-hero-content home-shell">
-          <p className="home-space-kicker"><span>●</span> Revisión de cuentas de hospitalización</p>
-          <h1>Tu cuenta.<br /><em>Más clara.</em></h1>
-          <p className="home-space-hero-lead">Sube tu cuenta de hospitalización y recibe una primera lectura de los cargos y montos aproximados que conviene mirar con más detalle.</p>
+          <p className="home-space-kicker"><span>●</span> ¿Tu cuenta de hospitalización es muy alta?</p>
+          <h1>Revisemos<br /><em>tu cuenta.</em></h1>
+          <p className="home-space-hero-lead">Permítenos revisar la cuenta de tu prestador de salud junto con tu Programa de Atención Médica (PAM). Revisemos si los cobros corresponden y si las coberturas están debidamente aplicadas.</p>
           <div className="home-space-actions">
             <a className="home-space-primary" href="/?view=patient">Subir mi cuenta <span>↗</span></a>
             <a className="home-space-text-link" href="#como-funciona">Cómo funciona <span>↓</span></a>
