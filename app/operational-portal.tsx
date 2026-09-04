@@ -8,6 +8,7 @@ import type { ClinicalAccountAnalysis, ChileanBillingLine, InclusionCandidate } 
 import type { FunctionalEquivalenceAlert } from "../lib/rules/observed-corpus";
 import { generateClarificationClaimMarkdown } from "../lib/claims/claim-generator";
 import { normalizeChileanRun } from "../lib/identity/chilean-run";
+import { WhatsAppContact } from "./whatsapp-contact";
 import {
   EQUALITY_PROJECTION_FRAMEWORK,
   FULL_OPERATING_ROOM_FRAMEWORK,
@@ -1048,6 +1049,7 @@ export function PortalEntry() {
         <p>Revisa tus cuentas de hospitalización en clínicas.</p>
         <div><a href="/privacidad">Privacidad</a><a href="/cookies">Cookies</a><a href="/?view=developer">Entrada desarrolladores <span>↗</span></a></div>
       </footer>
+      <WhatsAppContact />
     </main>
   );
 }
