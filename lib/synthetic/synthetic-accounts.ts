@@ -25,6 +25,11 @@ export type SyntheticAccount = {
   lines: ChileanBillingLine[];
   patternKeys: string[];
   anchorDescription: string;
+  fragmentationScenario: {
+    label: string;
+    sourcePatternKey: string;
+    lineIds: string[];
+  };
 };
 
 export type SyntheticAccountSuite = {
@@ -34,6 +39,8 @@ export type SyntheticAccountSuite = {
   sourceObservationCount: number;
   generatedPatternCount: number;
   generatedObservationCount: number;
+  generatedLineCount: number;
+  fragmentationScenarioCount: number;
 };
 
 type SyntheticProfile = {
@@ -126,7 +133,7 @@ const PROFILES: SyntheticProfile[] = [
     provider: "Prestador sintético materno",
     anchorDescription: "Parto y hospitalización materna",
     anchorRange: [320000, 1800000],
-    terms: ["parto", "cesar", "mater", "obstetric", "ginecol", "puerper"],
+    terms: ["parto", "cesar", "materna", "maternidad", "obstetric", "ginecol", "puerper"],
   },
   {
     id: "oncology",
@@ -163,6 +170,12 @@ const PROFILE_CYCLE: SyntheticProfileId[] = [
   "mixed_review",
   "hospital_general",
   "operating_room",
+];
+
+const FRAGMENTATION_TERMS = [
+  "gasa", "torula", "aposito", "tegaderm", "tela", "esponja", "bata", "delantal",
+  "calzon", "sabana", "media anti", "jeringa", "aguja", "jelco", "mariposa", "bajada",
+  "luer", "sonda", "tubo", "aspiracion",
 ];
 
 function normalize(value = "") {
@@ -213,7 +226,7 @@ function profileForPattern(pattern: ObservedItemPattern): SyntheticProfileId {
   const text = normalize(`${pattern.description} ${pattern.sections.join(" ")}`);
   if (/urgencia|emergencia/.test(text)) return "emergency";
   if (/neonat|uci|uti|incubadora|premat|sala cuna/.test(text)) return "neonatal_critical";
-  if (/parto|cesar|mater|obstetric|ginecol|puerper/.test(text)) return "maternal";
+  if (/parto|cesar|materna|maternidad|obstetric|ginecol|puerper/.test(text)) return "maternal";
   if (/oncolog|quimio|hepatic|tumor|cancer|onco/.test(text)) return "oncology";
   if (/anest|propofol|rocuron|sevofl|monitor|oxigen/.test(text)) return "operating_room_anesthesia";
   if (/pabellon|quirurg|cirugia|sutura|campo|drenaje/.test(text)) return "operating_room";
@@ -234,6 +247,20 @@ function pickValue(values: string[], random: () => number) {
 function providerFor(pattern: ObservedItemPattern, profile: SyntheticProfile, random: () => number) {
   const observed = pickValue(pattern.providers, random);
   return observed ? `Simulado · ${observed}` : profile.provider;
+}
+
+function scenarioPatternFor(profile: SyntheticProfile, patterns: ObservedItemPattern[], random: () => number) {
+  const profileTerms = profile.terms.map(normalize);
+  const fragmentationPatterns = patterns.filter((pattern) => {
+    const description = normalize(`${pattern.description} ${pattern.sections.join(" ")}`);
+    return FRAGMENTATION_TERMS.some((term) => description.includes(normalize(term)));
+  });
+  const profileMatches = fragmentationPatterns.filter((pattern) => {
+    const description = normalize(`${pattern.description} ${pattern.sections.join(" ")}`);
+    return profileTerms.some((term) => description.includes(term));
+  });
+  const pool = profileMatches.length ? profileMatches : fragmentationPatterns.length ? fragmentationPatterns : patterns;
+  return pool[Math.floor(random() * pool.length)] || patterns[0];
 }
 
 function amountFor(pattern: ObservedItemPattern, random: () => number) {
@@ -296,6 +323,34 @@ function anchorLine(profile: SyntheticProfile, accountIndex: number, random: () 
   };
 }
 
+function fragmentationLines(
+  pattern: ObservedItemPattern,
+  profile: SyntheticProfile,
+  accountIndex: number,
+  random: () => number,
+) {
+  const base = lineFromPattern(pattern, profile, accountIndex, 1, random);
+  const amount = Math.max(500, amountFor(pattern, random), profile.anchorRange[0] > 1000 ? Math.round(profile.anchorRange[0] / 12) : 500);
+  const shared = {
+    description: pattern.description,
+    code: pickValue(pattern.codes, random),
+    fonasaCode: pickValue(pattern.fonasaCodes, random),
+    section: profile.section,
+    subgroup: "Escenario sintético de desfragmentación controlada",
+    providerId: providerFor(pattern, profile, random),
+    quantity: Math.max(1, base.quantity || 1),
+    unitAmount: base.unitAmount,
+    confidence: 1,
+    sourceText: `${pattern.description} · escenario sintético: componente incluido y cargo separado`,
+    date: `2026-01-${String(3 + (accountIndex % 24)).padStart(2, "0")}`,
+    page: 1,
+  };
+  return [
+    { ...shared, id: `synthetic-fragment-${accountIndex + 1}-included`, amount: 0 },
+    { ...shared, id: `synthetic-fragment-${accountIndex + 1}-separate`, amount },
+  ];
+}
+
 /**
  * Creates a reproducible, clearly synthetic test suite from the desidentified
  * corpus. It expands each observed pattern according to its historical
@@ -322,6 +377,11 @@ export function generateSyntheticAccountSuite(options: {
     lines: [anchorLine(profile, index, random)],
     patternKeys: [],
     anchorDescription: profile.anchorDescription,
+    fragmentationScenario: {
+      label: "Itemización selectiva sintética: componente a valor cero y cargo separado de la misma familia funcional",
+      sourcePatternKey: "",
+      lineIds: [],
+    },
   }));
 
   const accountIndexesByProfile = new Map<SyntheticProfileId, number[]>();
@@ -356,6 +416,13 @@ export function generateSyntheticAccountSuite(options: {
   }
 
   for (const account of accounts) {
+    const profile = profileById(account.profileId);
+    const pattern = scenarioPatternFor(profile, options.corpus.patterns, random);
+    const scenario = fragmentationLines(pattern, profile, accounts.indexOf(account), random);
+    account.lines.push(...scenario);
+    account.fragmentationScenario.sourcePatternKey = pattern.normalizedDescription;
+    account.fragmentationScenario.lineIds = scenario.map((line) => line.id);
+    account.patternKeys.push(pattern.normalizedDescription);
     account.lines = account.lines.map((line, index) => ({
       ...line,
       page: 1 + Math.floor(index / 22),
@@ -369,6 +436,8 @@ export function generateSyntheticAccountSuite(options: {
     sourceObservationCount: options.corpus.observationCount,
     generatedPatternCount: new Set(accounts.flatMap((account) => account.patternKeys)).size,
     generatedObservationCount: occurrences.length,
+    generatedLineCount: accounts.reduce((sum, account) => sum + account.lines.length, 0),
+    fragmentationScenarioCount: accounts.filter((account) => account.fragmentationScenario.lineIds.length > 0).length,
   };
 }
 

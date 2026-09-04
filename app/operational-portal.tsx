@@ -935,19 +935,92 @@ function downloadClaim(filename: string, snapshot: Snapshot) {
 
 export function PortalEntry() {
   return (
-    <main className="portal-entry">
-      <div className="portal-entry-glow" />
-      <div className="portal-entry-card">
-        <PortalBrand/>
-        <p className="portal-kicker">Revisión de cuentas de hospitalización</p>
-        <h1>Sube tu cuenta de hospitalización y revisémosla juntos.</h1>
-        <p className="portal-entry-copy">Recibe una primera revisión clara de los cobros y posibles inconsistencias de tu cuenta clínica.</p>
-        <div className="portal-entry-actions">
-          <a className="portal-button portal-button-primary" href="/?view=patient">Entrada paciente</a>
-          <a className="portal-button portal-button-secondary developer-entry-button" href="/?view=developer">Entrada desarrolladores ↗</a>
+    <main className="home-portal">
+      <div className="home-ticker" aria-hidden="true">
+        <div className="home-ticker-track">
+          <span>REVISA TU CUENTA CON CLARIDAD</span><i>✦</i><span>LECTURA PRELIMINAR</span><i>✦</i><span>PRIVACIDAD PRIMERO</span><i>✦</i><span>REVISA TU CUENTA CON CLARIDAD</span><i>✦</i><span>LECTURA PRELIMINAR</span><i>✦</i><span>PRIVACIDAD PRIMERO</span>
         </div>
-        <div className="portal-entry-foot"><span>●</span> Tu información se mantiene protegida</div>
       </div>
+
+      <header className="home-nav home-shell">
+        <PortalBrand href="/" className="home-brand" />
+        <nav className="home-nav-links" aria-label="Navegación principal">
+          <a href="#como-funciona">Cómo funciona</a>
+          <a href="#privacidad">Privacidad</a>
+        </nav>
+        <a className="home-dev-link" href="/?view=developer">Desarrolladores <span>↗</span></a>
+      </header>
+
+      <section className="home-hero home-shell">
+        <div className="home-hero-copy">
+          <p className="home-eyebrow"><span>●</span> Revisión de cuentas de hospitalización</p>
+          <h1>Entiende lo que te cobraron. <em>Revisa con fundamento.</em></h1>
+          <p className="home-hero-lead">Sube tu cuenta de hospitalización y revísala con una primera lectura clara de los cargos y montos aproximados que conviene mirar con más detalle.</p>
+          <div className="home-hero-actions">
+            <a className="portal-button portal-button-primary home-primary-button" href="/?view=patient">Sube tu cuenta <span>↗</span></a>
+            <a className="home-text-link" href="#como-funciona">Ver cómo funciona <span>↓</span></a>
+          </div>
+          <p className="home-microcopy"><span>⌁</span> Acceso por correo verificado · Resultado preliminar · Sin promesas de devolución</p>
+        </div>
+
+        <div className="home-hero-visual" aria-label="Vista previa de una revisión de cuenta clínica">
+          <div className="home-visual-wash" />
+          <div className="home-review-card">
+            <div className="home-review-card-top">
+              <div><span>CUENTA CLÍNICA · EJEMPLO</span><strong>Resultado preliminar</strong></div>
+              <b>01 / 03</b>
+            </div>
+            <div className="home-review-divider" />
+            <div className="home-review-result">
+              <small>LECTURA DE LA CUENTA</small>
+              <strong>3 cargos</strong>
+              <span>que conviene revisar</span>
+            </div>
+            <div className="home-review-lines">
+              <div><span>Derecho de pabellón</span><b>Revisar</b></div>
+              <div><span>Materiales e insumos</span><b>Revisar</b></div>
+              <div><span>Medicamentos</span><b>Comparar</b></div>
+            </div>
+            <div className="home-review-foot"><i /> Estimación preliminar · requiere revisión humana</div>
+          </div>
+          <div className="home-floating-note"><span>✓</span><div><small>PROCESO PROTEGIDO</small><b>Tu revisión queda asociada a ti</b></div></div>
+          <p className="home-visual-caption">Una lectura inicial para saber por dónde empezar.</p>
+        </div>
+      </section>
+
+      <section className="home-proof" aria-label="Principios del servicio">
+        <div className="home-proof-inner home-shell">
+          <div><b>01</b><span>Información clara</span></div>
+          <div><b>02</b><span>Datos bajo tu control</span></div>
+          <div><b>03</b><span>Decisiones informadas</span></div>
+          <div><b>04</b><span>Acompañamiento responsable</span></div>
+        </div>
+      </section>
+
+      <section id="como-funciona" className="home-process home-shell">
+        <div className="home-section-intro">
+          <p className="home-section-kicker">UNA REVISIÓN MÁS CLARA</p>
+          <h2>De una cuenta difícil de leer a mejores preguntas.</h2>
+          <p>Ordenamos la información para que puedas entender qué aparece en tu cuenta y decidir qué antecedentes vale la pena revisar.</p>
+        </div>
+        <div className="home-process-grid">
+          <article><span>01</span><h3>Sube tu cuenta</h3><p>Comparte el documento de hospitalización desde el acceso seguro para pacientes.</p></article>
+          <article><span>02</span><h3>La ordenamos</h3><p>Leemos sus cargos y agrupamos las líneas que merecen una segunda mirada.</p></article>
+          <article><span>03</span><h3>Revisa el resultado</h3><p>Recibe un preinforme con hallazgos y montos aproximados, siempre sujetos a revisión.</p></article>
+        </div>
+      </section>
+
+      <section id="privacidad" className="home-privacy home-shell">
+        <div className="home-privacy-mark">⌁</div>
+        <div><p className="home-section-kicker">PRIVACIDAD PRIMERO</p><h2>Tu cuenta merece cuidado y contexto.</h2><p>El acceso se verifica por correo. Antes de continuar, podrás revisar la información del servicio y autorizar de forma informada el tratamiento que corresponda.</p></div>
+        <a className="home-text-link" href="/?view=patient">Comenzar revisión <span>↗</span></a>
+      </section>
+
+      <footer className="home-footer home-shell">
+        <PortalBrand href="/" className="home-footer-brand" />
+        <p>Revisa tus cuentas de hospitalización en clínicas.</p>
+        <a href="/?view=developer">Entrada desarrolladores <span>↗</span></a>
+      </footer>
     </main>
   );
 }

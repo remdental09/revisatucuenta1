@@ -70,9 +70,24 @@ export async function getCloudflareEnv(): Promise<any | null> {
   if (typeof process !== "undefined" && process.env.REVISA_VOLATILE_MODE === "true") return null;
   try {
     const module = await import("cloudflare:workers");
+    // Vinext's local worker can expose .env.local only through the worker
+    // bindings, so honor the same explicit volatile switch there as well.
+    const bindings = module.env as { REVISA_VOLATILE_MODE?: string } | undefined;
+    if (bindings?.REVISA_VOLATILE_MODE === "true") return null;
     return module.env ?? null;
   } catch {
     return null;
+  }
+}
+
+export async function volatileRuntimeMode() {
+  if (typeof process !== "undefined" && process.env.REVISA_VOLATILE_MODE === "true") return true;
+  try {
+    const module = await import("cloudflare:workers");
+    const bindings = module.env as { REVISA_VOLATILE_MODE?: string } | undefined;
+    return bindings?.REVISA_VOLATILE_MODE === "true";
+  } catch {
+    return false;
   }
 }
 

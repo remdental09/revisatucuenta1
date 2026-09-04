@@ -1,5 +1,5 @@
 import { ensureCaseSchema } from "./case-schema.ts";
-import { localResetPilot } from "./runtime-store.ts";
+import { localResetPilot, volatileRuntimeMode } from "./runtime-store.ts";
 
 export const PILOT_RESET_VERSION = "2026-08-30-empty-console-v2";
 const PILOT_RESET_FLAG = "pilot_reset_version";
@@ -9,7 +9,13 @@ const PILOT_RESET_FLAG = "pilot_reset_version";
  * source files are removed, while validated corpus observations remain intact.
  */
 export async function resetPilotData(env: any) {
-  if (!env?.DB) return localResetPilot(PILOT_RESET_VERSION);
+  if (!env?.DB) {
+    // Volatile mode is used for isolated training runs. Keep its in-memory
+    // cases available while the operator switches between developer/patient
+    // views; production keeps the one-time pilot cleanup behavior.
+    if (await volatileRuntimeMode()) return { reset: false, deletedCases: 0, deletedDocuments: 0 };
+    return localResetPilot(PILOT_RESET_VERSION);
+  }
 
   await ensureCaseSchema(env.DB);
   const flag = await env.DB.prepare(`SELECT flag_value FROM runtime_flags WHERE flag_key = ?`).bind(PILOT_RESET_FLAG).first();
