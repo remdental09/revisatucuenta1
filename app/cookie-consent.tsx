@@ -214,11 +214,6 @@ export function CookieConsent() {
         </div>
       )}
 
-      {hydrated && preferences && (
-        <button className="cookie-settings-launcher" type="button" onClick={openSettings}>
-          Cookies
-        </button>
-      )}
     </>
   );
 }

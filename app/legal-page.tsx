@@ -88,7 +88,7 @@ function CookiesContent() {
       <p>No están activas. Si en el futuro se incorpora analítica, publicidad o personalización, se solicitará autorización previa y separada antes de cargarlas. Quedarán apagadas por defecto y “Rechazar opcionales” tendrá la misma visibilidad y facilidad que cualquier aceptación.</p>
 
       <h2>Cómo cambiar tu decisión</h2>
-      <p>El botón “Cookies” permanece disponible en el sitio para revisar la selección. La preferencia se guarda sólo en el dispositivo, sin incluir RUN, correo, documentos ni información clínica. Cambiar la decisión no autoriza ningún tratamiento de datos de salud.</p>
+      <p>La preferencia se guarda sólo en el dispositivo, sin incluir RUN, correo, documentos ni información clínica. Mientras no se haya guardado una selección, podrás revisar y configurar las opciones desde el aviso de cookies. Cambiar la decisión no autoriza ningún tratamiento de datos de salud.</p>
 
       <h2>Transferencias y terceros</h2>
       <p>Cloudflare puede procesar datos técnicos de seguridad en Estados Unidos según su configuración y política. La sociedad debe revisar y actualizar esta página si incorpora nuevos proveedores, herramientas o transferencias internacionales.</p>
