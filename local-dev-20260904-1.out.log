@@ -1,0 +1,143 @@
+
+> site-creator-vinext-starter@0.1.0 dev
+> vinext dev --host 127.0.0.1 --port 3099
+
+
+  vinext dev  (Vite 8.0.13)
+
+Using secrets defined in .env.local
+  ➜  Local:   http://localhost:3099/
+  ➜  Debug:   http://localhost:3099/__debug
+ GET /?view=patient&case=synthetic-550389b4-76a1-43a9-8871-b5f7340fd56a-01 200 in 1.9s (compile: 1788537549.2s, render: 1.7s)
+ GET /?view=developer 200 in 1.5s (compile: 1788537549.0s, render: 1.4s)
+ GET /api/auth/session?view=patient 401 in 514ms
+ GET /api/auth/session?view=developer 200 in 498ms
+ POST /api/admin/pilot-reset 200 in 141ms
+ GET /api/cases 200 in 40ms
+ GET /?view=developer 200 in 58ms (compile: 1788537549.0s, render: 35ms)
+ GET /api/auth/session?view=developer 200 in 16ms
+ POST /api/admin/pilot-reset 200 in 22ms
+ GET /api/cases 200 in 13ms
+ POST /api/synthetic 201 in 39.7s
+ POST /api/admin/pilot-reset 200 in 15ms
+ GET /api/cases 200 in 13ms
+ GET /api/cases/synthetic-06f32a47-3495-4a33-9050-e15956623531-01 200 in 48ms
+ POST /api/auth/email/start 200 in 42ms
+ GET /?view=patient&case=synthetic-550389b4-76a1-43a9-8871-b5f7340fd56a-01 200 in 65ms (compile: 1788537549.0s, render: 44ms)
+ GET /api/auth/session?view=patient 200 in 17ms
+ GET /api/cases/synthetic-550389b4-76a1-43a9-8871-b5f7340fd56a-01 404 in 13ms
+ GET /?view=patient&case=synthetic-06f32a47-3495-4a33-9050-e15956623531-01 200 in 59ms (compile: 1788537549.0s, render: 37ms)
+ GET /api/auth/session?view=patient 200 in 21ms
+ GET /api/cases/synthetic-06f32a47-3495-4a33-9050-e15956623531-01 200 in 21ms
+ GET /?view=patient&case=synthetic-synthetic-06f32a47-3495-4a33-9050-e15956623531-01 200 in 60ms (compile: 1788537549.0s, render: 37ms)
+ GET /?view=patient&case=synthetic-synthetic-06f32a47-3495-4a33-9050-e15956623531-02 200 in 104ms (compile: 1788537549.0s, render: 68ms)
+ GET /?view=patient&case=synthetic-synthetic-06f32a47-3495-4a33-9050-e15956623531-03 200 in 108ms (compile: 1788537549.0s, render: 66ms)
+ GET /api/auth/session?view=patient 200 in 53ms
+ GET /?view=patient&case=synthetic-synthetic-06f32a47-3495-4a33-9050-e15956623531-04 200 in 81ms (compile: 1788537549.0s, render: 39ms)
+ GET /api/auth/session?view=patient 200 in 24ms
+ GET /api/cases/synthetic-synthetic-06f32a47-3495-4a33-9050-e15956623531-04 404 in 31ms
+ GET /?view=patient&case=synthetic-synthetic-06f32a47-3495-4a33-9050-e15956623531-05 200 in 76ms (compile: 1788537549.0s, render: 39ms)
+ GET /api/auth/session?view=patient 200 in 24ms
+ GET /api/cases/synthetic-synthetic-06f32a47-3495-4a33-9050-e15956623531-05 404 in 54ms
+ GET /?view=patient&case=synthetic-synthetic-06f32a47-3495-4a33-9050-e15956623531-06 200 in 77ms (compile: 1788537549.0s, render: 43ms)
+ GET /api/auth/session?view=patient 200 in 25ms
+ GET /api/cases/synthetic-synthetic-06f32a47-3495-4a33-9050-e15956623531-06 404 in 29ms
+ GET /?view=patient&case=synthetic-synthetic-06f32a47-3495-4a33-9050-e15956623531-07 200 in 75ms (compile: 1788537549.0s, render: 38ms)
+ GET /?view=patient&case=synthetic-synthetic-06f32a47-3495-4a33-9050-e15956623531-08 200 in 76ms (compile: 1788537549.0s, render: 36ms)
+ GET /api/auth/session?view=patient 200 in 49ms
+ GET /api/auth/session?view=patient 200 in 26ms
+ GET /api/cases/synthetic-synthetic-06f32a47-3495-4a33-9050-e15956623531-08 404 in 25ms
+ GET /?view=patient&case=synthetic-synthetic-06f32a47-3495-4a33-9050-e15956623531-09 200 in 66ms (compile: 1788537549.0s, render: 35ms)
+ GET /api/auth/session?view=patient 200 in 23ms
+ GET /api/cases/synthetic-synthetic-06f32a47-3495-4a33-9050-e15956623531-09 404 in 24ms
+ GET /?view=patient&case=synthetic-synthetic-06f32a47-3495-4a33-9050-e15956623531-10 200 in 56ms (compile: 1788537549.0s, render: 31ms)
+ GET /api/auth/session?view=patient 200 in 27ms
+ GET /api/cases/synthetic-synthetic-06f32a47-3495-4a33-9050-e15956623531-10 404 in 27ms
+ GET /?view=patient&case=synthetic-synthetic-06f32a47-3495-4a33-9050-e15956623531-11 200 in 67ms (compile: 1788537549.0s, render: 40ms)
+ GET /api/auth/session?view=patient 200 in 25ms
+ GET /api/cases/synthetic-synthetic-06f32a47-3495-4a33-9050-e15956623531-11 404 in 21ms
+ GET /?view=patient&case=synthetic-synthetic-06f32a47-3495-4a33-9050-e15956623531-12 200 in 65ms (compile: 1788537549.0s, render: 30ms)
+ GET /api/auth/session?view=patient 200 in 25ms
+ GET /api/cases/synthetic-synthetic-06f32a47-3495-4a33-9050-e15956623531-12 404 in 22ms
+ GET /?view=patient&case=synthetic-06f32a47-3495-4a33-9050-e15956623531-01 200 in 65ms (compile: 1788537549.0s, render: 44ms)
+ GET /api/auth/session?view=patient 200 in 24ms
+ GET /api/cases/synthetic-06f32a47-3495-4a33-9050-e15956623531-01 200 in 46ms
+ GET /?view=patient&case=synthetic-06f32a47-3495-4a33-9050-e15956623531-02 200 in 110ms (compile: 1788537549.0s, render: 48ms)
+ GET /?view=patient&case=synthetic-06f32a47-3495-4a33-9050-e15956623531-03 200 in 79ms (compile: 1788537549.0s, render: 41ms)
+ GET /api/auth/session?view=patient 200 in 53ms
+ GET /api/auth/session?view=patient 200 in 24ms
+ GET /api/cases/synthetic-06f32a47-3495-4a33-9050-e15956623531-03 200 in 29ms
+ GET /?view=patient&case=synthetic-06f32a47-3495-4a33-9050-e15956623531-04 200 in 77ms (compile: 1788537549.0s, render: 40ms)
+ GET /?view=patient&case=synthetic-06f32a47-3495-4a33-9050-e15956623531-05 200 in 72ms (compile: 1788537549.0s, render: 33ms)
+ GET /api/auth/session?view=patient 200 in 48ms
+ GET /api/auth/session?view=patient 200 in 22ms
+ GET /api/cases/synthetic-06f32a47-3495-4a33-9050-e15956623531-05 200 in 83ms
+ GET /?view=patient&case=synthetic-06f32a47-3495-4a33-9050-e15956623531-06 200 in 152ms (compile: 1788537549.1s, render: 52ms)
+ GET /?view=patient&case=synthetic-06f32a47-3495-4a33-9050-e15956623531-07 200 in 73ms (compile: 1788537549.0s, render: 35ms)
+ GET /api/auth/session?view=patient 200 in 45ms
+ GET /api/auth/session?view=patient 200 in 52ms
+ GET /?view=patient&case=synthetic-06f32a47-3495-4a33-9050-e15956623531-08 200 in 80ms (compile: 1788537549.0s, render: 40ms)
+ GET /api/auth/session?view=patient 200 in 52ms
+ GET /?view=patient&case=synthetic-06f32a47-3495-4a33-9050-e15956623531-09 200 in 78ms (compile: 1788537549.0s, render: 39ms)
+ GET /api/auth/session?view=patient 200 in 23ms
+ GET /api/cases/synthetic-06f32a47-3495-4a33-9050-e15956623531-09 200 in 19ms
+ GET /?view=patient&case=synthetic-06f32a47-3495-4a33-9050-e15956623531-10 200 in 70ms (compile: 1788537549.0s, render: 37ms)
+ GET /api/auth/session?view=patient 200 in 23ms
+ GET /api/cases/synthetic-06f32a47-3495-4a33-9050-e15956623531-10 200 in 24ms
+ GET /?view=patient&case=synthetic-06f32a47-3495-4a33-9050-e15956623531-11 200 in 75ms (compile: 1788537549.0s, render: 39ms)
+ GET /api/auth/session?view=patient 200 in 24ms
+ GET /api/cases/synthetic-06f32a47-3495-4a33-9050-e15956623531-11 200 in 29ms
+ GET /?view=patient&case=synthetic-06f32a47-3495-4a33-9050-e15956623531-12 200 in 72ms (compile: 1788537549.0s, render: 34ms)
+ GET /api/auth/session?view=patient 200 in 21ms
+ GET /api/cases/synthetic-06f32a47-3495-4a33-9050-e15956623531-12 200 in 25ms
+ GET /?view=patient&case=synthetic-06f32a47-3495-4a33-9050-e15956623531-01 200 in 55ms (compile: 1788537549.0s, render: 31ms)
+ GET /api/auth/session?view=patient 200 in 15ms
+ GET /api/cases/synthetic-06f32a47-3495-4a33-9050-e15956623531-01 200 in 22ms
+ GET /?view=patient&case=synthetic-06f32a47-3495-4a33-9050-e15956623531-02 200 in 50ms (compile: 1788537549.0s, render: 29ms)
+ GET /api/auth/session?view=patient 200 in 15ms
+ GET /api/cases/synthetic-06f32a47-3495-4a33-9050-e15956623531-02 200 in 14ms
+ GET /?view=patient&case=synthetic-06f32a47-3495-4a33-9050-e15956623531-03 200 in 51ms (compile: 1788537549.0s, render: 30ms)
+ GET /api/auth/session?view=patient 200 in 15ms
+ GET /api/cases/synthetic-06f32a47-3495-4a33-9050-e15956623531-03 200 in 21ms
+ GET /?view=patient&case=synthetic-06f32a47-3495-4a33-9050-e15956623531-04 200 in 67ms (compile: 1788537549.0s, render: 46ms)
+ GET /api/auth/session?view=patient 200 in 16ms
+ GET /api/cases/synthetic-06f32a47-3495-4a33-9050-e15956623531-04 200 in 24ms
+ GET /?view=patient&case=synthetic-06f32a47-3495-4a33-9050-e15956623531-05 200 in 68ms (compile: 1788537549.0s, render: 42ms)
+ GET /api/auth/session?view=patient 200 in 16ms
+ GET /api/cases/synthetic-06f32a47-3495-4a33-9050-e15956623531-05 200 in 110ms
+ GET /?view=patient&case=synthetic-06f32a47-3495-4a33-9050-e15956623531-06 200 in 62ms (compile: 1788537549.0s, render: 36ms)
+ GET /api/auth/session?view=patient 200 in 14ms
+ GET /api/cases/synthetic-06f32a47-3495-4a33-9050-e15956623531-06 200 in 21ms
+ GET /?view=patient&case=synthetic-06f32a47-3495-4a33-9050-e15956623531-07 200 in 50ms (compile: 1788537549.0s, render: 30ms)
+ GET /api/auth/session?view=patient 200 in 16ms
+ GET /api/cases/synthetic-06f32a47-3495-4a33-9050-e15956623531-07 200 in 14ms
+ GET /?view=patient&case=synthetic-06f32a47-3495-4a33-9050-e15956623531-08 200 in 48ms (compile: 1788537549.0s, render: 28ms)
+ GET /api/auth/session?view=patient 200 in 17ms
+ GET /api/cases/synthetic-06f32a47-3495-4a33-9050-e15956623531-08 200 in 13ms
+ GET /?view=patient&case=synthetic-06f32a47-3495-4a33-9050-e15956623531-09 200 in 47ms (compile: 1788537549.0s, render: 27ms)
+ GET /api/auth/session?view=patient 200 in 18ms
+ GET /api/cases/synthetic-06f32a47-3495-4a33-9050-e15956623531-09 200 in 14ms
+ GET /?view=patient&case=synthetic-06f32a47-3495-4a33-9050-e15956623531-10 200 in 49ms (compile: 1788537549.0s, render: 30ms)
+ GET /api/auth/session?view=patient 200 in 15ms
+ GET /api/cases/synthetic-06f32a47-3495-4a33-9050-e15956623531-10 200 in 16ms
+ GET /?view=patient&case=synthetic-06f32a47-3495-4a33-9050-e15956623531-11 200 in 46ms (compile: 1788537549.0s, render: 27ms)
+ GET /api/auth/session?view=patient 200 in 15ms
+ GET /api/cases/synthetic-06f32a47-3495-4a33-9050-e15956623531-11 200 in 19ms
+ GET /?view=patient&case=synthetic-06f32a47-3495-4a33-9050-e15956623531-12 200 in 68ms (compile: 1788537549.0s, render: 40ms)
+ GET /api/auth/session?view=patient 200 in 14ms
+ GET /api/cases/synthetic-06f32a47-3495-4a33-9050-e15956623531-12 200 in 22ms
+ GET /?view=patient&case=synthetic-06f32a47-3495-4a33-9050-e15956623531-05 200 in 54ms (compile: 1788537549.0s, render: 30ms)
+ GET /api/auth/session?view=patient 200 in 15ms
+ GET /api/cases/synthetic-06f32a47-3495-4a33-9050-e15956623531-05 200 in 77ms
+ GET /?view=patient&case=synthetic-06f32a47-3495-4a33-9050-e15956623531-09 200 in 51ms (compile: 1788537549.0s, render: 31ms)
+ GET /api/auth/session?view=patient 200 in 15ms
+ GET /api/cases/synthetic-06f32a47-3495-4a33-9050-e15956623531-09 200 in 15ms
+1:25:03 p. m. [vite] (rsc) hmr update /app/globals.css, /@id/__x00__virtual:vinext-rsc-entry
+1:25:03 p. m. [vite] (ssr) page reload app/operational-portal.tsx
+1:25:03 p. m. [vite] (client) hmr update /app/globals.css?direct, /app/operational-portal.tsx
+[vite] program reload
+[vite] hot updated:  virtual:vinext-rsc-entry
+1:26:46 p. m. [vite] (rsc) hmr update /app/globals.css
+1:26:46 p. m. [vite] (client) hmr update /app/globals.css?direct
+ GET / 200 in 1.5s (compile: 1788537549.9s, render: 595ms)
+ GET / 200 in 137ms (compile: 1788537549.0s, render: 100ms)
