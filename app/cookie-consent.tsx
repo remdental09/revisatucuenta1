@@ -42,6 +42,18 @@ function subscribeToStorage(onStoreChange: () => void) {
   return () => window.removeEventListener("storage", onStoreChange);
 }
 
+function subscribeToHydration() {
+  return () => {};
+}
+
+function getClientHydrationSnapshot() {
+  return true;
+}
+
+function getServerHydrationSnapshot() {
+  return false;
+}
+
 function getStoredPreferences() {
   try {
     return window.localStorage.getItem(STORAGE_KEY);
@@ -85,6 +97,7 @@ function CookieCategory({
 
 export function CookieConsent() {
   const storedPreferences = useSyncExternalStore(subscribeToStorage, getStoredPreferences, () => null);
+  const hydrated = useSyncExternalStore(subscribeToHydration, getClientHydrationSnapshot, getServerHydrationSnapshot);
   const [localPreferences, setLocalPreferences] = useState<CookiePreferences | undefined>(undefined);
   const preferences = localPreferences ?? parsePreferences(storedPreferences);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -111,7 +124,7 @@ export function CookieConsent() {
 
   return (
     <>
-      {!preferences && !settingsOpen && (
+      {hydrated && !preferences && !settingsOpen && (
         <aside className="cookie-banner" role="dialog" aria-label="Preferencias de cookies">
           <div className="cookie-banner-copy">
             <p className="cookie-kicker">Privacidad primero</p>
@@ -133,7 +146,7 @@ export function CookieConsent() {
         </aside>
       )}
 
-      {settingsOpen && (
+      {hydrated && settingsOpen && (
         <div className="cookie-overlay" role="presentation">
           <section className="cookie-dialog" role="dialog" aria-modal="true" aria-labelledby="cookie-dialog-title">
             <div className="cookie-dialog-header">
@@ -191,7 +204,7 @@ export function CookieConsent() {
         </div>
       )}
 
-      {preferences && (
+      {hydrated && preferences && (
         <button className="cookie-settings-launcher" type="button" onClick={openSettings}>
           Cookies
         </button>
