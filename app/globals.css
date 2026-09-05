@@ -472,8 +472,13 @@ button { cursor:pointer; }
   .home-space-brand .portal-brand-copy strong { font-size:14px; }
   .home-space-dev-link { font-size:9px; }
   .home-space-hero-content { padding-top:clamp(154px,25vh,220px); }
-  .home-space-hero h1 { font-size:clamp(57px,16vw,86px); letter-spacing:-4px; }
-  .home-space-hero-lead { max-width:460px; font-size:15px; }
+  .home-space-hero h1 { font-size:clamp(49px,13vw,70px); letter-spacing:-3.2px; }
+  .home-space-free-callout { max-width:100%; margin-top:16px; padding:8px 10px; font-size:11px; }
+  .home-space-actions { gap:13px; margin-top:18px; }
+  .home-space-actions .home-space-text-link { display:none; }
+  .home-space-primary { min-height:45px; padding:0 17px; }
+  .home-space-hero-lead { max-width:460px; margin-top:18px; font-size:14px; line-height:1.5; }
+  .home-space-microcopy { margin-top:15px; }
   .home-space-hero-media .home-film-media-label { right:17px; bottom:83px; }
   .home-space-hero-media .home-film-media-toggle { top:93px; right:17px; }
   .home-space-hero-foot { bottom:18px; }
