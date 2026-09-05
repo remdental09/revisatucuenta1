@@ -5,6 +5,7 @@ import Link from "next/link";
 
 const WHATSAPP_NUMBER = "56996963089";
 const WHATSAPP_BASE_URL = `https://wa.me/${WHATSAPP_NUMBER}`;
+const PATIENT_UPLOAD_URL = "https://revisatucuenta.cl/?view=patient";
 
 type Message = { id: number; role: "bot" | "patient"; text: string };
 type QuickAction = { label: string; action: string };
@@ -142,7 +143,7 @@ export function SupportChatbox() {
     if (action === "pam_yes") {
       setAnswers((current) => ({ ...current, pam: "Sí" }));
       return appendConversation(label, "Perfecto. Puedes cargar la cuenta detallada y el PAM desde el acceso seguro para iniciar una lectura preliminar.", [
-        { label: "Ir a subir mi cuenta", action: "upload_link" },
+        { label: "Subir mi cuenta", action: "upload_link" },
         { label: "Entender un resultado", action: "result" },
         { label: "Hablar con un humano", action: "human" },
       ]);
@@ -150,7 +151,7 @@ export function SupportChatbox() {
     if (action === "pam_no") {
       setAnswers((current) => ({ ...current, pam: "No" }));
       return appendConversation(label, "Puedes comenzar con la cuenta detallada. El análisis de coberturas quedará incompleto hasta que agregues el PAM.", [
-        { label: "Ir a subir mi cuenta", action: "upload_link" },
+        { label: "Subir mi cuenta", action: "upload_link" },
         { label: "Hablar con un humano", action: "human" },
       ]);
     }
@@ -260,7 +261,7 @@ export function SupportChatbox() {
           <div className="support-chat-actions">
             {quickActions.map((item) => (
               item.action === "upload_link" ? (
-                <Link className="support-chat-action" href="/?view=patient" key={item.action} aria-disabled={aiLoading}>{item.label} ↗</Link>
+                <Link className="support-chat-action" href={PATIENT_UPLOAD_URL} key={item.action} aria-disabled={aiLoading}>{item.label} ↗</Link>
               ) : (
                 <button className="support-chat-action" type="button" key={item.action} onClick={() => handleAction(item.action, item.label)} disabled={aiLoading}>{item.label}</button>
               )
