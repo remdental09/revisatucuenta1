@@ -47,6 +47,7 @@ export function SupportChatbox() {
   const [pendingQuestion, setPendingQuestion] = useState<PendingQuestion>("none");
   const [answers, setAnswers] = useState<Answers>({});
   const [humanRequested, setHumanRequested] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
   const messageId = useRef(2);
   const messagesEnd = useRef<HTMLDivElement>(null);
 
@@ -168,6 +169,45 @@ export function SupportChatbox() {
     }
   }
 
+  async function requestAiAnswer(text: string) {
+    const placeholderId = nextId();
+    const history = [
+      ...messages.map((message) => ({
+        role: message.role === "patient" ? "user" as const : "assistant" as const,
+        content: message.text,
+      })),
+      { role: "user" as const, content: text },
+    ].slice(-12);
+    setMessages((current) => [
+      ...current,
+      { id: nextId(), role: "patient", text },
+      { id: placeholderId, role: "bot", text: "Estoy revisando tu pregunta…" },
+    ]);
+    setQuickActions([]);
+    setAiLoading(true);
+    try {
+      const response = await fetch("/api/support-chat", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ messages: history }),
+      });
+      const payload = await response.json() as { message?: unknown; escalate?: unknown; error?: unknown };
+      if (!response.ok || typeof payload.message !== "string") throw new Error(typeof payload.error === "string" ? payload.error : "No se pudo responder.");
+      setMessages((current) => current.map((message) => message.id === placeholderId ? { ...message, text: payload.message as string } : message));
+      if (payload.escalate === true) setHumanRequested(true);
+      setQuickActions(payload.escalate === true
+        ? [{ label: "Volver al inicio", action: "reset" }]
+        : [{ label: "Hablar con un humano", action: "human" }, { label: "Volver al inicio", action: "reset" }]);
+    } catch {
+      setMessages((current) => current.map((message) => message.id === placeholderId
+        ? { ...message, text: "No pude responder en este momento. Puedes volver a intentarlo o hablar con una persona." }
+        : message));
+      setQuickActions([{ label: "Hablar con un humano", action: "human" }, { label: "Volver al inicio", action: "reset" }]);
+    } finally {
+      setAiLoading(false);
+    }
+  }
+
   function handleFreeText(value: string) {
     const text = value.trim();
     if (!text) return;
@@ -187,7 +227,7 @@ export function SupportChatbox() {
         { label: "Hablar con un humano", action: "human" },
       ]);
     }
-    return appendConversation(text, "Puedo orientarte sobre la cuenta detallada, el PAM, el resultado preliminar y la privacidad. Si prefieres, puedes hablar con un humano.", INITIAL_ACTIONS);
+    return void requestAiAnswer(text);
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -217,9 +257,9 @@ export function SupportChatbox() {
           <div className="support-chat-actions">
             {quickActions.map((item) => (
               item.action === "upload_link" ? (
-                <Link className="support-chat-action" href="/?view=patient" key={item.action}>{item.label} ↗</Link>
+                <Link className="support-chat-action" href="/?view=patient" key={item.action} aria-disabled={aiLoading}>{item.label} ↗</Link>
               ) : (
-                <button className="support-chat-action" type="button" key={item.action} onClick={() => handleAction(item.action, item.label)}>{item.label}</button>
+                <button className="support-chat-action" type="button" key={item.action} onClick={() => handleAction(item.action, item.label)} disabled={aiLoading}>{item.label}</button>
               )
             ))}
           </div>
@@ -229,8 +269,8 @@ export function SupportChatbox() {
             </a>
           )}
           <form className="support-chat-form" onSubmit={handleSubmit}>
-            <input aria-label="Escribe tu pregunta" value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Escribe tu pregunta" />
-            <button type="submit" aria-label="Enviar pregunta">Enviar</button>
+            <input aria-label="Escribe tu pregunta" value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Escribe tu pregunta" disabled={aiLoading} />
+            <button type="submit" aria-label="Enviar pregunta" disabled={aiLoading}>{aiLoading ? "…" : "Enviar"}</button>
           </form>
           <p className="support-chat-note">Orientación general. No compartas RUN ni documentos en este chat.</p>
         </section>
