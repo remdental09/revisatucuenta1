@@ -56,6 +56,11 @@ export type ChileanBillingLine = {
   confidence?: number;
   sourceText?: string;
   sourceRegion?: string;
+  assistedBy?: "openai_vision";
+  assistConfidence?: number;
+  originalDescription?: string;
+  originalCode?: string;
+  originalAmount?: number;
 };
 
 export type InclusionKnowledge = {
@@ -125,6 +130,43 @@ export type AccountAnomaly = {
   explanation: string;
 };
 
+export type PamTraceabilityStatus =
+  | "not_available"
+  | "insufficient_evidence"
+  | "review_required"
+  | "consistent";
+
+export type PamTraceabilityFinding = {
+  id:
+    | "PAM-DIRECT-MATCH-001"
+    | "PAM-BUNDLED-COMPONENT-001"
+    | "PAM-EXCLUSION-UNEXPLAINED-001"
+    | "PAM-TOTAL-DIFFERENCE-001"
+    | "PAM-NOT-EVALUABLE-001";
+  status: "informational" | "review" | "not_evaluable";
+  title: string;
+  explanation: string;
+  accountLineIds: string[];
+  pamLineIds: string[];
+  amount: number | null;
+  confidence: number;
+  missingEvidence: string[];
+};
+
+export type PamTraceability = {
+  status: PamTraceabilityStatus;
+  summary: string;
+  patientMessage: string;
+  accountTotal: number | null;
+  pamTotal: number | null;
+  totalDifference: number | null;
+  directMatchCount: number;
+  bundledComponentCount: number;
+  unexplainedExclusionCount: number;
+  findings: PamTraceabilityFinding[];
+  limitations: string[];
+};
+
 export type ClinicalAccountAnalysis = {
   version: string;
   claimFramework: ClaimFramework;
@@ -156,6 +198,7 @@ export type ClinicalAccountAnalysis = {
     status: "not_registered" | "pending_review" | "validated" | "rejected";
     message: string;
   };
+  pamTraceability?: PamTraceability;
   llmAssist?: LlmClinicalAnalysisAssist;
   limitations: string[];
 };
@@ -1178,10 +1221,188 @@ function buildReasoningFindings(lines: ChileanBillingLine[]): ReasoningFinding[]
   return findings;
 }
 
+type PamReconciliationOptions = {
+  pamLines?: ChileanBillingLine[];
+  accountTotal?: number;
+  pamTotal?: number;
+};
+
+const PAM_EXCLUSION_MARKERS = /no cubiert|no bonif|sin cobertura|rechaz|exclu|pna|gnc|fuera de plan/;
+
+function pamLineText(line: ChileanBillingLine) {
+  return normalize(`${line.code ?? ""} ${line.fonasaCode ?? ""} ${line.description} ${line.section ?? ""} ${line.subgroup ?? ""}`);
+}
+
+function pamLooksLikeCoverageExclusion(line: ChileanBillingLine) {
+  return PAM_EXCLUSION_MARKERS.test(pamLineText(line));
+}
+
+function pamLooksLikePrincipalLine(line: ChileanBillingLine) {
+  const text = pamLineText(line);
+  return looksLikePrincipalProcedure(line) || /hospitalizacion|dia cama|pabellon|cirugia|procedimiento|prestacion integral|paquete|programa/.test(text);
+}
+
+function sharedDescriptionScore(accountLine: ChileanBillingLine, pamLine: ChileanBillingLine) {
+  const accountCode = normalize(`${accountLine.code ?? ""} ${accountLine.fonasaCode ?? ""}`).trim();
+  const pamCode = normalize(`${pamLine.code ?? ""} ${pamLine.fonasaCode ?? ""}`).trim();
+  if (accountCode && pamCode && accountCode === pamCode) return 1;
+
+  const left = new Set(pamLineText(accountLine).split(" ").filter((token) => token.length >= 4));
+  const right = new Set(pamLineText(pamLine).split(" ").filter((token) => token.length >= 4));
+  if (!left.size || !right.size) return 0;
+  const intersection = [...left].filter((token) => right.has(token)).length;
+  const union = new Set([...left, ...right]).size;
+  const score = union ? intersection / union : 0;
+  return score >= 0.55 || (intersection >= 2 && score >= 0.35) ? score : 0;
+}
+
+function reconcileAccountWithPam(
+  accountLines: ChileanBillingLine[],
+  knowledge: InclusionKnowledge[],
+  options: PamReconciliationOptions,
+): PamTraceability {
+  const pamLines = options.pamLines ?? [];
+  const accountTotal = Number.isFinite(options.accountTotal) ? Math.round(options.accountTotal as number) : null;
+  const pamTotal = Number.isFinite(options.pamTotal) ? Math.round(options.pamTotal as number) : null;
+  if (!pamLines.length && pamTotal === null) {
+    return {
+      status: "not_available",
+      summary: "No se cargó un PAM con líneas legibles; la cobertura queda pendiente de conciliación.",
+      patientMessage: "Todavía no podemos comparar la cuenta con el PAM. Puedes agregarlo después para revisar coberturas y copagos.",
+      accountTotal,
+      pamTotal,
+      totalDifference: null,
+      directMatchCount: 0,
+      bundledComponentCount: 0,
+      unexplainedExclusionCount: 0,
+      findings: [{
+        id: "PAM-NOT-EVALUABLE-001",
+        status: "not_evaluable",
+        title: "Conciliación Cuenta–PAM pendiente",
+        explanation: "No hay líneas o total del PAM suficientes para comparar la cuenta clínica.",
+        accountLineIds: accountLines.map((line) => line.id),
+        pamLineIds: [],
+        amount: null,
+        confidence: 0.98,
+        missingEvidence: ["PAM o liquidación legible", "Plan de salud y arancel aplicables"],
+      }],
+      limitations: ["La ausencia del PAM no permite concluir si una diferencia corresponde a cobertura, copago, exclusión o agrupación de prestaciones."],
+    };
+  }
+
+  const findings: PamTraceabilityFinding[] = [];
+  let directMatchCount = 0;
+  let bundledComponentCount = 0;
+  let unexplainedExclusionCount = 0;
+  const principalPamLines = pamLines.filter(pamLooksLikePrincipalLine);
+  const exclusionPamLines = pamLines.filter(pamLooksLikeCoverageExclusion);
+
+  for (const accountLine of accountLines) {
+    const matches = pamLines
+      .map((pamLine) => ({ pamLine, score: sharedDescriptionScore(accountLine, pamLine) }))
+      .filter(({ score }) => score > 0)
+      .sort((left, right) => right.score - left.score);
+    const direct = matches[0];
+    if (direct && (direct.score >= 0.55 || (accountLine.code && direct.score === 1))) {
+      directMatchCount += 1;
+      continue;
+    }
+
+    const candidates = scoreLine(accountLine, accountLines, knowledge)
+      .filter((candidate) => candidate.probability >= 0.7 && candidate.bundle !== "unassigned" && candidate.bundle !== "professional_fees")
+      .sort((left, right) => right.probability - left.probability);
+    const candidate = candidates[0];
+    if (!candidate) continue;
+
+    const accountHasPrincipal = accountLines.some((line) => line.id !== accountLine.id && looksLikePrincipalProcedure(line));
+    const hasPamContext = principalPamLines.length > 0 || pamTotal !== null;
+    const relatedExclusion = exclusionPamLines.find((pamLine) => {
+      const score = sharedDescriptionScore(accountLine, pamLine);
+      return score > 0 || pamLineText(pamLine).includes(normalize(accountLine.section ?? ""));
+    });
+
+    if (relatedExclusion || (accountHasPrincipal && hasPamContext)) {
+      const probableBundling = Boolean(accountHasPrincipal && hasPamContext);
+      if (probableBundling) bundledComponentCount += 1;
+      if (relatedExclusion) unexplainedExclusionCount += 1;
+      findings.push({
+        id: relatedExclusion ? "PAM-EXCLUSION-UNEXPLAINED-001" : "PAM-BUNDLED-COMPONENT-001",
+        status: "review",
+        title: relatedExclusion ? "Cargo separado con cobertura no explicada" : "Componente posiblemente agrupado en una prestación principal",
+        explanation: relatedExclusion
+          ? `La cuenta individualiza “${accountLine.description}”, mientras el PAM contiene una glosa de exclusión, no bonificación o rechazo que no explica por sí sola la relación con la prestación principal.`
+          : `La cuenta individualiza “${accountLine.description}” y el episodio también contiene una prestación principal. El PAM no muestra una coincidencia directa suficiente; debe verificarse si el componente está comprendido en el bloque o si existe una regla que autoriza cobrarlo por separado.`,
+        accountLineIds: [accountLine.id],
+        pamLineIds: relatedExclusion ? [relatedExclusion.id] : principalPamLines.slice(0, 3).map((line) => line.id),
+        amount: accountLine.amount,
+        confidence: Math.min(0.92, Math.max(candidate.probability, relatedExclusion ? 0.72 : 0.68)),
+        missingEvidence: [
+          "Plan y contrato aplicables al episodio",
+          "Arancel o convenio que indique la composición de la prestación",
+          "Desglose o explicación escrita del PAM y de la Isapre",
+        ],
+      });
+    }
+  }
+
+  const totalDifference = accountTotal !== null && pamTotal !== null && accountTotal !== pamTotal
+    ? accountTotal - pamTotal
+    : null;
+  if (totalDifference !== null) {
+    const accountTotalValue = accountTotal as number;
+    const pamTotalValue = pamTotal as number;
+    findings.push({
+      id: "PAM-TOTAL-DIFFERENCE-001",
+      status: "review",
+      title: "Diferencia entre totales de los documentos",
+      explanation: `La cuenta informa ${accountTotalValue.toLocaleString("es-CL")} y el PAM informa ${pamTotalValue.toLocaleString("es-CL")}. La diferencia puede corresponder a bonificación, copago, topes o conceptos excluidos; requiere conciliación y no demuestra por sí sola un cobro improcedente.`,
+      accountLineIds: [],
+      pamLineIds: [],
+      amount: Math.abs(totalDifference),
+      confidence: 0.99,
+      missingEvidence: ["Detalle de bonificación, copago y conceptos no cubiertos", "Plan y arancel aplicables"],
+    });
+  }
+
+  const reviewCount = findings.filter((finding) => finding.status === "review").length;
+  const status: PamTraceabilityStatus = reviewCount
+    ? "review_required"
+    : directMatchCount
+      ? "consistent"
+      : "insufficient_evidence";
+  const summary = status === "review_required"
+    ? `Se detectaron ${reviewCount} punto(s) que requieren conciliar la cuenta con el PAM.`
+    : status === "consistent"
+      ? "Se encontraron coincidencias entre las líneas disponibles de la cuenta y el PAM; la revisión contractual sigue siendo necesaria."
+      : "Hay un PAM disponible, pero las líneas extraídas no permiten establecer una relación suficiente con la cuenta.";
+  return {
+    status,
+    summary,
+    patientMessage: status === "review_required"
+      ? `Encontramos ${reviewCount} punto(s) que conviene revisar entre tu cuenta y el PAM. Algunos cargos podrían estar agrupados en una prestación mayor o tener una explicación de cobertura que no aparece con suficiente detalle. Esto no confirma por sí solo un cobro incorrecto.`
+      : status === "consistent"
+        ? "Las líneas disponibles de tu cuenta y tu PAM presentan coincidencias. La cobertura final depende de tu plan, arancel, topes y antecedentes del episodio."
+        : "Recibimos el PAM, pero su información no permite relacionar todos los cargos con suficiente claridad. Podemos solicitar un desglose o antecedente adicional.",
+    accountTotal,
+    pamTotal,
+    totalDifference,
+    directMatchCount,
+    bundledComponentCount,
+    unexplainedExclusionCount,
+    findings,
+    limitations: [
+      "Una glosa de no cobertura, rechazo o exclusión no demuestra por sí sola que el cargo sea improcedente.",
+      "La detección de un posible componente agrupado es una señal de revisión y requiere plan, arancel, convenio y respuesta escrita.",
+      "El resultado no sustituye la revisión humana ni determina automáticamente una devolución o cobertura.",
+    ],
+  };
+}
+
 export function analyzeClinicalAccount(
   lines: ChileanBillingLine[],
   knowledge: InclusionKnowledge[] = DEFAULT_CHILEAN_INCLUSION_KNOWLEDGE,
   corpus: ObservedCorpus = OBSERVED_CHILEAN_ACCOUNT_CORPUS,
+  pamOptions: PamReconciliationOptions = {},
 ): ClinicalAccountAnalysis {
   const functionalEquivalenceAlerts = findFunctionalEquivalenceAlerts(lines, 4, corpus);
   const accountSignals = detectAccountStructuralSignals(lines);
@@ -1210,6 +1431,7 @@ export function analyzeClinicalAccount(
       patternCount: corpus.patternCount,
       learningBoundary: corpus.learningBoundary,
     },
+    pamTraceability: reconcileAccountWithPam(lines, knowledge, pamOptions),
     limitations: [
       "La probabilidad expresa pertenencia plausible a una prestación principal; no prueba por sí sola un cobro improcedente.",
       "El Apéndice del Anexo N.º 4 contiene una lista amplia de categorías de pabellón, pero no resuelve por sí solo toda marca, presentación, implante o condición contractual.",
@@ -1220,9 +1442,8 @@ export function analyzeClinicalAccount(
       "La jurisprudencia sobre codificación, integralidad, exclusiones, información y presupuestos se usa como regla de control y solicitud de evidencia, no como presunción automática de cobertura.",
       "Las alertas de equivalencia funcional recorren el corpus observado completo y agrupan productos por función clínica, no sólo por glosa, marca o código. El nivel alto/medio/contexto orienta la revisión y no reemplaza el registro de uso.",
       "Una alerta puede apuntar a más de un destino funcional (por ejemplo, vía venosa y medicamento hospitalizado); el motor no suma esos destinos ni los convierte automáticamente en monto recuperable.",
-      "La fase de cuenta clínica debe completarse antes de incorporar PAM, bonificación, copago o rechazo de la Isapre.",
-      "El PAM o programa de atención médica informa cobertura, bonificación, copago y rechazos; no desglosa por sí solo la cuenta ni determina una desfragmentación. La cuenta clínica es la fuente primaria para esa hipótesis.",
-      "Una conciliación posterior puede comparar cuenta y PAM, pero no debe reescribir ni ocultar el análisis independiente de ninguna de las dos fuentes.",
+      "La conciliación Cuenta–PAM identifica relaciones y diferencias para revisión; no convierte una exclusión, rechazo o diferencia de total en una conclusión automática.",
+      "El PAM puede agrupar o resumir prestaciones. La trazabilidad exige conservar la cuenta, el PAM, el plan, el arancel y la explicación de cobertura como fuentes separadas.",
     ],
   };
 }

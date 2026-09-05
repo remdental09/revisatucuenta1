@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { extractHealthcareDocument, extractionErrorMessage, prepareVisionPageImages } from "../lib/extraction/client";
 import { CURRENT_READER_VERSION, type DocumentExtraction, type ReaderAssistResponse, type VisionAssistResponse } from "../lib/extraction/types";
 import { assessExtractionQuality, buildReaderChangeProposal, buildReaderReviewPackage, readerChangeProposalToMarkdown, readerReviewPackageToMarkdown } from "../lib/extraction/reader-quality";
-import type { ClinicalAccountAnalysis, ChileanBillingLine, InclusionCandidate } from "../lib/rules/chilean-account";
+import type { ClinicalAccountAnalysis, ChileanBillingLine, InclusionCandidate, PamTraceability } from "../lib/rules/chilean-account";
 import type { FunctionalEquivalenceAlert } from "../lib/rules/observed-corpus";
 import { generateClarificationClaimMarkdown } from "../lib/claims/claim-generator";
 import { compareChileanRun, normalizeChileanRun } from "../lib/identity/chilean-run";
@@ -568,7 +568,7 @@ async function replaceAccountDocument(caseId: string, previous: CaseDocument, fi
   }
 }
 
-async function analyzeCase(caseId: string, document?: CaseDocument, episodeLabel?: string) {
+async function analyzeCase(caseId: string, document?: CaseDocument, episodeLabel?: string, pamDocument?: CaseDocument) {
   if (extractionNeedsRefresh(document)) {
     throw new Error("La cuenta fue leída con una versión anterior. Reemplaza la cuenta clínica para aplicar el lector actualizado.");
   }
@@ -580,6 +580,13 @@ async function analyzeCase(caseId: string, document?: CaseDocument, episodeLabel
   if (!lines.length) throw new Error("La cuenta no tiene líneas extraídas para analizar");
   const totalField = document?.extraction?.account?.fields.find((field) => field.key === "total");
   const printedTotal = totalField ? Number(totalField.value.replace(/[^0-9-]/g, "")) : undefined;
+  const pamLines: ChileanBillingLine[] = pamDocument?.extraction?.pam?.lines.map((line, index) => ({
+    ...line,
+    id: `${pamDocument.id}-${index}`,
+    documentId: pamDocument.id,
+  })) ?? [];
+  const pamTotalField = pamDocument?.extraction?.pam?.fields.find((field) => field.key === "billed_total");
+  const pamPrintedTotal = pamTotalField ? Number(pamTotalField.value.replace(/[^0-9-]/g, "")) : undefined;
   const response = await fetch("/api/analysis", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -587,8 +594,10 @@ async function analyzeCase(caseId: string, document?: CaseDocument, episodeLabel
       caseId,
       episodeLabel,
       lines,
+      pamLines,
       readerAssessment: document?.extraction?.readerAssessment,
       printedTotal: Number.isFinite(printedTotal) ? printedTotal : undefined,
+      pamPrintedTotal: Number.isFinite(pamPrintedTotal) ? pamPrintedTotal : undefined,
     }),
   });
   if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || "No se pudo analizar la cuenta");
@@ -1215,7 +1224,7 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
       setStage(simulatedProgress < 35 ? "Ordenando los documentos" : simulatedProgress < 65 ? "Revisando los cargos" : "Preparando el resultado");
     }, 180);
     try {
-      const analysis = await analyzeCase(caseId, accountDoc(snapshot), snapshot.case.episodeLabel);
+      const analysis = await analyzeCase(caseId, accountDoc(snapshot), snapshot.case.episodeLabel, pamDoc(snapshot));
       setSnapshot((current) => current ? {
         ...current,
         analysis,
@@ -1300,7 +1309,7 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
     <header className="patient-topbar patient-space-topbar"><PortalBrand href="/"/><div className="patient-topbar-right"><span className="surface-pill patient-pill">Vista paciente</span><span className="avatar">{snapshot.case.patientName.slice(0, 2).toUpperCase()}</span><span className="patient-email">{user.email}</span><a className="patient-signout-button" href={signOutHref(user)} aria-label="Cerrar sesión">Cerrar sesión</a></div></header>
     <div className="patient-layout"><aside className="patient-sidebar"><div className="case-mini"><span className="case-icon">⌁</span><div><small>CASO ACTIVO</small><b>{snapshot.case.patientName}</b><span>RUN {snapshot.case.patientRun || "No informado"}</span><span>Caso {caseId.slice(0, 8)}</span></div></div><nav className="patient-nav">{(["Resumen", "Documentos", "Actividad"] as const).map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item}</button>)}</nav><div className="patient-sidebar-help"><span>?</span><div><b>¿Necesitas ayuda?</b><small>Escríbenos sobre tu caso.</small></div></div></aside>
       <section className="patient-main patient-space-main"><div className="patient-heading patient-space-heading"><div><p className="portal-kicker">Mi revisión</p><h1>Hola, {firstName}.</h1><p>{snapshot.case.episodeLabel}</p><div className="patient-identity-summary"><span>Paciente</span><strong>{snapshot.case.patientName}</strong><small>RUN {snapshot.case.patientRun || "No informado"}</small></div></div><span className="case-status"><i /> {patientStatus}</span></div>
-         {tab === "Resumen" && <PatientSummary account={account} pam={pam} reviewAmount={patientReviewAmount} irregularityCount={patientReviewLines.length} analysisAvailable={Boolean(patientAnalysis)} analysisRunning={status === "running"} progress={progress} stage={stage} contract={snapshot.contract} busy={busy} runVerification={runVerification} readerReviewRequired={Boolean(runVerification !== "matched" || readerNeedsRefresh || account?.processingStatus === "failed" || account?.processingStatus === "review_required" || (readerAssessment && readerAssessment.status !== "ready"))} readerChangeNeeded={!patientCanAnalyze} onAccount={() => accountInputRef.current?.click()} onPam={() => inputRef.current?.click()} onAnalyze={() => void runAnalysis()} onOpenContract={() => void openContract()} contractBusy={contractBusy} />}
+         {tab === "Resumen" && <PatientSummary account={account} pam={pam} pamTraceability={patientAnalysis?.pamTraceability} reviewAmount={patientReviewAmount} irregularityCount={patientReviewLines.length} analysisAvailable={Boolean(patientAnalysis)} analysisRunning={status === "running"} progress={progress} stage={stage} contract={snapshot.contract} busy={busy} runVerification={runVerification} readerReviewRequired={Boolean(runVerification !== "matched" || readerNeedsRefresh || account?.processingStatus === "failed" || account?.processingStatus === "review_required" || (readerAssessment && readerAssessment.status !== "ready"))} readerChangeNeeded={!patientCanAnalyze} onAccount={() => accountInputRef.current?.click()} onPam={() => inputRef.current?.click()} onAnalyze={() => void runAnalysis()} onOpenContract={() => void openContract()} contractBusy={contractBusy} />}
         {tab === "Documentos" && <PatientDocuments snapshot={snapshot} deletingDocumentId={deletingDocumentId} onAccount={() => accountInputRef.current?.click()} onPam={() => inputRef.current?.click()} onDelete={(document) => void removeDocument(document)} />}
         {tab === "Actividad" && <PatientActivity activities={snapshot.activities} />}
       </section></div>
@@ -1333,7 +1342,7 @@ function PatientDocumentOrbit({ amount, label }: { amount: number; label: string
   </div>;
 }
 
-function PatientSummary({ account, pam, reviewAmount, irregularityCount, analysisAvailable, analysisRunning, progress, stage, contract, busy, runVerification, readerReviewRequired, readerChangeNeeded, onAccount, onPam, onAnalyze, onOpenContract, contractBusy }: { account?: CaseDocument; pam?: CaseDocument; reviewAmount: number; irregularityCount: number; analysisAvailable: boolean; analysisRunning: boolean; progress: number; stage: string; contract?: ServiceContract; busy: boolean; runVerification: "matched" | "mismatch" | "unavailable"; readerReviewRequired: boolean; readerChangeNeeded: boolean; onAccount: () => void; onPam: () => void; onAnalyze: () => void; onOpenContract: () => void; contractBusy: boolean }) {
+function PatientSummary({ account, pam, pamTraceability, reviewAmount, irregularityCount, analysisAvailable, analysisRunning, progress, stage, contract, busy, runVerification, readerReviewRequired, readerChangeNeeded, onAccount, onPam, onAnalyze, onOpenContract, contractBusy }: { account?: CaseDocument; pam?: CaseDocument; pamTraceability?: PamTraceability; reviewAmount: number; irregularityCount: number; analysisAvailable: boolean; analysisRunning: boolean; progress: number; stage: string; contract?: ServiceContract; busy: boolean; runVerification: "matched" | "mismatch" | "unavailable"; readerReviewRequired: boolean; readerChangeNeeded: boolean; onAccount: () => void; onPam: () => void; onAnalyze: () => void; onOpenContract: () => void; contractBusy: boolean }) {
   const accountReceived = Boolean(account);
   const pamReceived = Boolean(pam);
   const documentsReceived = accountReceived || pamReceived;
@@ -1398,6 +1407,7 @@ function PatientSummary({ account, pam, reviewAmount, irregularityCount, analysi
           <div><span className="card-kicker">{hasIrregularities ? "MONTO APROXIMADO A REVISAR" : "MONTO APROXIMADO IDENTIFICADO"}</span><strong>{money(reviewAmount)}</strong></div>
           <p>{hasIrregularities ? `El monto se relaciona con ${irregularityLabel} que conviene revisar. Es una estimación preliminar y no garantiza una devolución.` : "No identificamos un monto asociado a cargos que requieran revisión con la información disponible."}</p>
         </div>
+        {pamTraceability && <PatientPamTraceability trace={pamTraceability} accountReceived={accountReceived} pamReceived={pamReceived} />}
         {hasIrregularities && reviewAmount > 0 && <section className="patient-advisory-card">
           <div><span className="card-kicker">ASESORÍA ESPECIALIZADA</span><h3>Revisa tu cuenta con Rakun</h3><p>Lee el contrato completo, autoriza de forma separada el tratamiento de tus datos de salud y el mandato limitado, y luego continúa al pago de demostración. El preinforme es preliminar y no garantiza una devolución.</p></div>
           {contract?.status === "accepted" || contract?.status === "paid_demo" ? <div className="patient-advisory-confirmed"><b>{contract.status === "paid_demo" ? "Pago de prueba registrado" : "Contrato aceptado"}</b><small>{contract.status === "paid_demo" ? "No se realizó ningún cobro real." : "Tu contrato quedó guardado para esta revisión."}</small>{contract.paymentUrl && <a href={contract.paymentUrl} target="_blank" rel="noreferrer">{contract.status === "paid_demo" ? "Abrir comprobante de prueba →" : "Continuar al pago de prueba →"}</a>}</div> : <button className="portal-button portal-button-primary" onClick={onOpenContract} disabled={busy || contractBusy}>{contractBusy ? "Cargando contrato…" : "Leer contrato y continuar"} →</button>}
@@ -1407,6 +1417,21 @@ function PatientSummary({ account, pam, reviewAmount, irregularityCount, analysi
     </section>
     <section className="patient-card next-card"><span className="card-kicker">SIGUIENTE PASO</span><h2>{runVerification !== "matched" ? "Verifica el RUN de la cuenta" : analysisAvailable ? hasIrregularities ? "Revisa los cargos observados" : "Resultado de la revisión" : accountReceived ? "Obtén el resultado de tu cuenta" : pamReceived ? "Falta la cuenta clínica" : "Completa tus documentos"}</h2><p>{runVerification !== "matched" ? "Carga la cuenta correcta o solicita una revisión para comprobar que el documento corresponde a tus datos." : analysisAvailable ? hasIrregularities ? "Encontramos posibles irregularidades y te mostramos el monto aproximado asociado. Puedes solicitar una propuesta de asesoría para revisar los antecedentes." : "Con la información disponible no encontramos cargos que requieran revisión." : documentsReceived ? "Carga la cuenta clínica para obtener el resultado y el monto aproximado de la revisión." : "Carga la cuenta clínica para obtener el resultado de la revisión."}</p></section>
   </>;
+}
+
+function PatientPamTraceability({ trace, accountReceived, pamReceived }: { trace: PamTraceability; accountReceived: boolean; pamReceived: boolean }) {
+  const reviewFindings = trace.findings.filter((finding) => finding.status === "review").slice(0, 3);
+  const pamLabel = !pamReceived || trace.status === "not_available" ? "Pendiente" : trace.status === "consistent" ? "Conciliado" : trace.status === "review_required" ? "Requiere revisión" : "Información insuficiente";
+  return <section className="patient-pam-traceability">
+    <div className="patient-pam-trace-head"><div><span className="card-kicker">CÓMO LLEGAMOS AL RESULTADO</span><h3>Cuenta clínica y PAM</h3></div><span className={`patient-pam-trace-status ${trace.status}`}>{pamLabel}</span></div>
+    <div className="patient-pam-trace-flow" aria-label="Flujo de documentos y cobertura">
+      <div className={accountReceived ? "complete" : ""}><i>1</i><span>Cuenta clínica</span><small>{accountReceived ? "Recibida" : "Pendiente"}</small></div>
+      <div className={pamReceived ? "complete" : ""}><i>2</i><span>PAM</span><small>{pamReceived ? "Recibido" : "Puedes agregarlo después"}</small></div>
+      <div className={trace.status === "review_required" || trace.status === "consistent" ? "complete" : "current"}><i>3</i><span>Comparación</span><small>{pamLabel}</small></div>
+    </div>
+    <p>{trace.patientMessage}</p>
+    {reviewFindings.length > 0 && <div className="patient-pam-trace-findings">{reviewFindings.map((finding) => <article key={`${finding.id}-${finding.accountLineIds.join("-")}`}><b>{finding.title}</b><small>{finding.explanation}</small></article>)}</div>}
+  </section>;
 }
 
 function PatientContractModal({ contract, busy, error, onClose, onAccept }: { contract?: ServiceContract; busy: boolean; error: string; onClose: () => void; onAccept: (input: { contractVersion: string; acceptedTerms: boolean; dataConsent: boolean; mandateConsent: boolean; signerName: string }) => void }) {
@@ -1628,7 +1653,7 @@ function AuthenticatedDeveloperPortal({ initialCaseId = "", user }: { initialCas
   const [visionAssistBusy, setVisionAssistBusy] = useState(false);
   const [visionAssistResponse, setVisionAssistResponse] = useState<VisionAssistResponse>();
   const [visionAssistDocumentId, setVisionAssistDocumentId] = useState("");
-  const sourceFileRef = useRef<{ documentId: string; file: File }>();
+  const sourceFileRef = useRef<{ documentId: string; file: File } | undefined>(undefined);
   const [pendingUpload, setPendingUpload] = useState<PendingUpload>();
   // A clean developer entry must never open an existing case implicitly.
   // Cases remain available through an explicit `?case=` link or by creating a
@@ -1737,7 +1762,7 @@ function AuthenticatedDeveloperPortal({ initialCaseId = "", user }: { initialCas
       setAnalysisStage(simulatedProgress < 35 ? "Ordenando las líneas" : simulatedProgress < 65 ? "Revisando los cargos" : "Preparando la matriz");
     }, 180);
     try {
-      const analysis = await analyzeCase(selected, accountDoc(snapshot), snapshot.case.episodeLabel);
+      const analysis = await analyzeCase(selected, accountDoc(snapshot), snapshot.case.episodeLabel, pamDoc(snapshot));
       setSnapshot((current) => current ? {
         ...current,
         analysis,
@@ -2008,10 +2033,17 @@ function AccountStructurePanel({ analysis }: { analysis: ClinicalAccountAnalysis
   return <section className="account-structure-panel"><div className="precedent-projection-head"><div><span className="card-kicker">ESTRUCTURA DE LA CUENTA</span><h3>Paquetes, valores cero y trazabilidad</h3><p>Señales contables para solicitar composición, uso y fundamento del cobro separado.</p></div><div className="developer-analysis-badges"><span>{signals.length} señales</span><span>{signals.filter((signal) => signal.severity === "high").length} prioritarias</span></div></div><div className="functional-equivalence-summary"><strong>Cómo leerlas</strong><p>Un valor cero puede indicar inclusión en un paquete; una señal de itemización selectiva no prueba intención ni devolución.</p></div><div className="account-structure-list">{signals.slice(0, 18).map((signal) => <article key={signal.id}><div><span className={`functional-alert-level ${signal.severity === "high" ? "high" : signal.severity === "review" ? "medium" : "context"}`}>{signal.severity === "high" ? "Prioritaria" : signal.severity === "review" ? "Revisar" : "Informativa"}</span><b>{signal.title}</b></div><p>{signal.summary}</p><small><strong>Evidencia:</strong> {signal.evidenceToRequest.join(" · ")}</small></article>)}</div>{signals.length > 18 && <p className="developer-detail-foot">Se muestran 18 señales; la exportación conserva todas.</p>}</section>;
 }
 
+function DeveloperPamTraceabilityPanel({ trace }: { trace?: PamTraceability }) {
+  if (!trace) return null;
+  const reviewFindings = trace.findings.filter((finding) => finding.status === "review");
+  const statusLabel = trace.status === "not_available" ? "PAM pendiente" : trace.status === "consistent" ? "Coincidencias encontradas" : trace.status === "review_required" ? "Requiere conciliación" : "Evidencia insuficiente";
+  return <section className="developer-pam-traceability"><div className="precedent-projection-head"><div><span className="card-kicker">MOTOR CUENTA–PAM</span><h3>Trazabilidad de cobertura</h3><p>{trace.summary}</p></div><div className="developer-analysis-badges"><span>{statusLabel}</span><span>{trace.bundledComponentCount} posibles agrupaciones</span></div></div><div className="developer-detail-metrics"><article><b>{trace.directMatchCount}</b><small>Coincidencias directas</small></article><article><b>{trace.bundledComponentCount}</b><small>Componentes agrupados</small></article><article><b>{trace.unexplainedExclusionCount}</b><small>Exclusiones no explicadas</small></article><article><b>{trace.totalDifference === null ? "—" : money(Math.abs(trace.totalDifference))}</b><small>Diferencia de totales</small></article></div>{reviewFindings.length > 0 && <div className="pam-traceability-findings">{reviewFindings.slice(0, 12).map((finding) => <article key={`${finding.id}-${finding.accountLineIds.join("-")}`}><div><span>{Math.round(finding.confidence * 100)}%</span><b>{finding.title}</b></div><p>{finding.explanation}</p><small><strong>Falta:</strong> {finding.missingEvidence.join(" · ")}</small></article>)}</div>}<p className="developer-detail-foot">Estas señales son hipótesis de conciliación. No convierten una exclusión, diferencia o agrupación en una conclusión automática de cobro improcedente.</p></section>;
+}
+
 function DeveloperAnalysisDetail({ analysis }: { analysis: ClinicalAccountAnalysis }) {
   const rows = analysis.lineAssessments.filter((item) => !/bonificacion|copago|liquidacion|pam|ajuste/i.test(`${item.line.description} ${item.line.section || ""}`));
   const candidates = rows.filter((item) => Boolean(bestCombinedCandidate(analysis, item)));
-  return <section className="developer-analysis-detail"><div className="developer-analysis-detail-head"><div><span className="card-kicker">ANÁLISIS DEL PRESTADOR</span><h3>Hipótesis técnicas trazables</h3><p>Estos resultados combinan reglas auditables y una segunda lectura semántica. Requieren contraste contractual y documental.</p></div><div className="developer-analysis-badges"><span>{rows.length} líneas en foco</span><span>{analysis.functionalEquivalenceAlerts?.length ?? 0} alertas funcionales</span></div></div><div className="developer-detail-metrics"><article><b>{rows.length}</b><small>Líneas en foco</small></article><article><b>{candidates.length}</b><small>Con hipótesis combinada</small></article><article><b>{money(candidates.reduce((sum, item) => sum + item.line.amount, 0))}</b><small>Valor presuntivo en revisión</small></article><article><b>{analysis.anomalies.length}</b><small>Señales</small></article></div><LlmSecondReaderPanel analysis={analysis}/><DeveloperBreakdownPanel analysis={analysis}/><AccountStructurePanel analysis={analysis}/><OperatingRoomScopePanel analysis={analysis}/><PrecedentProjectionPanel analysis={analysis} rows={rows}/><FunctionalEquivalencePanel analysis={analysis}/><ReasoningControlPanel analysis={analysis}/><div className="developer-line-table"><div className="developer-line-head"><span>Línea / origen</span><span>Hipótesis</span><span>Valor</span></div>{rows.map((item) => { const candidate = bestCombinedCandidate(analysis, item); const precedent = item.precedentComparisons?.[0]; const assisted = candidate?.knowledgeIds.includes("LLM-SECOND-READER-001"); return <article key={item.line.id}><div><b>{item.line.description}</b><small>{item.line.section || "Sin sección"} · pág. {item.line.page}{item.line.code ? ` · código ${item.line.code}` : ""}{item.line.confidence ? ` · lectura ${item.line.confidence}%` : ""}{item.line.assistedBy ? " · corrección visual trazada" : ""}</small>{item.line.sourceText && <small><strong>Texto original:</strong> {item.line.sourceText}</small>}</div><div><strong>{candidate ? `${Math.round(candidate.probability * 100)}%` : "Sin hipótesis"}</strong><small>{candidate ? `${assisted ? "Segunda lectura LLM" : "Motor de reglas"}: ${candidate.reasons[0] || "Hipótesis en revisión"}` : "Requiere clasificación adicional"}{precedent ? ` · Antecedente ${Math.round(precedent.comparability * 100)}% comparable` : ""}{candidate?.missingEvidence?.length ? ` · Falta: ${candidate.missingEvidence.join("; ")}` : ""}</small></div><b>{money(item.line.amount)}</b></article>; })}</div></section>;
+  return <section className="developer-analysis-detail"><div className="developer-analysis-detail-head"><div><span className="card-kicker">ANÁLISIS DEL PRESTADOR</span><h3>Hipótesis técnicas trazables</h3><p>Estos resultados combinan reglas auditables y una segunda lectura semántica. Requieren contraste contractual y documental.</p></div><div className="developer-analysis-badges"><span>{rows.length} líneas en foco</span><span>{analysis.functionalEquivalenceAlerts?.length ?? 0} alertas funcionales</span></div></div><div className="developer-detail-metrics"><article><b>{rows.length}</b><small>Líneas en foco</small></article><article><b>{candidates.length}</b><small>Con hipótesis combinada</small></article><article><b>{money(candidates.reduce((sum, item) => sum + item.line.amount, 0))}</b><small>Valor presuntivo en revisión</small></article><article><b>{analysis.anomalies.length}</b><small>Señales</small></article></div><DeveloperPamTraceabilityPanel trace={analysis.pamTraceability}/><LlmSecondReaderPanel analysis={analysis}/><DeveloperBreakdownPanel analysis={analysis}/><AccountStructurePanel analysis={analysis}/><OperatingRoomScopePanel analysis={analysis}/><PrecedentProjectionPanel analysis={analysis} rows={rows}/><FunctionalEquivalencePanel analysis={analysis}/><ReasoningControlPanel analysis={analysis}/><div className="developer-line-table"><div className="developer-line-head"><span>Línea / origen</span><span>Hipótesis</span><span>Valor</span></div>{rows.map((item) => { const candidate = bestCombinedCandidate(analysis, item); const precedent = item.precedentComparisons?.[0]; const assisted = candidate?.knowledgeIds.includes("LLM-SECOND-READER-001"); return <article key={item.line.id}><div><b>{item.line.description}</b><small>{item.line.section || "Sin sección"} · pág. {item.line.page}{item.line.code ? ` · código ${item.line.code}` : ""}{item.line.confidence ? ` · lectura ${item.line.confidence}%` : ""}{item.line.assistedBy ? " · corrección visual trazada" : ""}</small>{item.line.sourceText && <small><strong>Texto original:</strong> {item.line.sourceText}</small>}</div><div><strong>{candidate ? `${Math.round(candidate.probability * 100)}%` : "Sin hipótesis"}</strong><small>{candidate ? `${assisted ? "Segunda lectura LLM" : "Motor de reglas"}: ${candidate.reasons[0] || "Hipótesis en revisión"}` : "Requiere clasificación adicional"}{precedent ? ` · Antecedente ${Math.round(precedent.comparability * 100)}% comparable` : ""}{candidate?.missingEvidence?.length ? ` · Falta: ${candidate.missingEvidence.join("; ")}` : ""}</small></div><b>{money(item.line.amount)}</b></article>; })}</div></section>;
 }
 function FlowStep({ number, title, state, detail }: { number: string; title: string; state: "complete" | "current" | "pending"; detail: string }) { return <div className={state}><span>{number}</span><b>{title}</b><small>{detail}</small></div>; }
 
@@ -2038,7 +2070,7 @@ function ReaderAssistPanel({ document: sourceDocument, busy, response, onAssist 
 function VisionAssistPanel({ document: sourceDocument, busy, response, onAssist }: { document: CaseDocument; busy: boolean; response?: VisionAssistResponse; onAssist: () => void }) {
   const extraction = sourceDocument.extraction;
   const assessment = extraction?.readerAssessment;
-  if (sourceDocument.sourceDeletedAt) return null;
+  if (sourceDocument.sourceDeletedAt || !extraction) return null;
   const candidatePages = [...new Set([
     ...(assessment?.lowConfidencePages || []),
     ...(extraction.ocrEnhancements?.map((item) => item.page) || []),

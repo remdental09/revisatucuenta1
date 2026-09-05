@@ -113,6 +113,29 @@ test("expone expansiones jurisprudenciales como controles y no como cobertura au
   assert.ok(result.limitations.some((limitation) => /varias conclusiones/i.test(limitation)));
 });
 
+test("concilia cuenta y PAM para detectar componentes posiblemente agrupados", () => {
+  const result = analyzeClinicalAccount([
+    { ...base, id: "pab", description: "Derecho de pabellón", section: "Pabellón", amount: 900000 },
+    { ...base, id: "flebo", description: "Equipo fleboclisis", section: "Materiales clínicos", amount: 5100 },
+  ], undefined, undefined, {
+    accountTotal: 905100,
+    pamTotal: 900000,
+    pamLines: [{
+      ...base,
+      id: "pam-pab",
+      description: "Prestación integral de pabellón quirúrgico",
+      section: "PAM",
+      amount: 900000,
+    }],
+  });
+
+  assert.equal(result.pamTraceability?.status, "review_required");
+  assert.equal(result.pamTraceability?.bundledComponentCount, 1);
+  assert.ok(result.pamTraceability?.findings.some((finding) => finding.id === "PAM-BUNDLED-COMPONENT-001"));
+  assert.equal(result.pamTraceability?.totalDifference, 5100);
+  assert.match(result.pamTraceability?.patientMessage ?? "", /no confirma por sí solo/i);
+});
+
 test("asocia el circuito de enfermería a día cama cuando no hay pabellón", () => {
   const nursingLines: ChileanBillingLine[] = [
     { ...base, id: "room", description: "HABITACION PEDIATRIA", section: "Hospitalización", amount: 529200 },

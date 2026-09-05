@@ -19,8 +19,10 @@ type AnalysisRequest = {
   caseId?: string;
   episodeLabel?: string;
   lines?: unknown;
+  pamLines?: unknown;
   readerAssessment?: ReaderAssessment;
   printedTotal?: number;
+  pamPrintedTotal?: number;
 };
 
 function isBillingLine(value: unknown): value is ChileanBillingLine {
@@ -66,16 +68,29 @@ export async function POST(request: Request) {
       { status: 422 },
     );
   }
+  if (body.pamLines !== undefined && (!Array.isArray(body.pamLines) || !body.pamLines.every(isBillingLine))) {
+    return Response.json(
+      { error: "Cada línea del PAM requiere id, glosa, monto numérico y página de origen" },
+      { status: 422 },
+    );
+  }
+  if (Array.isArray(body.pamLines) && body.pamLines.length > 10_000) {
+    return Response.json({ error: "El PAM excede el máximo de 10.000 líneas" }, { status: 413 });
+  }
 
   const env = await getCloudflareEnv();
   if (body.caseId) {
     const denied = await caseAccessResponse(env, body.caseId, auth.user);
     if (denied) return denied;
   }
-  // Account hypotheses are evaluated only against the validated account corpus.
-  // PAM observations remain a separate coverage source for a later reconciliation.
+  // Account hypotheses continue to use the validated account corpus. PAM lines
+  // are kept as a separate source and now feed an explicit reconciliation layer.
   const corpusSnapshot = await getObservedCorpusSnapshot(env, "account");
-  const analysis = analyzeClinicalAccount(body.lines, undefined, corpusSnapshot.corpus);
+  const analysis = analyzeClinicalAccount(body.lines, undefined, corpusSnapshot.corpus, {
+    pamLines: body.pamLines as ChileanBillingLine[] | undefined,
+    accountTotal: body.printedTotal,
+    pamTotal: body.pamPrintedTotal,
+  });
   try {
     analysis.llmAssist = await requestAnalysisAssist(
       body.lines,
