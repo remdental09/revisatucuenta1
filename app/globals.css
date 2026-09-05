@@ -954,3 +954,146 @@ button { cursor:pointer; }
 .developer-identity-note { margin:12px 0 0; padding-top:10px; border-top:1px solid #e0eaee; color:#80939b; font-size:8px; line-height:1.5; }
 .developer-identity-note b { color:#58717c; }
 @media (max-width: 700px) { .developer-identity-head { flex-direction:column; }.developer-identity-grid { grid-template-columns:1fr 1fr; } }
+
+/* Patient command deck: high-contrast, aerospace-inspired presentation without external assets. */
+.patient-space-portal {
+  --space-bg:#050809;
+  --space-panel:rgba(12,18,19,.92);
+  --space-panel-soft:rgba(17,27,27,.72);
+  --space-border:rgba(165,211,193,.18);
+  --space-muted:#9aafa7;
+  --space-copy:#d8e5df;
+  --space-mint:#a9f0d0;
+  min-height:100vh;
+  background:
+    radial-gradient(circle at 82% 12%, rgba(48,112,91,.22), transparent 24rem),
+    radial-gradient(circle at 14% 72%, rgba(47,81,91,.17), transparent 29rem),
+    linear-gradient(135deg, #050809 0%, #091011 48%, #070b0c 100%);
+  color:var(--space-copy);
+}
+.patient-space-portal .patient-space-topbar {
+  min-height:74px;
+  border-bottom:1px solid var(--space-border);
+  background:rgba(5,8,9,.82);
+  box-shadow:0 10px 30px rgba(0,0,0,.16);
+}
+.patient-space-portal .portal-brand { color:#f3f7f4; }
+.patient-space-portal .portal-brand>span:first-child { background:var(--space-mint); color:#07120f; }
+.patient-space-portal .portal-brand-copy small { color:#8fa79e; }
+.patient-space-portal .patient-email { color:#9cafaa; }
+.patient-space-portal .patient-pill { border:1px solid rgba(169,240,208,.25); background:rgba(90,173,139,.14); color:var(--space-mint); }
+.patient-space-portal .avatar { background:#d9f7e9; color:#123e30; }
+.patient-space-portal .patient-signout-button { border-color:var(--space-border); background:rgba(255,255,255,.03); color:#d5e6df; }
+.patient-space-portal .patient-signout-button:hover { border-color:rgba(169,240,208,.45); background:rgba(169,240,208,.1); }
+.patient-space-portal .patient-layout { min-height:calc(100vh - 74px); }
+.patient-space-portal .patient-sidebar { border-right-color:var(--space-border); background:rgba(5,9,10,.65); }
+.patient-space-portal .case-mini { border-color:var(--space-border); background:rgba(14,23,23,.9); box-shadow:0 16px 35px rgba(0,0,0,.14); }
+.patient-space-portal .case-icon { background:rgba(169,240,208,.12); color:var(--space-mint); }
+.patient-space-portal .case-mini small { color:#78968a; }
+.patient-space-portal .case-mini b { color:#e6f1eb; }
+.patient-space-portal .case-mini>div>span { color:#82988f; }
+.patient-space-portal .patient-nav button { color:#82978e; }
+.patient-space-portal .patient-nav button span { color:#6c847b; }
+.patient-space-portal .patient-nav button.active { background:rgba(169,240,208,.12); color:var(--space-mint); box-shadow:inset 2px 0 0 var(--space-mint); }
+.patient-space-portal .patient-nav button.active span { color:var(--space-mint); }
+.patient-space-portal .patient-sidebar-help { border-top-color:var(--space-border); color:#80968d; }
+.patient-space-portal .patient-sidebar-help>span { background:rgba(169,240,208,.12); color:var(--space-mint); }
+.patient-space-portal .patient-sidebar-help b { color:#d4e5de; }
+.patient-space-portal .patient-sidebar-help small { color:#7f968c; }
+.patient-space-main { max-width:1280px; padding-top:43px; }
+.patient-space-portal .patient-heading h1 { color:#f1f6f3; font-weight:500; letter-spacing:-1.7px; }
+.patient-space-portal .patient-heading p:not(.portal-kicker) { color:#94aaa1; }
+.patient-space-portal .patient-heading .portal-kicker { color:var(--space-mint); letter-spacing:1.8px; }
+.patient-space-portal .patient-identity-summary { color:#8fa69c; }
+.patient-space-portal .patient-identity-summary span { color:#718a80; }
+.patient-space-portal .patient-identity-summary strong { color:#d8e9e1; }
+.patient-space-portal .patient-identity-summary small { color:#8da49a; }
+.patient-space-portal .case-status { border-color:rgba(169,240,208,.28); background:rgba(80,168,130,.13); color:var(--space-mint); }
+.patient-space-portal .case-status i { background:var(--space-mint); box-shadow:0 0 0 4px rgba(169,240,208,.1); }
+.patient-space-portal .patient-card { border-color:var(--space-border); background:var(--space-panel); box-shadow:0 24px 65px rgba(0,0,0,.18); }
+.patient-space-review-card { position:relative; overflow:hidden; }
+.patient-space-review-card::before {
+  content:"";
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+  opacity:.28;
+  background-image:linear-gradient(rgba(169,240,208,.055) 1px, transparent 1px),linear-gradient(90deg, rgba(169,240,208,.055) 1px, transparent 1px);
+  background-size:42px 42px;
+  mask-image:linear-gradient(90deg, #000, transparent 78%);
+}
+.patient-space-summary-head { position:relative; z-index:1; display:grid; grid-template-columns:minmax(0,1fr) 310px; align-items:center; gap:28px; min-height:229px; }
+.patient-space-summary-copy { min-width:0; }
+.patient-space-portal .patient-space-summary-copy h2 { color:#f0f7f3; font-size:31px; line-height:1.08; }
+.patient-space-portal .patient-space-summary-copy>p { max-width:690px; color:#a6b9b1; font-size:14px; line-height:1.65; }
+.patient-space-portal .patient-review-status { border-color:var(--space-border); background:rgba(169,240,208,.055); }
+.patient-space-portal .patient-review-status span { color:var(--space-mint); }
+.patient-space-portal .patient-review-status span i { background:#f1b751; box-shadow:0 0 0 3px rgba(241,183,81,.13); }
+.patient-space-portal .patient-review-status small { color:#91a89e; }
+.patient-space-portal .patient-review-flow>div { border-color:var(--space-border); background:rgba(255,255,255,.025); color:#789187; }
+.patient-space-portal .patient-review-flow>div i { background:rgba(255,255,255,.08); color:#91aaa0; }
+.patient-space-portal .patient-review-flow>div.complete { border-color:rgba(169,240,208,.28); background:rgba(169,240,208,.07); color:var(--space-mint); }
+.patient-space-portal .patient-review-flow>div.complete i { background:rgba(169,240,208,.17); color:var(--space-mint); }
+.patient-space-portal .patient-review-flow>div.current { border-color:rgba(241,183,81,.34); background:rgba(241,183,81,.07); color:#f2c66d; }
+.patient-space-portal .patient-review-flow>div.current i { background:rgba(241,183,81,.18); color:#f2c66d; }
+.patient-space-portal .patient-review-amount { border-color:rgba(169,240,208,.22); border-left-color:var(--space-mint); background:rgba(169,240,208,.075); }
+.patient-space-portal .patient-review-amount strong { color:#dff8eb; }
+.patient-space-portal .patient-review-amount p { color:#9bb2a8; }
+.patient-space-portal .patient-advisory-card { border-color:rgba(169,240,208,.2); background:rgba(169,240,208,.09); }
+.patient-space-portal .patient-advisory-card h3 { color:#e4f6ed; }
+.patient-space-portal .patient-advisory-card p { color:#a5bdb2; }
+.patient-space-portal .patient-advisory-confirmed { border-color:rgba(169,240,208,.2); background:rgba(3,11,9,.32); }
+.patient-space-portal .patient-advisory-confirmed b { color:var(--space-mint); }
+.patient-space-portal .patient-advisory-confirmed small { color:#91a99f; }
+.patient-space-portal .patient-advisory-confirmed a { color:var(--space-mint); }
+.patient-space-portal .patient-review-actions .portal-button-primary { background:var(--space-mint); color:#082118; }
+.patient-space-portal .patient-review-actions .portal-button-primary:hover { background:#d8ffed; }
+.patient-space-portal .patient-review-actions .portal-button-secondary { border-color:var(--space-border); background:transparent; color:#d3e5dd; }
+.patient-space-portal .patient-review-actions .portal-button-secondary:hover { border-color:rgba(169,240,208,.45); background:rgba(169,240,208,.08); }
+.patient-space-portal .next-card { border-color:rgba(169,240,208,.22); background:linear-gradient(135deg, #123b31, #0b2826); }
+.patient-space-portal .next-card .card-kicker { color:#a9f0d0; }
+.patient-space-portal .next-card h2 { color:#f0f8f4; }
+.patient-space-portal .next-card p { color:#b6d0c4; }
+.patient-space-portal .next-card .portal-button { background:#e4f8ee; color:#103d2f; }
+.patient-space-portal .patient-analysis-pending,.patient-space-portal .patient-analysis-launch { border-color:rgba(241,183,81,.25); background:rgba(241,183,81,.07); }
+.patient-space-portal .patient-analysis-pending h3,.patient-space-portal .patient-analysis-launch h3 { color:#f4d28e; }
+.patient-space-portal .patient-analysis-pending p,.patient-space-portal .patient-analysis-launch p { color:#b6ad93; }
+.patient-space-portal .patient-analyze-button { background:var(--space-mint); color:#082118; box-shadow:0 8px 22px rgba(115,219,174,.16); }
+.patient-space-portal .patient-analyze-button:hover { background:#d8ffed; }
+
+.patient-document-orbit { width:310px; min-height:229px; position:relative; display:grid; place-items:center; justify-self:end; }
+.patient-orbit-label { position:absolute; top:0; right:5px; color:#89aa9d; font-size:9px; font-weight:850; letter-spacing:1.1px; text-transform:uppercase; }
+.patient-orbit-label i { width:6px; height:6px; display:inline-block; margin-right:5px; border-radius:50%; background:var(--space-mint); box-shadow:0 0 0 4px rgba(169,240,208,.09); }
+.patient-orbit-stage { width:250px; height:190px; position:relative; display:grid; place-items:center; perspective:900px; transform-style:preserve-3d; }
+.patient-orbit-ring { position:absolute; width:222px; height:102px; border:1px solid rgba(169,240,208,.3); border-radius:50%; box-shadow:0 0 24px rgba(90,184,149,.08); transform-style:preserve-3d; }
+.patient-orbit-ring-one { transform:rotateX(67deg) rotateZ(-12deg); }
+.patient-orbit-ring-two { width:158px; height:158px; border-color:rgba(147,190,222,.21); transform:rotateY(68deg) rotateZ(18deg); }
+.patient-document-sheet { width:142px; min-height:174px; box-sizing:border-box; padding:13px; position:relative; display:flex; flex-direction:column; border:1px solid rgba(222,255,240,.62); border-radius:5px; background:linear-gradient(145deg, #f5fff9 0%, #d7ece3 100%); color:#174333; box-shadow:18px 22px 34px rgba(0,0,0,.3), inset 0 0 0 1px rgba(255,255,255,.45); transform-style:preserve-3d; animation:patient-document-turn 12s linear infinite; }
+.patient-document-sheet::after { content:""; position:absolute; width:37px; height:37px; top:-1px; right:-1px; border-left:1px solid rgba(35,96,73,.18); border-bottom:1px solid rgba(35,96,73,.18); background:linear-gradient(135deg, #c0dbd0 0%, #effcf5 100%); clip-path:polygon(0 0, 100% 100%, 0 100%); }
+.patient-document-sheet-top { display:grid; grid-template-columns:18px 1fr auto; gap:5px; align-items:center; padding-bottom:10px; border-bottom:1px solid rgba(25,83,60,.18); font-size:5px; font-weight:900; letter-spacing:.7px; }
+.patient-document-sheet-top b { font-size:7px; color:#55967b; }
+.patient-document-mark { width:17px; height:17px; display:grid; place-items:center; border-radius:4px; background:#15553f; color:#e6fbf1; font:700 11px Georgia,serif; }
+.patient-document-sheet-title { display:grid; gap:4px; padding:12px 0 8px; }
+.patient-document-sheet-title span,.patient-document-sheet-total span { color:#61917d; font-size:6px; font-weight:900; letter-spacing:.8px; }
+.patient-document-sheet-title strong { color:#103e2d; font:500 18px Georgia,serif; }
+.patient-document-sheet-lines { display:grid; gap:6px; margin-top:2px; }
+.patient-document-sheet-lines i { height:4px; display:block; border-radius:99px; background:#aacfc0; }
+.patient-document-sheet-lines i:nth-child(2) { width:78%; }.patient-document-sheet-lines i:nth-child(3) { width:91%; }.patient-document-sheet-lines i:nth-child(4) { width:58%; }
+.patient-document-sheet-total { display:flex; justify-content:space-between; align-items:flex-end; gap:6px; margin-top:auto; padding-top:11px; border-top:1px solid rgba(25,83,60,.18); }
+.patient-document-sheet-total strong { color:#15553f; font:700 10px Arial,sans-serif; text-align:right; }
+.patient-document-sheet-foot { display:flex; justify-content:space-between; gap:3px; margin-top:10px; color:#4a806b; font-size:5px; font-weight:900; letter-spacing:.35px; }
+@keyframes patient-document-turn { from { transform:translateZ(24px) rotateX(4deg) rotateY(-24deg) rotateZ(5deg); } to { transform:translateZ(24px) rotateX(4deg) rotateY(336deg) rotateZ(5deg); } }
+
+@media (max-width: 700px) {
+  .patient-space-main { padding-top:30px; }
+  .patient-space-summary-head { grid-template-columns:1fr; gap:5px; min-height:0; }
+  .patient-space-portal .patient-space-summary-copy h2 { font-size:25px; }
+  .patient-space-portal .patient-space-summary-copy>p { font-size:13px; }
+  .patient-document-orbit { width:100%; min-height:195px; justify-self:center; transform:scale(.88); transform-origin:top center; margin:6px 0 -28px; }
+  .patient-space-portal .patient-review-flow { grid-template-columns:1fr; }
+  .patient-space-portal .patient-review-flow>div { display:flex; align-items:center; gap:8px; padding:9px 11px; text-align:left; }
+  .patient-space-portal .patient-review-flow>div i { flex:0 0 22px; margin:0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .patient-document-sheet { animation-play-state:paused; }
+}

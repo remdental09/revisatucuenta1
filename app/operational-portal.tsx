@@ -1256,10 +1256,10 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
     ? patientHasIrregularities ? "Irregularidades detectadas" : "Análisis completado"
     : account ? "Resultado en preparación" : "Revisión pendiente";
   const firstName = snapshot.case.patientName.split(" ")[0];
-  return <main className="patient-portal">
-    <header className="patient-topbar"><PortalBrand href="/"/><div className="patient-topbar-right"><span className="surface-pill patient-pill">Vista paciente</span><span className="avatar">{snapshot.case.patientName.slice(0, 2).toUpperCase()}</span><span className="patient-email">{user.email}</span><a className="patient-signout-button" href={signOutHref(user)} aria-label="Cerrar sesión">Cerrar sesión</a></div></header>
+  return <main className="patient-portal patient-space-portal">
+    <header className="patient-topbar patient-space-topbar"><PortalBrand href="/"/><div className="patient-topbar-right"><span className="surface-pill patient-pill">Vista paciente</span><span className="avatar">{snapshot.case.patientName.slice(0, 2).toUpperCase()}</span><span className="patient-email">{user.email}</span><a className="patient-signout-button" href={signOutHref(user)} aria-label="Cerrar sesión">Cerrar sesión</a></div></header>
     <div className="patient-layout"><aside className="patient-sidebar"><div className="case-mini"><span className="case-icon">⌁</span><div><small>CASO ACTIVO</small><b>{snapshot.case.patientName}</b><span>RUN {snapshot.case.patientRun || "No informado"}</span><span>Caso {caseId.slice(0, 8)}</span></div></div><nav className="patient-nav">{(["Resumen", "Documentos", "Actividad"] as const).map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item}</button>)}</nav><div className="patient-sidebar-help"><span>?</span><div><b>¿Necesitas ayuda?</b><small>Escríbenos sobre tu caso.</small></div></div></aside>
-      <section className="patient-main"><div className="patient-heading"><div><p className="portal-kicker">Mi revisión</p><h1>Hola, {firstName}.</h1><p>{snapshot.case.episodeLabel}</p><div className="patient-identity-summary"><span>Paciente</span><strong>{snapshot.case.patientName}</strong><small>RUN {snapshot.case.patientRun || "No informado"}</small></div></div><span className="case-status"><i /> {patientStatus}</span></div>
+      <section className="patient-main patient-space-main"><div className="patient-heading patient-space-heading"><div><p className="portal-kicker">Mi revisión</p><h1>Hola, {firstName}.</h1><p>{snapshot.case.episodeLabel}</p><div className="patient-identity-summary"><span>Paciente</span><strong>{snapshot.case.patientName}</strong><small>RUN {snapshot.case.patientRun || "No informado"}</small></div></div><span className="case-status"><i /> {patientStatus}</span></div>
          {tab === "Resumen" && <PatientSummary account={account} pam={pam} reviewAmount={patientReviewAmount} irregularityCount={patientReviewLines.length} analysisAvailable={Boolean(patientAnalysis)} analysisRunning={status === "running"} progress={progress} stage={stage} contract={snapshot.contract} busy={busy} readerReviewRequired={Boolean(readerNeedsRefresh || account?.processingStatus === "failed" || account?.processingStatus === "review_required" || (readerAssessment && readerAssessment.status !== "ready"))} readerChangeNeeded={!patientCanAnalyze} onAccount={() => accountInputRef.current?.click()} onPam={() => inputRef.current?.click()} onAnalyze={() => void runAnalysis()} onOpenContract={() => void openContract()} contractBusy={contractBusy} />}
         {tab === "Documentos" && <PatientDocuments snapshot={snapshot} deletingDocumentId={deletingDocumentId} onAccount={() => accountInputRef.current?.click()} onPam={() => inputRef.current?.click()} onDelete={(document) => void removeDocument(document)} />}
         {tab === "Actividad" && <PatientActivity activities={snapshot.activities} />}
@@ -1274,6 +1274,23 @@ function AnalysisProgress({ progress, stage }: { progress: number; stage: string
 
 function UploadProgress({ progress, stage }: { progress: number; stage: string }) {
   return <section className="analysis-progress-card upload-progress-card" aria-live="polite"><div className="analysis-progress-card-head"><div><span className="card-kicker">LECTURA DE DOCUMENTO</span><b>{stage}</b></div><strong>{progress}%</strong></div><div className="analysis-progress-bar" role="progressbar" aria-label="Progreso de la lectura del documento" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><i style={{ width: `${progress}%` }} /></div><small>El documento se está guardando y leyendo. En cuentas escaneadas, esta etapa puede tardar algunos minutos.</small></section>;
+}
+
+function PatientDocumentOrbit({ amount, label }: { amount: number; label: string }) {
+  return <div className="patient-document-orbit" aria-hidden="true">
+    <div className="patient-orbit-label"><i /> {label}</div>
+    <div className="patient-orbit-stage">
+      <span className="patient-orbit-ring patient-orbit-ring-one" />
+      <span className="patient-orbit-ring patient-orbit-ring-two" />
+      <div className="patient-document-sheet">
+        <div className="patient-document-sheet-top"><span className="patient-document-mark">R</span><span>REVISATUCUENTA</span><b>01</b></div>
+        <div className="patient-document-sheet-title"><span>CUENTA CLÍNICA</span><strong>Revisión</strong></div>
+        <div className="patient-document-sheet-lines"><i /><i /><i /><i /></div>
+        <div className="patient-document-sheet-total"><span>{amount > 0 ? "MONTO A REVISAR" : "ESTADO"}</span><strong>{amount > 0 ? money(amount) : "EN CURSO"}</strong></div>
+        <div className="patient-document-sheet-foot"><span>PAM</span><span>COBERTURA</span><span>PRELIMINAR</span></div>
+      </div>
+    </div>
+  </div>;
 }
 
 function PatientSummary({ account, pam, reviewAmount, irregularityCount, analysisAvailable, analysisRunning, progress, stage, contract, busy, readerReviewRequired, readerChangeNeeded, onAccount, onPam, onAnalyze, onOpenContract, contractBusy }: { account?: CaseDocument; pam?: CaseDocument; reviewAmount: number; irregularityCount: number; analysisAvailable: boolean; analysisRunning: boolean; progress: number; stage: string; contract?: ServiceContract; busy: boolean; readerReviewRequired: boolean; readerChangeNeeded: boolean; onAccount: () => void; onPam: () => void; onAnalyze: () => void; onOpenContract: () => void; contractBusy: boolean }) {
@@ -1298,10 +1315,11 @@ function PatientSummary({ account, pam, reviewAmount, irregularityCount, analysi
     ? hasIrregularities ? "Posibles irregularidades detectadas" : "Análisis preliminar completado"
     : accountReceived ? "Resultado en preparación" : pamReceived ? "Cobertura recibida; cuenta pendiente" : "Esperando documentos";
   return <>
-    <section className="patient-card patient-review-status-card">
-      <span className="card-kicker">ESTADO DE LA REVISIÓN</span>
-      <h2>{summaryTitle}</h2>
-      <p>{summaryCopy}</p>
+    <section className="patient-card patient-review-status-card patient-space-review-card">
+      <div className="patient-space-summary-head">
+        <div className="patient-space-summary-copy"><span className="card-kicker">ESTADO DE LA REVISIÓN</span><h2>{summaryTitle}</h2><p>{summaryCopy}</p></div>
+        <PatientDocumentOrbit amount={reviewAmount} label={analysisAvailable ? "Lectura completada" : "Lectura segura"} />
+      </div>
       <div className="patient-review-status">
         <span><i /> {statusLabel}</span>
         {analysisAvailable && <small>El resultado es preliminar y se basa en la información disponible en tu cuenta.</small>}
