@@ -7,6 +7,15 @@ export function normalizeChileanRun(value: string) {
   return `${grouped}-${match[2]}`;
 }
 
+export type ChileanRunComparison = "matched" | "mismatch" | "unavailable";
+
+export function compareChileanRun(entered: string, extracted: string): ChileanRunComparison {
+  const enteredCompact = normalizeChileanRun(entered).replace(/[.\s-]/g, "").toUpperCase();
+  const extractedCompact = normalizeChileanRun(extracted).replace(/[.\s-]/g, "").toUpperCase();
+  if (!enteredCompact || !extractedCompact) return "unavailable";
+  return enteredCompact === extractedCompact ? "matched" : "mismatch";
+}
+
 export function isValidChileanRun(value: string) {
   const compact = value.trim().toUpperCase().replace(/[.\s-]/g, "");
   const match = compact.match(/^(\d{1,8})([0-9K])$/);

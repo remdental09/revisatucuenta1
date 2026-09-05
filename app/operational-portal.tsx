@@ -7,7 +7,7 @@ import { assessExtractionQuality, buildReaderChangeProposal, buildReaderReviewPa
 import type { ClinicalAccountAnalysis, ChileanBillingLine, InclusionCandidate } from "../lib/rules/chilean-account";
 import type { FunctionalEquivalenceAlert } from "../lib/rules/observed-corpus";
 import { generateClarificationClaimMarkdown } from "../lib/claims/claim-generator";
-import { normalizeChileanRun } from "../lib/identity/chilean-run";
+import { compareChileanRun, normalizeChileanRun } from "../lib/identity/chilean-run";
 import { WhatsAppContact } from "./whatsapp-contact";
 import { SupportChatbox } from "./support-chat";
 import {
@@ -143,6 +143,13 @@ function pamDoc(snapshot?: Snapshot) {
 
 function accountField(snapshot: Snapshot, pattern: RegExp) {
   return accountDoc(snapshot)?.extraction?.account?.fields.find((field) => pattern.test(`${field.key} ${field.label}`));
+}
+
+function patientRunVerification(snapshot?: Snapshot) {
+  const account = accountDoc(snapshot);
+  if (!snapshot || !account) return "unavailable" as const;
+  const extractedRun = account.extraction?.account?.fields.find((field) => /patient_rut|rut del paciente|\brut\b/i.test(`${field.key} ${field.label}`))?.value || "";
+  return compareChileanRun(snapshot.case.patientRun || "", extractedRun);
 }
 
 function patientNameForDeveloper(snapshot: Snapshot) {
@@ -1096,13 +1103,25 @@ function PatientStart({ userEmail, onCreated }: { userEmail: string; onCreated: 
       const created = await fetch("/api/cases", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id, patientName: name.trim(), patientRun: normalizeChileanRun(run), episodeLabel: episode, requirePatientIdentity: true }) });
       const payload = await created.json().catch(() => ({}));
       if (!created.ok) throw new Error(payload.error || "No se pudo iniciar la revisión");
-      if (file) await uploadDocument(id, file, "Cuenta clínica", (value) => {
-        setUploadProgress(value);
-        setUploadStage(value < 6 ? "Preparando el lector" : value < 80 ? "Leyendo tu cuenta clínica" : "Verificando la lectura");
-      });
+      if (file) {
+        const result = await uploadDocument(id, file, "Cuenta clínica", (value) => {
+          setUploadProgress(value);
+          setUploadStage(value < 6 ? "Preparando el lector" : value < 80 ? "Leyendo tu cuenta clínica" : "Verificando la lectura");
+        });
+        const extractedRun = result.extraction.account?.fields.find((field) => /patient_rut|rut del paciente|\brut\b/i.test(`${field.key} ${field.label}`))?.value || "";
+        if (compareChileanRun(run, extractedRun) !== "matched") {
+          // Send the patient to the case view so the warning is visible and
+          // the account can be replaced without exposing the other identity.
+          onCreated(id);
+          return;
+        }
+      }
       onCreated(id);
     } catch (reason) {
-      setError(errorMessage(reason, "No se pudo iniciar la revisión"));
+      const message = errorMessage(reason, "No se pudo iniciar la revisión");
+      setError(file && /lector|ocr|renderizar|página/i.test(message)
+        ? "No pudimos verificar el RUN porque una página de la cuenta no se pudo leer completamente. El documento quedó recibido para revisión; reemplázalo si seleccionaste un archivo incorrecto."
+        : message);
     } finally {
       setBusy(false);
     }
@@ -1187,6 +1206,7 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
   async function runAnalysis() {
     if (!snapshot || !caseId) return;
     if (!accountDoc(snapshot)) { notify("Primero debes cargar la cuenta clínica"); return; }
+    if (patientRunVerification(snapshot) !== "matched") { notify("Primero debemos verificar que el RUN coincida con la cuenta cargada"); return; }
     setBusy(true); setStatus("running"); setProgress(8); setStage("Preparando la cuenta");
     let simulatedProgress = 8;
     const timer = window.setInterval(() => {
@@ -1210,7 +1230,7 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
 
   useEffect(() => {
     const account = accountDoc(snapshot);
-    if (!snapshot || !caseId || snapshot.analysis || status === "running" || busy || !account || analysisBlocked(account)) return;
+    if (!snapshot || !caseId || snapshot.analysis || status === "running" || busy || !account || analysisBlocked(account) || patientRunVerification(snapshot) !== "matched") return;
     const key = `${caseId}:${account.id}`;
     if (autoAnalysisKeyRef.current === key) return;
     autoAnalysisKeyRef.current = key;
@@ -1264,13 +1284,14 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
   if (!snapshot) return <main className="patient-portal"><section className="patient-card patient-main"><h2>Cargando revisión…</h2></section></main>;
 
   const account = accountDoc(snapshot); const pam = pamDoc(snapshot); const accountTotal = totalFrom(account, "account"); const pamTotal = totalFrom(pam, "pam");
+  const runVerification = patientRunVerification(snapshot);
   const readerAssessment = account?.extraction?.readerAssessment;
   const readerNeedsRefresh = extractionNeedsRefresh(account);
-  const patientAnalysis = readerNeedsRefresh ? undefined : snapshot.analysis;
+  const patientAnalysis = readerNeedsRefresh || runVerification !== "matched" ? undefined : snapshot.analysis;
   const patientReviewLines = possibleDisputeLines(patientAnalysis);
   const patientReviewAmount = patientReviewLines.reduce((sum, assessment) => sum + assessment.line.amount, 0);
   const patientHasIrregularities = patientReviewLines.length > 0;
-  const patientCanAnalyze = !analysisBlocked(account);
+  const patientCanAnalyze = !analysisBlocked(account) && runVerification === "matched";
   const patientStatus = patientAnalysis
     ? patientHasIrregularities ? "Irregularidades detectadas" : "Análisis completado"
     : account ? "Resultado en preparación" : "Revisión pendiente";
@@ -1279,7 +1300,7 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
     <header className="patient-topbar patient-space-topbar"><PortalBrand href="/"/><div className="patient-topbar-right"><span className="surface-pill patient-pill">Vista paciente</span><span className="avatar">{snapshot.case.patientName.slice(0, 2).toUpperCase()}</span><span className="patient-email">{user.email}</span><a className="patient-signout-button" href={signOutHref(user)} aria-label="Cerrar sesión">Cerrar sesión</a></div></header>
     <div className="patient-layout"><aside className="patient-sidebar"><div className="case-mini"><span className="case-icon">⌁</span><div><small>CASO ACTIVO</small><b>{snapshot.case.patientName}</b><span>RUN {snapshot.case.patientRun || "No informado"}</span><span>Caso {caseId.slice(0, 8)}</span></div></div><nav className="patient-nav">{(["Resumen", "Documentos", "Actividad"] as const).map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item}</button>)}</nav><div className="patient-sidebar-help"><span>?</span><div><b>¿Necesitas ayuda?</b><small>Escríbenos sobre tu caso.</small></div></div></aside>
       <section className="patient-main patient-space-main"><div className="patient-heading patient-space-heading"><div><p className="portal-kicker">Mi revisión</p><h1>Hola, {firstName}.</h1><p>{snapshot.case.episodeLabel}</p><div className="patient-identity-summary"><span>Paciente</span><strong>{snapshot.case.patientName}</strong><small>RUN {snapshot.case.patientRun || "No informado"}</small></div></div><span className="case-status"><i /> {patientStatus}</span></div>
-         {tab === "Resumen" && <PatientSummary account={account} pam={pam} reviewAmount={patientReviewAmount} irregularityCount={patientReviewLines.length} analysisAvailable={Boolean(patientAnalysis)} analysisRunning={status === "running"} progress={progress} stage={stage} contract={snapshot.contract} busy={busy} readerReviewRequired={Boolean(readerNeedsRefresh || account?.processingStatus === "failed" || account?.processingStatus === "review_required" || (readerAssessment && readerAssessment.status !== "ready"))} readerChangeNeeded={!patientCanAnalyze} onAccount={() => accountInputRef.current?.click()} onPam={() => inputRef.current?.click()} onAnalyze={() => void runAnalysis()} onOpenContract={() => void openContract()} contractBusy={contractBusy} />}
+         {tab === "Resumen" && <PatientSummary account={account} pam={pam} reviewAmount={patientReviewAmount} irregularityCount={patientReviewLines.length} analysisAvailable={Boolean(patientAnalysis)} analysisRunning={status === "running"} progress={progress} stage={stage} contract={snapshot.contract} busy={busy} runVerification={runVerification} readerReviewRequired={Boolean(runVerification !== "matched" || readerNeedsRefresh || account?.processingStatus === "failed" || account?.processingStatus === "review_required" || (readerAssessment && readerAssessment.status !== "ready"))} readerChangeNeeded={!patientCanAnalyze} onAccount={() => accountInputRef.current?.click()} onPam={() => inputRef.current?.click()} onAnalyze={() => void runAnalysis()} onOpenContract={() => void openContract()} contractBusy={contractBusy} />}
         {tab === "Documentos" && <PatientDocuments snapshot={snapshot} deletingDocumentId={deletingDocumentId} onAccount={() => accountInputRef.current?.click()} onPam={() => inputRef.current?.click()} onDelete={(document) => void removeDocument(document)} />}
         {tab === "Actividad" && <PatientActivity activities={snapshot.activities} />}
       </section></div>
@@ -1312,16 +1333,24 @@ function PatientDocumentOrbit({ amount, label }: { amount: number; label: string
   </div>;
 }
 
-function PatientSummary({ account, pam, reviewAmount, irregularityCount, analysisAvailable, analysisRunning, progress, stage, contract, busy, readerReviewRequired, readerChangeNeeded, onAccount, onPam, onAnalyze, onOpenContract, contractBusy }: { account?: CaseDocument; pam?: CaseDocument; reviewAmount: number; irregularityCount: number; analysisAvailable: boolean; analysisRunning: boolean; progress: number; stage: string; contract?: ServiceContract; busy: boolean; readerReviewRequired: boolean; readerChangeNeeded: boolean; onAccount: () => void; onPam: () => void; onAnalyze: () => void; onOpenContract: () => void; contractBusy: boolean }) {
+function PatientSummary({ account, pam, reviewAmount, irregularityCount, analysisAvailable, analysisRunning, progress, stage, contract, busy, runVerification, readerReviewRequired, readerChangeNeeded, onAccount, onPam, onAnalyze, onOpenContract, contractBusy }: { account?: CaseDocument; pam?: CaseDocument; reviewAmount: number; irregularityCount: number; analysisAvailable: boolean; analysisRunning: boolean; progress: number; stage: string; contract?: ServiceContract; busy: boolean; runVerification: "matched" | "mismatch" | "unavailable"; readerReviewRequired: boolean; readerChangeNeeded: boolean; onAccount: () => void; onPam: () => void; onAnalyze: () => void; onOpenContract: () => void; contractBusy: boolean }) {
   const accountReceived = Boolean(account);
   const pamReceived = Boolean(pam);
   const documentsReceived = accountReceived || pamReceived;
   const hasIrregularities = analysisAvailable && irregularityCount > 0;
   const irregularityLabel = `${irregularityCount} ${irregularityCount === 1 ? "cargo" : "cargos"}`;
-  const summaryTitle = analysisAvailable
+  const summaryTitle = runVerification === "mismatch"
+    ? "El RUN no coincide con la cuenta"
+    : runVerification === "unavailable"
+      ? "Verificación del RUN pendiente"
+      : analysisAvailable
     ? hasIrregularities ? "Detectamos posibles irregularidades en tu cuenta" : "No detectamos irregularidades evidentes"
     : accountReceived ? "Tu cuenta está en revisión" : pamReceived ? "Documento de cobertura recibido" : "Completa tu revisión";
-  const summaryCopy = analysisAvailable
+  const summaryCopy = runVerification === "mismatch"
+    ? "El RUN informado no coincide con el RUN identificado en el documento. Revisa que hayas cargado la cuenta correcta antes de continuar."
+    : runVerification === "unavailable" && accountReceived
+      ? "Recibimos tu cuenta, pero todavía no pudimos comprobar el RUN de forma completa. Debemos verificarlo antes de mostrar un resultado."
+      : analysisAvailable
     ? hasIrregularities
       ? `Encontramos ${irregularityLabel} que conviene revisar con más detalle. A continuación te mostramos el monto aproximado asociado.`
       : "Revisamos la información disponible y no encontramos cargos que indiquen una irregularidad evidente."
@@ -1330,7 +1359,11 @@ function PatientSummary({ account, pam, reviewAmount, irregularityCount, analysi
       : pamReceived
         ? "Recibimos tu documento de cobertura. Para revisar posibles irregularidades necesitamos la cuenta clínica."
         : "Carga la cuenta clínica para conocer el resultado de la revisión.";
-  const statusLabel = analysisAvailable
+  const statusLabel = runVerification === "mismatch"
+    ? "Verificación necesaria"
+    : runVerification === "unavailable" && accountReceived
+      ? "RUN pendiente de verificación"
+      : analysisAvailable
     ? hasIrregularities ? "Posibles irregularidades detectadas" : "Análisis preliminar completado"
     : accountReceived ? "Resultado en preparación" : pamReceived ? "Cobertura recibida; cuenta pendiente" : "Esperando documentos";
   return <>
@@ -1349,10 +1382,14 @@ function PatientSummary({ account, pam, reviewAmount, irregularityCount, analysi
         <div className={analysisAvailable ? "complete" : accountReceived ? "current" : ""}><i>2</i><span>{analysisAvailable ? "Resultado disponible" : accountReceived ? "Resultado en preparación" : "Resultado pendiente"}</span></div>
         <div className={pamReceived ? "complete" : ""}><i>3</i><span>{pamReceived ? "Cobertura recibida" : "Cobertura opcional"}</span></div>
       </div>
-      {account && !analysisAvailable && readerChangeNeeded && <section className="patient-analysis-pending">
+      {account && runVerification !== "matched" && <section className="patient-identity-alert" role="alert">
+        <div><span className="card-kicker">VERIFICACIÓN NECESARIA</span><h3>{runVerification === "mismatch" ? "El RUN de la cuenta no coincide" : "No pudimos verificar el RUN"}</h3><p>{runVerification === "mismatch" ? "El RUN informado no coincide con el documento cargado. Por protección de tus datos, no continuaremos con el análisis hasta que reemplaces la cuenta por el documento correcto." : "Una parte del documento no pudo leerse completamente o no contiene un RUN verificable. Por protección de tus datos, no mostraremos un resultado hasta completar una revisión."}</p></div>
+        <button className="portal-button portal-button-primary" onClick={onAccount} disabled={busy}>{runVerification === "mismatch" ? "Reemplazar cuenta clínica →" : "Cargar otra cuenta →"}</button>
+      </section>}
+      {account && runVerification === "matched" && !analysisAvailable && readerChangeNeeded && <section className="patient-analysis-pending">
         <div><span className="card-kicker">RESULTADO EN PREPARACIÓN</span><h3>Estamos preparando el resultado de tu cuenta</h3><p>Ya recibimos tu cuenta. Estamos terminando de procesar algunos datos antes de mostrarte las posibles irregularidades y el monto aproximado.</p></div>
       </section>}
-      {account && !analysisAvailable && !readerChangeNeeded && <section className="patient-analysis-launch">
+      {account && runVerification === "matched" && !analysisAvailable && !readerChangeNeeded && <section className="patient-analysis-launch">
         <div><span className="card-kicker">RESULTADO DE TU CUENTA</span><h3>{analysisRunning ? stage : "Obtén el resultado de tu cuenta"}</h3><p>{analysisRunning ? "Estamos revisando los cargos para identificar posibles irregularidades y estimar el monto asociado." : "Inicia el análisis para saber si hay cargos que conviene revisar y cuál es el monto aproximado."}</p></div>
         {analysisRunning ? <div className="patient-analysis-progress-wrap"><div className="patient-analysis-progress-label"><span>{progress}%</span><b>Procesando</b></div><div className="patient-analysis-progress-bar" role="progressbar" aria-label="Progreso del análisis" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><i style={{ width: `${progress}%` }} /></div></div> : <button className="patient-analyze-button" onClick={onAnalyze} disabled={busy}>Analizar mi cuenta →</button>}
       </section>}
@@ -1368,7 +1405,7 @@ function PatientSummary({ account, pam, reviewAmount, irregularityCount, analysi
       </>}
       <div className="patient-review-actions"><button className="portal-button portal-button-secondary" onClick={onAccount} disabled={busy}>{account ? "Reemplazar cuenta clínica" : "Agregar cuenta clínica"}</button><button className="portal-button portal-button-primary" onClick={onPam} disabled={busy}>{pam ? "Reemplazar documento de cobertura" : "Agregar documento de cobertura"}</button></div>
     </section>
-    <section className="patient-card next-card"><span className="card-kicker">SIGUIENTE PASO</span><h2>{analysisAvailable ? hasIrregularities ? "Revisa los cargos observados" : "Resultado de la revisión" : accountReceived ? "Obtén el resultado de tu cuenta" : pamReceived ? "Falta la cuenta clínica" : "Completa tus documentos"}</h2><p>{analysisAvailable ? hasIrregularities ? "Encontramos posibles irregularidades y te mostramos el monto aproximado asociado. Puedes solicitar una propuesta de asesoría para revisar los antecedentes." : "Con la información disponible no encontramos cargos que requieran revisión." : documentsReceived ? "Carga la cuenta clínica para obtener el resultado y el monto aproximado de la revisión." : "Carga la cuenta clínica para obtener el resultado de la revisión."}</p></section>
+    <section className="patient-card next-card"><span className="card-kicker">SIGUIENTE PASO</span><h2>{runVerification !== "matched" ? "Verifica el RUN de la cuenta" : analysisAvailable ? hasIrregularities ? "Revisa los cargos observados" : "Resultado de la revisión" : accountReceived ? "Obtén el resultado de tu cuenta" : pamReceived ? "Falta la cuenta clínica" : "Completa tus documentos"}</h2><p>{runVerification !== "matched" ? "Carga la cuenta correcta o solicita una revisión para comprobar que el documento corresponde a tus datos." : analysisAvailable ? hasIrregularities ? "Encontramos posibles irregularidades y te mostramos el monto aproximado asociado. Puedes solicitar una propuesta de asesoría para revisar los antecedentes." : "Con la información disponible no encontramos cargos que requieran revisión." : documentsReceived ? "Carga la cuenta clínica para obtener el resultado y el monto aproximado de la revisión." : "Carga la cuenta clínica para obtener el resultado de la revisión."}</p></section>
   </>;
 }
 
