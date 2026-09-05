@@ -1008,10 +1008,12 @@ export function PortalEntry() {
         <header className="home-space-nav home-shell">
           <PortalBrand href="/" className="home-space-brand" />
           <nav className="home-space-nav-links" aria-label="Navegación principal">
+            <a href="#quienes-somos">Quiénes somos</a>
+            <a href="#objetivos">Objetivos</a>
             <a href="#como-funciona">Cómo funciona</a>
             <a href="#privacidad">Privacidad</a>
           </nav>
-          <a className="home-space-dev-link" href="/?view=developer">Desarrolladores <span>↗</span></a>
+          <a className="home-space-dev-link" href="/?view=patient">Revisar gratis <span>↗</span></a>
         </header>
 
         <div className="home-space-hero-content home-shell">
@@ -1044,6 +1046,31 @@ export function PortalEntry() {
         </div>
       </section>
 
+      <section id="quienes-somos" className="home-space-about home-shell">
+        <div className="home-space-about-intro">
+          <p className="home-space-kicker">QUIÉNES SOMOS</p>
+          <h2>Una consultora para que no enfrentes solo tu cuenta clínica.</h2>
+        </div>
+        <div className="home-space-about-copy">
+          <p>Somos una consultora de revisión y acompañamiento administrativo de cuentas clínicas.</p>
+          <p>Ordenamos cuentas, PAM, coberturas y respuestas para que puedas entender qué ocurrió, qué antecedentes faltan y cuál es el siguiente paso. Te acompañamos en el flujo, sin reemplazar tus decisiones ni prometer un resultado que dependa de la clínica, la Isapre, Fonasa o una autoridad.</p>
+          <a className="home-space-text-link" href="/?view=patient">Conocer mi caso <span>↗</span></a>
+        </div>
+      </section>
+
+      <section id="objetivos" className="home-space-objectives home-shell">
+        <div className="home-space-objectives-head">
+          <div><p className="home-space-kicker">OBJETIVOS DE REVISATUCUENTA</p><h2>Convertir una cuenta confusa en decisiones claras.</h2></div>
+          <p>El servicio no se limita a detectar una diferencia: te ayuda a entenderla y a actuar con respaldo documental.</p>
+        </div>
+        <div className="home-space-objectives-list">
+          <article><span>01</span><h3>Ordenar</h3><p>Reunir cuenta, detalle de cargos, PAM, bonificaciones y respuestas en una sola historia.</p></article>
+          <article><span>02</span><h3>Explicar</h3><p>Traducir códigos, coberturas y observaciones a un lenguaje que puedas revisar.</p></article>
+          <article><span>03</span><h3>Acompañar</h3><p>Preparar contigo solicitudes y reclamos administrativos, con un alcance limitado y trazable.</p></article>
+          <article><span>04</span><h3>Cerrar</h3><p>Dejar claro qué se corrigió, qué no procede o cuándo conviene escalar a asesoría legal.</p></article>
+        </div>
+      </section>
+
       <section className="home-space-film-grid home-shell" aria-label="El contexto de tu revisión">
         <article className="home-space-film-card home-space-film-card-large">
           <AmbientVideo src="/media/santiago-skyline.mp4" label="Santiago" />
@@ -1053,6 +1080,16 @@ export function PortalEntry() {
           <AmbientVideo src="/media/patient-office.mp4" label="Tu revisión" />
           <div className="home-space-film-copy"><span>03 / PAM</span><h3>¿No tienes el PAM?</h3><p>Puedes subir tu cuenta de todas maneras y agregar el PAM después.</p></div>
         </article>
+      </section>
+
+      <section className="home-space-results home-shell" aria-labelledby="resultados-title">
+        <div className="home-space-results-head"><p className="home-space-kicker">RESULTADOS POSIBLES</p><h2 id="resultados-title">El resultado también puede ser saber que no hay nada más que hacer.</h2><p>La evaluación es una orientación documentada, no una promesa de devolución.</p></div>
+        <div className="home-space-results-list">
+          <article><b>01</b><h3>Información suficiente</h3><p>La cuenta está consistente o el monto observado no justifica escalar.</p></article>
+          <article><b>02</b><h3>Aclaración pendiente</h3><p>La clínica o asegurador debe explicar un cargo, código, cobertura o documento.</p></article>
+          <article><b>03</b><h3>Revisión de cobertura</h3><p>Hay antecedentes para solicitar una nueva revisión a la Isapre o Fonasa.</p></article>
+          <article><b>04</b><h3>Escalamiento</h3><p>El caso requiere un reclamo administrativo o la evaluación de un abogado.</p></article>
+        </div>
       </section>
 
       <section id="privacidad" className="home-space-privacy home-shell">

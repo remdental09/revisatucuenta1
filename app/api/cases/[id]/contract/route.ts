@@ -8,7 +8,7 @@ import { getCloudflareEnv, localGetCase, localGetServiceContract, localSaveServi
 import { requireApiUser } from "../../../../../lib/server/auth.ts";
 import { caseAccessResponse } from "../../../../../lib/server/case-access.ts";
 
-const MANDATE_SCOPE = "Poder especial y limitado para solicitar antecedentes, preparar y presentar aclaraciones y reclamos administrativos del episodio indicado; sin consentir tratamientos, transigir, renunciar derechos ni recibir fondos.";
+const MANDATE_SCOPE = "Poder especial, administrativo, limitado y revocable para solicitar antecedentes, preparar y presentar aclaraciones y reclamos del episodio indicado ante prestadores, aseguradores y, cuando corresponda, la Superintendencia de Salud; sin representación judicial, consentimiento de tratamientos, reconocimiento de deudas, transacción, renuncia, desistimiento, firma de convenios ni recepción de fondos.";
 
 function configuredValue(env: any, name: string) {
   const fromBinding = env?.[name];
