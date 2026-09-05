@@ -13,12 +13,33 @@ const ALLOWED_ORIGINS = new Set([
   "https://www.revisatucuenta.cl",
   "https://revisatucuenta-mvp.luispaul.chatgpt.site",
 ]);
+const RATE_WINDOW_MS = 10 * 60 * 1000;
+const RATE_LIMIT = 20;
+const requestBuckets = new Map<string, { count: number; resetAt: number }>();
 
 function corsHeaders(request: Request) {
   const headers = new Headers({ "cache-control": "no-store", vary: "Origin" });
   const origin = request.headers.get("origin");
   if (origin && ALLOWED_ORIGINS.has(origin)) headers.set("access-control-allow-origin", origin);
   return headers;
+}
+
+function clientKey(request: Request) {
+  return request.headers.get("cf-connecting-ip")
+    || request.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
+    || "anonymous";
+}
+
+function rateLimitExceeded(request: Request) {
+  const now = Date.now();
+  const key = clientKey(request);
+  const current = requestBuckets.get(key);
+  if (!current || current.resetAt <= now) {
+    requestBuckets.set(key, { count: 1, resetAt: now + RATE_WINDOW_MS });
+    return false;
+  }
+  current.count += 1;
+  return current.count > RATE_LIMIT;
 }
 
 function isMessage(value: unknown): value is SupportChatMessage {
@@ -31,6 +52,9 @@ function isMessage(value: unknown): value is SupportChatMessage {
 }
 
 export async function POST(request: Request) {
+  if (rateLimitExceeded(request)) {
+    return Response.json({ code: "RATE_LIMITED", error: "Has alcanzado el límite temporal de consultas. Intenta nuevamente más tarde." }, { status: 429, headers: corsHeaders(request) });
+  }
   let body: SupportChatRequest;
   try {
     body = await request.json() as SupportChatRequest;
