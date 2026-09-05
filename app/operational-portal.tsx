@@ -90,7 +90,7 @@ function useAuthSession(surface: "patient" | "developer") {
 }
 
 function signOutHref(user: SessionUser) {
-  return user.source === "chatgpt" ? "/signout-with-chatgpt?return_to=%2F" : "/api/auth/logout";
+  return user.source === "chatgpt" ? "/signout-with-chatgpt?return_to=%2F" : "/api/auth/logout?return_to=%2F";
 }
 
 function PortalBrand({ className = "", href }: { className?: string; href?: string }) {
