@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import Link from "next/link";
 
 const WHATSAPP_NUMBER = "56996963089";
 const WHATSAPP_BASE_URL = `https://wa.me/${WHATSAPP_NUMBER}`;
@@ -261,7 +260,7 @@ export function SupportChatbox() {
           <div className="support-chat-actions">
             {quickActions.map((item) => (
               item.action === "upload_link" ? (
-                <Link className="support-chat-action" href={PATIENT_UPLOAD_URL} key={item.action} aria-disabled={aiLoading}>{item.label} ↗</Link>
+                <a className="support-chat-action" href={PATIENT_UPLOAD_URL} key={item.action} aria-disabled={aiLoading}>{item.label} ↗</a>
               ) : (
                 <button className="support-chat-action" type="button" key={item.action} onClick={() => handleAction(item.action, item.label)} disabled={aiLoading}>{item.label}</button>
               )
