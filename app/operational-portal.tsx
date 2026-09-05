@@ -1056,6 +1056,25 @@ export function PortalEntry() {
   );
 }
 
+function PatientAccountScanScene({ progress }: { progress: number }) {
+  const scanPosition = Math.max(8, Math.min(progress, 88));
+  return <div className="patient-account-scan-scene" aria-hidden="true">
+    <div className="patient-scan-readout"><span>LECTURA ÓPTICA</span><b>{String(progress).padStart(2, "0")}%</b></div>
+    <div className="patient-scan-orbit">
+      <span className="patient-scan-ring patient-scan-ring-one" />
+      <span className="patient-scan-ring patient-scan-ring-two" />
+      <div className="patient-scan-document">
+        <div className="patient-scan-document-top"><span>R</span><b>CUENTA CLÍNICA</b><i>01</i></div>
+        <div className="patient-scan-document-title">REVISIÓN DE HOSPITALIZACIÓN</div>
+        <div className="patient-scan-document-lines"><i /><i /><i /><i /><i /></div>
+        <div className="patient-scan-document-footer"><span>PAM</span><span>PRESTADOR</span><span>DETALLE</span></div>
+      </div>
+      <i className="patient-scan-beam" style={{ top: `${scanPosition}%` }} />
+    </div>
+    <span className="patient-scan-coordinates">SECURE READER / LOCAL PROCESSING</span>
+  </div>;
+}
+
 function PatientStart({ userEmail, onCreated }: { userEmail: string; onCreated: (caseId: string) => void }) {
   const [name, setName] = useState("");
   const [run, setRun] = useState("");
@@ -1089,7 +1108,7 @@ function PatientStart({ userEmail, onCreated }: { userEmail: string; onCreated: 
     }
   }
 
-  return <main className="patient-login"><form className="patient-login-card" onSubmit={submit}><PortalBrand/><div className="login-seal">⌁</div><p className="portal-kicker">Comienza tu revisión</p><h1>Comienza tu revisión.</h1><p>Tu revisión quedará asociada al correo verificado.</p><div className="patient-verified-email"><span>Correo verificado</span><strong>{userEmail}</strong></div><label className="patient-field">Nombre completo<input aria-label="Nombre completo" required autoComplete="name" placeholder="Ej. María Rodríguez" value={name} onChange={(event) => setName(event.target.value)} /></label><label className="patient-field">RUN<input aria-label="RUN" required inputMode="numeric" autoComplete="off" placeholder="12.345.678-9" value={run} onChange={(event) => setRun(event.target.value)} onBlur={() => setRun(normalizeChileanRun(run))} /></label><label className="patient-field">Episodio o atención<input aria-label="Episodio" placeholder="Ej. Revisión de cuenta clínica" value={episode} onChange={(event) => setEpisode(event.target.value)} /></label><label className="portal-button portal-button-secondary"><input type="file" accept="application/pdf,image/jpeg,image/png" hidden onChange={(event) => setFile(event.target.files?.[0])} />{file ? file.name : "Cargar cuenta clínica"}</label>{error && <p className="patient-analysis-notice">{error}</p>}{busy && <UploadProgress progress={uploadProgress} stage={uploadStage || "Preparando tu revisión"} />}<button className="portal-button portal-button-primary" disabled={busy}>{busy ? "Preparando revisión…" : "Iniciar revisión"}</button><p className="patient-contact-note">El RUN se usa sólo para identificar tu cuenta y se trata junto con tus datos personales según la autorización informada. Recibirás un resultado preliminar; el documento original se cifra mientras se procesa.</p><a className="back-link" href="/">← Volver</a></form></main>;
+  return <main className="patient-login patient-start-shell"><form className="patient-login-card patient-start-card" onSubmit={submit}><PortalBrand/><div className="login-seal">⌁</div><p className="portal-kicker">Comienza tu revisión</p><h1>Comienza tu revisión.</h1><p>Tu revisión quedará asociada al correo verificado.</p><div className="patient-verified-email"><span>Correo verificado</span><strong>{userEmail}</strong></div><label className="patient-field">Nombre completo<input aria-label="Nombre completo" required autoComplete="name" placeholder="Ej. María Rodríguez" value={name} onChange={(event) => setName(event.target.value)} /></label><label className="patient-field">RUN<input aria-label="RUN" required inputMode="numeric" autoComplete="off" placeholder="12.345.678-9" value={run} onChange={(event) => setRun(event.target.value)} onBlur={() => setRun(normalizeChileanRun(run))} /></label><label className="patient-field">Episodio o atención<input aria-label="Episodio" placeholder="Ej. Revisión de cuenta clínica" value={episode} onChange={(event) => setEpisode(event.target.value)} /></label><label className="portal-button portal-button-secondary"><input type="file" accept="application/pdf,image/jpeg,image/png" hidden onChange={(event) => setFile(event.target.files?.[0])} />{file ? file.name : "Cargar cuenta clínica"}</label>{error && <p className="patient-analysis-notice">{error}</p>}{busy && <div className="patient-scan-panel"><PatientAccountScanScene progress={uploadProgress} /><UploadProgress progress={uploadProgress} stage={uploadStage || "Preparando tu revisión"} /></div>}<button className="portal-button portal-button-primary" disabled={busy}>{busy ? "Preparando revisión…" : "Iniciar revisión"}</button><p className="patient-contact-note">El RUN se usa sólo para identificar tu cuenta y se trata junto con tus datos personales según la autorización informada. Recibirás un resultado preliminar; el documento original se cifra mientras se procesa.</p><a className="back-link" href="/">← Volver</a></form></main>;
 }
 
 export function PatientPortal({ initialCaseId = "" }: { initialCaseId?: string }) {

@@ -955,6 +955,90 @@ button { cursor:pointer; }
 .developer-identity-note b { color:#58717c; }
 @media (max-width: 700px) { .developer-identity-head { flex-direction:column; }.developer-identity-grid { grid-template-columns:1fr 1fr; } }
 
+/* Patient intake scene: the account becomes the visual focus while it is being read. */
+.patient-start-shell {
+  min-height:100vh;
+  background:
+    radial-gradient(circle at 50% 18%, rgba(64,137,111,.2), transparent 23rem),
+    radial-gradient(circle at 8% 86%, rgba(53,88,103,.18), transparent 24rem),
+    linear-gradient(135deg, #050809 0%, #091112 52%, #070b0c 100%);
+}
+.patient-start-card {
+  position:relative;
+  overflow:hidden;
+  border-color:rgba(169,240,208,.19);
+  background:rgba(9,15,16,.94);
+  color:#d9e9e1;
+  box-shadow:0 28px 90px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.04);
+}
+.patient-start-card::before {
+  content:"";
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+  opacity:.25;
+  background-image:linear-gradient(rgba(169,240,208,.06) 1px, transparent 1px),linear-gradient(90deg, rgba(169,240,208,.06) 1px, transparent 1px);
+  background-size:38px 38px;
+  mask-image:linear-gradient(180deg, #000, transparent 58%);
+}
+.patient-start-card>* { position:relative; z-index:1; }
+.patient-start-card .portal-brand { color:#f3f8f5; }
+.patient-start-card .portal-brand>span:first-child { background:#a9f0d0; color:#07120f; }
+.patient-start-card .portal-brand-copy small { color:#8da69b; }
+.patient-start-card .login-seal { border:1px solid rgba(169,240,208,.27); background:rgba(169,240,208,.09); color:#a9f0d0; box-shadow:0 0 34px rgba(101,208,165,.1); }
+.patient-start-card .portal-kicker { color:#a9f0d0; letter-spacing:1.8px; }
+.patient-start-card h1 { color:#f1f7f4; }
+.patient-start-card>p:not(.portal-kicker):not(.patient-contact-note):not(.patient-analysis-notice) { color:#a5b9b0; }
+.patient-start-card .patient-verified-email { border-color:rgba(169,240,208,.22); background:rgba(169,240,208,.07); }
+.patient-start-card .patient-verified-email span { color:#88a99b; }
+.patient-start-card .patient-verified-email strong { color:#d9f5e7; }
+.patient-start-card .patient-field { color:#a7bdb3; }
+.patient-start-card .patient-field input { border-color:rgba(169,240,208,.2); background:rgba(255,255,255,.04); color:#e5f1eb; }
+.patient-start-card .patient-field input::placeholder { color:#789187; }
+.patient-start-card .patient-field input:focus { border-color:rgba(169,240,208,.55); box-shadow:0 0 0 3px rgba(169,240,208,.1); }
+.patient-start-card>label.portal-button-secondary { border-color:rgba(169,240,208,.24); background:rgba(255,255,255,.035); color:#d5e9df; }
+.patient-start-card>label.portal-button-secondary:hover { border-color:rgba(169,240,208,.55); background:rgba(169,240,208,.09); }
+.patient-start-card>.portal-button-primary { background:#a9f0d0; color:#071d14; box-shadow:0 10px 28px rgba(106,215,171,.14); }
+.patient-start-card>.portal-button-primary:hover { background:#d9ffed; }
+.patient-start-card .patient-contact-note { color:#8da69b; }
+.patient-start-card .back-link { color:#9fcab8; }
+.patient-start-card .patient-analysis-notice { border-color:rgba(248,156,146,.25); background:rgba(199,70,61,.13); color:#f4b4ac; }
+.patient-scan-panel { min-height:258px; position:relative; overflow:hidden; margin-top:18px; border:1px solid rgba(169,240,208,.2); border-radius:15px; background:radial-gradient(circle at 50% 25%, rgba(67,137,111,.14), transparent 12rem),rgba(4,10,10,.88); }
+.patient-account-scan-scene { position:absolute; inset:0; pointer-events:none; }
+.patient-scan-readout { position:absolute; top:15px; left:17px; right:17px; display:flex; justify-content:space-between; align-items:center; color:#80a99a; font-size:10px; font-weight:850; letter-spacing:1.3px; }
+.patient-scan-readout b { color:#a9f0d0; font:500 18px Georgia,serif; letter-spacing:0; }
+.patient-scan-orbit { width:280px; height:210px; position:absolute; top:8px; left:50%; display:grid; place-items:center; perspective:900px; transform:translateX(-50%); transform-style:preserve-3d; }
+.patient-scan-ring { position:absolute; display:block; border:1px solid rgba(169,240,208,.26); border-radius:50%; box-shadow:0 0 28px rgba(85,189,148,.08); }
+.patient-scan-ring-one { width:245px; height:95px; transform:rotateX(66deg) rotateZ(-15deg); }
+.patient-scan-ring-two { width:164px; height:164px; border-color:rgba(144,194,223,.19); transform:rotateY(67deg) rotateZ(20deg); }
+.patient-scan-document { width:144px; height:185px; box-sizing:border-box; padding:14px; position:relative; display:flex; flex-direction:column; border:1px solid rgba(197,255,231,.52); border-radius:6px; background:linear-gradient(140deg, rgba(212,250,232,.29), rgba(91,167,136,.08)); color:rgba(221,251,237,.88); box-shadow:0 22px 42px rgba(0,0,0,.34),inset 0 0 28px rgba(169,240,208,.06); transform-style:preserve-3d; animation:patient-account-document-turn 12s linear infinite; }
+.patient-scan-document-top { display:grid; grid-template-columns:22px 1fr auto; align-items:center; gap:6px; padding-bottom:11px; border-bottom:1px solid rgba(169,240,208,.25); font-size:6px; font-weight:900; letter-spacing:.7px; }
+.patient-scan-document-top span { width:20px; height:20px; display:grid; place-items:center; border:1px solid rgba(169,240,208,.5); border-radius:4px; color:#a9f0d0; font:700 13px Georgia,serif; }
+.patient-scan-document-top i { color:#a9f0d0; font-style:normal; }
+.patient-scan-document-title { max-width:105px; padding:18px 0 12px; color:#e6fff3; font:500 16px Georgia,serif; line-height:1.05; }
+.patient-scan-document-lines { display:grid; gap:7px; }
+.patient-scan-document-lines i { height:4px; display:block; border-radius:99px; background:rgba(169,240,208,.35); }
+.patient-scan-document-lines i:nth-child(2) { width:80%; }.patient-scan-document-lines i:nth-child(3) { width:92%; }.patient-scan-document-lines i:nth-child(4) { width:65%; }.patient-scan-document-lines i:nth-child(5) { width:84%; }
+.patient-scan-document-footer { display:flex; justify-content:space-between; gap:4px; margin-top:auto; padding-top:12px; border-top:1px solid rgba(169,240,208,.21); color:#a9f0d0; font-size:6px; font-weight:900; letter-spacing:.35px; }
+.patient-scan-beam { position:absolute; left:11%; right:11%; height:1px; z-index:3; display:block; background:linear-gradient(90deg, transparent, #a9f0d0 18%, #e7fff3 50%, #a9f0d0 82%, transparent); box-shadow:0 0 15px 2px rgba(169,240,208,.38); opacity:.85; }
+.patient-scan-coordinates { position:absolute; right:17px; bottom:89px; color:#64877b; font-size:8px; letter-spacing:.7px; }
+@keyframes patient-account-document-turn { from { transform:translateZ(20px) rotateX(7deg) rotateY(-28deg) rotateZ(5deg); } 50% { transform:translateZ(28px) rotateX(2deg) rotateY(150deg) rotateZ(-3deg); } to { transform:translateZ(20px) rotateX(7deg) rotateY(332deg) rotateZ(5deg); } }
+.patient-start-card .patient-scan-panel .upload-progress-card { position:absolute; right:17px; bottom:17px; left:17px; z-index:4; margin:0; padding:14px 16px; border-color:rgba(169,240,208,.25); border-left-color:#a9f0d0; background:rgba(7,16,16,.82); box-shadow:0 12px 28px rgba(0,0,0,.2); backdrop-filter:blur(8px); }
+.patient-start-card .upload-progress-card .card-kicker { color:#a9f0d0; }
+.patient-start-card .upload-progress-card .analysis-progress-card-head>div b { color:#d7ebe2; font-size:13px; }
+.patient-start-card .upload-progress-card .analysis-progress-card-head>strong { color:#a9f0d0; }
+.patient-start-card .upload-progress-card .analysis-progress-bar { background:rgba(169,240,208,.14); }
+.patient-start-card .upload-progress-card .analysis-progress-bar i { background:linear-gradient(90deg,#68b496,#d7fff0); }
+.patient-start-card .upload-progress-card>small { color:#9ab2a8; font-size:11px; }
+@media (max-width: 700px) {
+  .patient-scan-panel { min-height:252px; }
+  .patient-scan-orbit { transform:translateX(-50%) scale(.86); transform-origin:center top; }
+  .patient-scan-coordinates { display:none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .patient-scan-document { animation-play-state:paused; }
+}
+
 /* Patient command deck: high-contrast, aerospace-inspired presentation without external assets. */
 .patient-space-portal {
   --space-bg:#050809;
