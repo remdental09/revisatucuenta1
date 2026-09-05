@@ -5,6 +5,7 @@ import Link from "next/link";
 
 const WHATSAPP_NUMBER = "56996963089";
 const WHATSAPP_BASE_URL = `https://wa.me/${WHATSAPP_NUMBER}`;
+const SUPPORT_CHAT_API_URL = "https://revisatucuenta1-production.up.railway.app/api/support-chat";
 
 type Message = { id: number; role: "bot" | "patient"; text: string };
 type QuickAction = { label: string; action: string };
@@ -186,7 +187,7 @@ export function SupportChatbox() {
     setQuickActions([]);
     setAiLoading(true);
     try {
-      const response = await fetch("/api/support-chat", {
+      const response = await fetch(SUPPORT_CHAT_API_URL, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ messages: history }),
