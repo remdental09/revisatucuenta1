@@ -371,6 +371,8 @@ button { cursor:pointer; }
 .home-space-hero h1 { max-width:820px; margin:0; color:#f7f8f3; font:500 clamp(62px,8.6vw,132px)/.86 Georgia,'Times New Roman',serif; letter-spacing:-7px; }
 .home-space-hero h1 em { color:#d1f2dc; font-style:normal; }
 .home-space-hero-lead { max-width:545px; margin:29px 0 0; color:rgba(242,246,239,.8); font-size:16px; line-height:1.65; }
+.home-space-free-callout { display:inline-flex; align-items:center; flex-wrap:wrap; gap:9px; max-width:545px; margin:20px 0 0; padding:10px 13px; border:1px solid rgba(190,232,208,.42); border-radius:3px; background:rgba(13,64,44,.6); color:#dff5e6; font-size:12px; line-height:1.35; }
+.home-space-free-callout strong { color:#bff1ce; font:850 9px/1 Arial,Helvetica,sans-serif; letter-spacing:1px; }
 .home-space-actions { display:flex; align-items:center; flex-wrap:wrap; gap:22px; margin-top:31px; }
 .home-space-primary { display:inline-flex; align-items:center; gap:12px; min-height:50px; padding:0 21px; border-radius:2px; background:#f3f6ef; color:#0c1712; font:850 11px/1 Arial,Helvetica,sans-serif; letter-spacing:.7px; text-decoration:none; text-transform:uppercase; transition:background .2s ease,color .2s ease; }
 .home-space-primary:hover { background:#c8efd6; color:#07130d; }

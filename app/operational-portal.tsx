@@ -1018,13 +1018,14 @@ export function PortalEntry() {
 
         <div className="home-space-hero-content home-shell">
           <p className="home-space-kicker"><span>●</span> REVISA TU CUENTA DE HOSPITALIZACIÓN</p>
-          <h1>¿Tu cuenta<br /><em>necesita una revisión?</em></h1>
-          <p className="home-space-hero-lead">Sube la cuenta detallada que te entregó la clínica y recibe una evaluación preliminar de tu caso. Te informaremos si aparecen posibles inconsistencias y el monto aproximado asociado, siempre sujeto a validación.</p>
+          <h1>Tu cuenta de<br /><em>hospitalización necesita una revisión.</em></h1>
+          <p className="home-space-hero-lead">Sube la cuenta detallada de tu hospitalización y recibe una evaluación preliminar de tu caso. Te informaremos si aparecen posibles inconsistencias y el monto aproximado asociado, siempre sujeto a validación.</p>
+          <p className="home-space-free-callout"><strong>GRATIS AL INICIO</strong><span>La carga y evaluación preliminar son sin costo ni compromiso.</span></p>
           <div className="home-space-actions">
             <a className="home-space-primary" href="/?view=patient">Subir mi cuenta <span>↗</span></a>
             <a className="home-space-text-link" href="#como-funciona">Cómo funciona <span>↓</span></a>
           </div>
-          <p className="home-space-microcopy">Acceso por correo verificado · Evaluación preliminar · Datos protegidos</p>
+          <p className="home-space-microcopy">Acceso por correo verificado · Evaluación inicial gratis · Datos protegidos</p>
         </div>
 
         <div className="home-space-hero-foot home-shell" aria-hidden="true">
