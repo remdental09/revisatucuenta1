@@ -462,8 +462,10 @@ button { cursor:pointer; }
 @media (max-width: 680px) {
   .home-space-portal .home-shell { width:min(100% - 34px,1320px); }
   .home-space-hero { min-height:720px; height:100svh; }
-  .home-space-nav { min-height:78px; display:flex; justify-content:space-between; gap:15px; padding-top:9px; }
-  .home-space-nav-links { display:none; }
+  .home-space-nav { min-height:108px; display:flex; flex-wrap:wrap; align-content:flex-start; justify-content:space-between; gap:8px 15px; padding-top:9px; }
+  .home-space-nav-links { order:3; flex:0 0 100%; display:flex; gap:16px; min-width:0; overflow-x:auto; padding:7px 0 4px; scrollbar-width:none; }
+  .home-space-nav-links::-webkit-scrollbar { display:none; }
+  .home-space-nav-links a { flex:0 0 auto; font-size:8px; letter-spacing:.75px; }
   .home-space-brand .portal-brand-copy small { display:none; }
   .home-space-brand .portal-brand-copy strong { font-size:14px; }
   .home-space-dev-link { font-size:9px; }
