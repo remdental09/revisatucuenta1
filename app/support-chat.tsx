@@ -149,7 +149,7 @@ export function SupportChatbox() {
     }
     if (action === "pam_no") {
       setAnswers((current) => ({ ...current, pam: "No" }));
-      return appendConversation(label, "Puedes comenzar con la cuenta detallada. El análisis de coberturas quedará incompleto hasta que agregues el PAM.", [
+      return appendConversation(label, "No hay problema: sube de todas maneras tu cuenta detallada. Después podrás agregar el PAM desde el portal; mientras tanto revisaremos los cargos y dejaremos pendiente la evaluación de coberturas.", [
         { label: "Subir mi cuenta", action: "upload_link" },
         { label: "Hablar con un humano", action: "human" },
       ]);
