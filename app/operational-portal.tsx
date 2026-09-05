@@ -999,14 +999,14 @@ export function PortalEntry() {
         </header>
 
         <div className="home-space-hero-content home-shell">
-          <p className="home-space-kicker"><span>●</span> ¿Tu cuenta de hospitalización es muy alta?</p>
-          <h1>Revisemos<br /><em>tu cuenta.</em></h1>
-          <p className="home-space-hero-lead">Permítenos revisar la cuenta de tu prestador de salud junto con tu Programa de Atención Médica (PAM). Revisemos si los cobros corresponden y si las coberturas están debidamente aplicadas.</p>
+          <p className="home-space-kicker"><span>●</span> REVISA TU CUENTA DE HOSPITALIZACIÓN</p>
+          <h1>¿Tu cuenta<br /><em>necesita una revisión?</em></h1>
+          <p className="home-space-hero-lead">Sube la cuenta detallada que te entregó la clínica y recibe una evaluación preliminar de tu caso. Te informaremos si aparecen posibles inconsistencias y el monto aproximado asociado, siempre sujeto a validación.</p>
           <div className="home-space-actions">
             <a className="home-space-primary" href="/?view=patient">Subir mi cuenta <span>↗</span></a>
             <a className="home-space-text-link" href="#como-funciona">Cómo funciona <span>↓</span></a>
           </div>
-          <p className="home-space-microcopy">Acceso por correo verificado · Resultado preliminar · Sin promesas de devolución</p>
+          <p className="home-space-microcopy">Acceso por correo verificado · Evaluación preliminar · Datos protegidos</p>
         </div>
 
         <div className="home-space-hero-foot home-shell" aria-hidden="true">
@@ -1017,31 +1017,31 @@ export function PortalEntry() {
 
       <section id="como-funciona" className="home-space-process home-shell">
         <div className="home-space-process-intro">
-          <p className="home-space-kicker">UNA REVISIÓN MÁS CLARA</p>
-          <h2>De una cuenta difícil de leer a mejores preguntas.</h2>
-          <p>Ordenamos la información para que puedas entender qué aparece en tu cuenta y decidir qué antecedentes vale la pena revisar.</p>
+          <p className="home-space-kicker">ASÍ FUNCIONA</p>
+          <h2>Una forma clara de saber qué hacer con tu cuenta.</h2>
+          <p>En pocos pasos, carga tus antecedentes y conoce el resultado preliminar de la evaluación.</p>
         </div>
         <div className="home-space-process-list">
-          <article><span>01</span><h3>Sube tu cuenta</h3><p>Comparte el documento de hospitalización desde el acceso seguro para pacientes.</p></article>
-          <article><span>02</span><h3>La ordenamos</h3><p>Leemos sus cargos y agrupamos las líneas que merecen una segunda mirada.</p></article>
-          <article><span>03</span><h3>Revisa el resultado</h3><p>Recibe un preinforme con hallazgos y montos aproximados, siempre sujetos a revisión.</p></article>
+          <article><span>01</span><h3>Sube tu cuenta</h3><p>Carga la cuenta detallada de hospitalización en el acceso seguro.</p></article>
+          <article><span>02</span><h3>Evaluamos tu caso</h3><p>Revisamos la información recibida y preparamos un resultado preliminar.</p></article>
+          <article><span>03</span><h3>Conoce el resultado</h3><p>Recibe una indicación sobre si tu cuenta requiere revisión y el monto aproximado asociado.</p></article>
         </div>
       </section>
 
       <section className="home-space-film-grid home-shell" aria-label="El contexto de tu revisión">
         <article className="home-space-film-card home-space-film-card-large">
           <AmbientVideo src="/media/santiago-skyline.mp4" label="Santiago" />
-          <div className="home-space-film-copy"><span>02 / CONTEXTO</span><h2>Una cuenta completa cambia la conversación.</h2><p>Identifica los cargos, los respaldos y las preguntas que conviene llevar a tu prestador.</p></div>
+          <div className="home-space-film-copy"><span>02 / RESULTADO</span><h2>Tu cuenta merece una revisión clara.</h2><p>Recibe una evaluación preliminar, el monto aproximado asociado y los antecedentes que podrían ser necesarios.</p></div>
         </article>
         <article className="home-space-film-card home-space-film-card-small">
           <AmbientVideo src="/media/patient-office.mp4" label="Tu revisión" />
-          <div className="home-space-film-copy"><span>03 / DECISIÓN</span><h3>Mejores preguntas empiezan con mejores datos.</h3><p>El resultado es preliminar y siempre queda sujeto a revisión.</p></div>
+          <div className="home-space-film-copy"><span>03 / PAM</span><h3>¿No tienes el PAM?</h3><p>Puedes subir tu cuenta de todas maneras y agregar el PAM después.</p></div>
         </article>
       </section>
 
       <section id="privacidad" className="home-space-privacy home-shell">
         <div className="home-space-privacy-mark">⌁</div>
-        <div><p className="home-space-kicker">PRIVACIDAD PRIMERO</p><h2>Tu cuenta merece cuidado y contexto.</h2><p>El acceso se verifica por correo. Antes de continuar, podrás revisar la información del servicio y autorizar de forma informada el tratamiento que corresponda.</p><a href="/privacidad">Leer la política de privacidad ↗</a></div>
+        <div><p className="home-space-kicker">DATOS PROTEGIDOS</p><h2>Tu información se trata de forma privada.</h2><p>El acceso se verifica por correo. Antes de continuar, podrás revisar el servicio y autorizar el tratamiento correspondiente.</p><a href="/privacidad">Leer la política de privacidad ↗</a></div>
         <a className="home-space-text-link" href="/?view=patient">Comenzar revisión <span>↗</span></a>
       </section>
 
