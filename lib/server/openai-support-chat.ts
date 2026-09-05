@@ -149,10 +149,13 @@ export async function requestSupportChat(
         store: false,
         input: [
           { role: "system", content: [{ type: "input_text", text: SYSTEM_INSTRUCTIONS }] },
-          ...messages.slice(-12).map((message) => ({
-            role: message.role,
-            content: [{ type: "input_text", text: sanitizeSupportMessage(message.content) }],
-          })),
+          {
+            role: "user",
+            content: [{
+              type: "input_text",
+              text: messages.slice(-12).map((message) => `${message.role === "user" ? "Paciente" : "Asistente"}: ${sanitizeSupportMessage(message.content)}`).join("\n"),
+            }],
+          },
         ],
         text: { format: { type: "json_schema", name: "support_chat_result", strict: true, schema: supportChatSchema } },
       }),

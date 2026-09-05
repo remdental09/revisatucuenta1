@@ -213,6 +213,9 @@ export function SupportChatbox() {
     if (!text) return;
     setDraft("");
     const normalized = normalizeText(text);
+    if (/^(hola|buenas|buenos dias|buenas tardes|buenas noches|hello|hey)[!. ,]*$/.test(normalized)) {
+      return appendConversation(text, "Hola. ¿En qué puedo ayudarte? Puedo orientarte sobre tu cuenta de hospitalización, el PAM, un resultado preliminar o la privacidad.", INITIAL_ACTIONS);
+    }
     if (normalized.includes("humano") || normalized.includes("persona") || normalized.includes("whatsapp")) return requestHuman(text);
     if (pendingQuestion === "detailed" && isYes(text)) return handleAction("detailed_yes", text);
     if (pendingQuestion === "detailed" && isNo(text)) return handleAction("detailed_no", text);
