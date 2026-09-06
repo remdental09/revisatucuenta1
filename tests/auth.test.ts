@@ -42,6 +42,19 @@ test("reconoce la identidad ChatGPT del administrador como desarrollador", () =>
   }
 });
 
+test("reconoce las dos claves cortas de desarrollador y rechaza otras", () => {
+  const previous = process.env.REVISATUCUENTA_ADMIN_USER_IDS;
+  process.env.REVISATUCUENTA_ADMIN_USER_IDS = "lpaulr,aleretamal";
+  try {
+    assert.equal(isDeveloperUser({ id: "chatgpt:opaque-1", email: "lpaulr@gmail.com", displayName: "Luis", source: "chatgpt" }), true);
+    assert.equal(isDeveloperUser({ id: "chatgpt:opaque-2", email: "aleretamal@revisatucuenta.cl", displayName: "Ale", source: "chatgpt" }), true);
+    assert.equal(isDeveloperUser({ id: "chatgpt:opaque-3", email: "otra@example.com", displayName: "Otra persona", source: "chatgpt" }), false);
+  } finally {
+    if (previous === undefined) delete process.env.REVISATUCUENTA_ADMIN_USER_IDS;
+    else process.env.REVISATUCUENTA_ADMIN_USER_IDS = previous;
+  }
+});
+
 test("isolates volatile cases by owner", () => {
   const suffix = crypto.randomUUID();
   const ownerA = `owner-a-${suffix}`;

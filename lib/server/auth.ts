@@ -257,9 +257,15 @@ export function isDeveloperUser(user: AuthenticatedUser) {
   // were classified as patient calls and returned only `patientResult`.
   const allowedUserIds = (runtimeEnv("REVISATUCUENTA_ADMIN_USER_IDS") || "")
     .split(",")
-    .map((value) => value.trim())
+    .map((value) => value.trim().toLowerCase())
     .filter(Boolean);
-  return allowedUserIds.includes(user.id.replace(/^chatgpt:/, "")) || allowedUserIds.includes(user.id);
+  const userId = user.id.replace(/^chatgpt:/, "").trim().toLowerCase();
+  const email = normalizeEmail(user.email);
+  const emailHandle = email.split("@", 1)[0] || email;
+  // The allowlist accepts opaque ChatGPT user IDs and the short developer
+  // keys used by the pilot (for example `lpaulr` or `aleretamal`). A key also
+  // matches the local part of that developer's verified email.
+  return allowedUserIds.some((allowedId) => allowedId === userId || allowedId === email || allowedId === emailHandle);
 }
 
 export function sessionCookie(token: string, secure = runtimeEnv("NODE_ENV") === "production") {
