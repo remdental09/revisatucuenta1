@@ -24,6 +24,7 @@ type CaseDocument = {
   mimeType: string;
   byteSize: number;
   classification: string;
+  internalOnly?: boolean;
   confidence: number;
   processingStatus?: string;
   processingError?: string;
@@ -421,11 +422,16 @@ async function uploadDocument(caseId: string, file: File, classification: string
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ documentId, extraction }),
     });
-    if (!saved.ok) throw new Error((await saved.json().catch(() => ({}))).error || "El documento se guardó, pero la extracción no pudo persistirse");
-    const corpusRegistered = options.registerCorpus === false
-      ? false
-      : await registerCorpusObservation(caseId, documentId, extraction, classification);
-    return { documentId, extraction, corpusRegistered };
+    const savedPayload = await saved.json().catch(() => ({})) as { error?: string; derivedPamDocumentId?: string };
+    if (!saved.ok) throw new Error(savedPayload.error || "El documento se guardó, pero la extracción no pudo persistirse");
+    let corpusRegistered = false;
+    if (options.registerCorpus !== false) {
+      corpusRegistered = await registerCorpusObservation(caseId, documentId, extraction, classification);
+      if (savedPayload.derivedPamDocumentId && extraction.pam) {
+        await registerCorpusObservation(caseId, savedPayload.derivedPamDocumentId, { ...extraction, account: undefined }, "PAM / liquidación");
+      }
+    }
+    return { documentId, extraction, corpusRegistered, pamDocumentId: savedPayload.derivedPamDocumentId };
   } catch (reason) {
     await fetch("/api/documents", {
       method: "PATCH",
@@ -537,9 +543,13 @@ async function retryStoredDocument(caseId: string, document: CaseDocument, onPro
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ documentId: document.id, extraction }),
     });
-    if (!saved.ok) throw new Error((await saved.json().catch(() => ({}))).error || "La relectura terminó, pero no pudo guardarse");
+    const savedPayload = await saved.json().catch(() => ({})) as { error?: string; derivedPamDocumentId?: string };
+    if (!saved.ok) throw new Error(savedPayload.error || "La relectura terminó, pero no pudo guardarse");
     const corpusRegistered = await registerCorpusObservation(caseId, document.id, extraction, document.classification);
-    return { documentId: document.id, extraction, corpusRegistered };
+    if (savedPayload.derivedPamDocumentId && extraction.pam) {
+      await registerCorpusObservation(caseId, savedPayload.derivedPamDocumentId, { ...extraction, account: undefined }, "PAM / liquidación");
+    }
+    return { documentId: document.id, extraction, corpusRegistered, pamDocumentId: savedPayload.derivedPamDocumentId };
   } catch (reason) {
     await fetch("/api/documents", {
       method: "PATCH",
@@ -562,6 +572,9 @@ async function replaceAccountDocument(caseId: string, previous: CaseDocument, fi
   try {
     await deleteDocumentRequest(caseId, previous.id);
     const corpusRegistered = await registerCorpusObservation(caseId, replacement.documentId, replacement.extraction, "Cuenta clínica");
+    if (replacement.pamDocumentId && replacement.extraction.pam) {
+      await registerCorpusObservation(caseId, replacement.pamDocumentId, { ...replacement.extraction, account: undefined }, "PAM / liquidación");
+    }
     return { ...replacement, corpusRegistered };
   } catch (reason) {
     // If the old document could not be removed, roll back the new one so the
@@ -1541,7 +1554,8 @@ function PatientContractModal({ contract, busy, error, onClose, onAccept }: { co
 }
 
 function PatientDocuments({ snapshot, deletingDocumentId, onAccount, onPam, onDelete }: { snapshot: Snapshot; deletingDocumentId: string; onAccount: () => void; onPam: () => void; onDelete: (document: CaseDocument) => void }) {
-  return <section className="patient-card documents-view"><div className="card-heading"><div><span className="card-kicker">DOCUMENTOS DEL CASO</span><h2>Fuentes cargadas</h2></div><div className="document-actions"><button className="portal-button portal-button-secondary" onClick={onAccount}>Agregar cuenta +</button><button className="portal-button portal-button-primary" onClick={onPam}>Agregar PAM +</button></div></div><div className="document-list">{snapshot.documents.map((doc) => <article className="patient-document clinic" key={doc.id}><span className="file-mark">PDF</span><div><span>{doc.classification}</span><b>{doc.name}</b><small>{doc.extraction?.pageCount || "-"} páginas · {processingLabel(doc)}</small>{doc.processingStatus === "review_required" && doc.sourceExpiresAt && <small>Original cifrado disponible temporalmente hasta {new Date(doc.sourceExpiresAt).toLocaleString("es-CL")}</small>}</div><div className="document-status"><em>{doc.processingStatus === "failed" ? "Requiere atención" : "Protegido"}</em><button className="patient-document-delete" onClick={() => onDelete(doc)} disabled={Boolean(deletingDocumentId)}>{deletingDocumentId === doc.id ? "Borrando…" : "Borrar documento"}</button></div></article>)}</div><div className="document-tip"><span>i</span><p>La cuenta muestra los cargos del prestador y el PAM la liquidación de cobertura. Cada documento mantiene su origen y estado de procesamiento.</p></div></section>;
+  const visibleDocuments = snapshot.documents.filter((doc) => !doc.internalOnly);
+  return <section className="patient-card documents-view"><div className="card-heading"><div><span className="card-kicker">DOCUMENTOS DEL CASO</span><h2>Fuentes cargadas</h2></div><div className="document-actions"><button className="portal-button portal-button-secondary" onClick={onAccount}>Agregar cuenta +</button><button className="portal-button portal-button-primary" onClick={onPam}>Agregar PAM +</button></div></div><div className="document-list">{visibleDocuments.map((doc) => <article className="patient-document clinic" key={doc.id}><span className="file-mark">PDF</span><div><span>{doc.classification}</span><b>{doc.name}</b><small>{doc.extraction?.pageCount || "-"} páginas · {processingLabel(doc)}</small>{doc.processingStatus === "review_required" && doc.sourceExpiresAt && <small>Original cifrado disponible temporalmente hasta {new Date(doc.sourceExpiresAt).toLocaleString("es-CL")}</small>}</div><div className="document-status"><em>{doc.processingStatus === "failed" ? "Requiere atención" : "Protegido"}</em><button className="patient-document-delete" onClick={() => onDelete(doc)} disabled={Boolean(deletingDocumentId)}>{deletingDocumentId === doc.id ? "Borrando…" : "Borrar documento"}</button></div></article>)}</div><div className="document-tip"><span>i</span><p>La cuenta muestra los cargos del prestador y el PAM la liquidación de cobertura. Cada documento mantiene su origen y estado de procesamiento.</p></div></section>;
 }
 function PatientActivity({ activities }: { activities: Activity[] }) {
   return <section className="patient-card activity-view"><span className="card-kicker">ACTIVIDAD</span><h2>Movimientos de la revisión</h2><div className="activity-list">{activities.length ? activities.slice(0, 20).map((activity) => <div className={`activity-item ${activity.pending ? "pending" : ""}`} key={activity.id}><span className="activity-dot" /><div><small>{new Date(activity.date).toLocaleString("es-CL")}</small><b>{activity.title}</b><p>{activity.detail}</p></div></div>) : <div className="activity-item pending"><span className="activity-dot" /><div><small>Ahora</small><b>Esperando documentos</b><p>Los movimientos de carga, extracción, revisión y análisis aparecerán aquí.</p></div></div>}</div></section>;
@@ -2186,7 +2200,7 @@ function OperationalDoc({ type, document, classification, busy, pendingFile, upl
   const displayStatus = processingFile
     ? `${uploadStage || "Procesando documento"} · ${uploadProgress}%`
     : document
-      ? `${document.extraction?.pageCount || "-"} páginas · ${processingLabel(document)}`
+      ? `${document.internalOnly ? "Detectado automáticamente · " : ""}${document.extraction?.pageCount || "-"} páginas · ${processingLabel(document)}`
       : "Pendiente";
   return <article className={`dev-doc ${document || processingFile ? "" : "pending"}`}><span className="file-mark">{document || processingFile ? "PDF" : "+"}</span><div><span>{type}</span><b>{displayName}</b><small>{displayStatus}</small></div><div className="dev-doc-actions"><button onClick={() => input.current?.click()} disabled={busy}>{document ? "Reemplazar" : "Cargar"}</button>{document && ["failed", "review_required"].includes(document.processingStatus || "") && !document.sourceDeletedAt && <a href={`/api/documents?caseId=${encodeURIComponent(document.caseId)}&documentId=${encodeURIComponent(document.id)}&download=source`}>Descargar original temporal</a>}{onAnalyze && <button className="dev-doc-analyze" onClick={onAnalyze} disabled={busy || cannotAnalyze} title={cannotAnalyze ? "La cuenta necesita una lectura completa o un cambio de lector antes del análisis." : "La revisión técnica no impide generar un análisis preliminar."}>{busy ? "Procesando…" : analysisAvailable ? "Actualizar análisis" : "Analizar cuenta"} →</button>}</div><input ref={input} hidden type="file" accept="application/pdf,image/jpeg,image/png" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) onFile(file, classification); }} /></article>;
 }

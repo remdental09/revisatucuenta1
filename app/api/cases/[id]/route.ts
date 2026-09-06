@@ -61,6 +61,7 @@ export async function GET(
     mimeType: String(document.mime_type),
     byteSize: Number(document.byte_size),
     classification: String(document.classification),
+    internalOnly: /detectado automáticamente/i.test(String(document.classification || "")),
     confidence: Number(document.classification_confidence),
     processingStatus: String(document.processing_status || "uploaded"),
     processingError: document.processing_error ? String(document.processing_error) : undefined,

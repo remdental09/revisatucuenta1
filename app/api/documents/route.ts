@@ -133,6 +133,15 @@ export async function DELETE(request: Request) {
   await env.DB.prepare(`DELETE FROM document_extractions WHERE document_id = ?`).bind(documentId).run();
   if (/cuenta|mixto/i.test(String(document.classification || ""))) {
     await env.DB.prepare(`DELETE FROM case_analyses WHERE case_id = ?`).bind(caseId).run();
+    const derived = await env.DB.prepare(`SELECT id FROM documents WHERE case_id = ? AND storage_key = ? AND classification LIKE 'PAM / liquidación · detectado automáticamente%'`).bind(caseId, `derived/${documentId}/pam`).all();
+    for (const row of derived.results as Array<Record<string, unknown>>) {
+      const derivedId = String(row.id || "");
+      if (!derivedId || derivedId === documentId) continue;
+      await env.DB.prepare(`DELETE FROM extracted_fields WHERE document_id = ?`).bind(derivedId).run();
+      await env.DB.prepare(`DELETE FROM document_extractions WHERE document_id = ?`).bind(derivedId).run();
+      await env.DB.prepare(`DELETE FROM documents WHERE id = ? AND case_id = ?`).bind(derivedId, caseId).run();
+      await removePendingCorpusContribution(env, caseId, "pam");
+    }
   }
   await env.DB.prepare(`DELETE FROM documents WHERE id = ? AND case_id = ?`).bind(documentId, caseId).run();
 

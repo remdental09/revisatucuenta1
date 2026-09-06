@@ -9,6 +9,7 @@ import {
   localRequestAdvisory,
   localSaveAnalysis,
   localSaveDocument,
+  localSaveMixedExtraction,
 } from "../lib/server/runtime-store.ts";
 import { analyzeClinicalAccount } from "../lib/rules/chilean-account.ts";
 
@@ -79,6 +80,40 @@ test("reemplazar una cuenta elimina la anterior y conserva los demás documentos
   localSaveAnalysis(caseId, analyzeClinicalAccount([]));
   localDeleteDocument(pamId, caseId);
   assert.ok(localGetCase(caseId, owner, true)?.analysis);
+});
+
+test("separa un PDF mixto en cuenta y PAM interno sin duplicar la fuente", () => {
+  const suffix = crypto.randomUUID();
+  const owner = `mixed-owner-${suffix}`;
+  const caseId = `mixed-case-${suffix}`;
+  const accountId = `mixed-account-${suffix}`;
+  assert.equal(localCreateCase({ id: caseId, ownerUserId: owner, ownerEmail: "mixed@example.com", patientName: "Paciente mixto", episodeLabel: "Hospitalización" }), true);
+  localSaveDocument({ id: accountId, caseId, name: "cuenta-y-pam.pdf", mimeType: "application/pdf", byteSize: 100, classification: "Cuenta clínica", confidence: 95 });
+
+  const derivedId = localSaveMixedExtraction(accountId, {
+    pageCount: 2,
+    usedOcr: true,
+    account: { type: "account", label: "Cuenta clínica", pages: [1], fields: [{ key: "total", label: "Total", value: "1000", page: 1, confidence: 1 }], lines: [{ description: "Día cama", amount: 1000, page: 1 }] },
+    pam: { type: "pam", label: "PAM", pages: [2], fields: [{ key: "billed_total", label: "Total facturado", value: "900", page: 2, confidence: 1 }], lines: [{ description: "Prestación PAM", amount: 900, page: 2 }] },
+  }, 2);
+  const snapshot = localGetCase(caseId, owner, true);
+  assert.ok(derivedId);
+  assert.equal(snapshot?.documents.length, 2);
+  assert.equal(snapshot?.documents.find((document) => document.id === accountId)?.extraction?.pam, undefined);
+  assert.equal(snapshot?.documents.find((document) => document.id === derivedId)?.extraction?.account, undefined);
+  assert.equal(snapshot?.documents.find((document) => document.id === derivedId)?.classification, "PAM / liquidación · detectado automáticamente");
+  const replacementId = `mixed-replacement-${suffix}`;
+  localSaveDocument({ id: replacementId, caseId, name: "reemplazo.pdf", mimeType: "application/pdf", byteSize: 100, classification: "Cuenta clínica", confidence: 95 });
+  const replacementPamId = localSaveMixedExtraction(replacementId, {
+    pageCount: 2,
+    usedOcr: true,
+    account: { type: "account", label: "Cuenta clínica", pages: [1], fields: [], lines: [{ description: "Cuenta nueva", amount: 2000, page: 1 }] },
+    pam: { type: "pam", label: "PAM", pages: [2], fields: [], lines: [{ description: "PAM nueva", amount: 1800, page: 2 }] },
+  }, 0);
+  localDeleteDocument(accountId, caseId);
+  assert.equal(localGetCase(caseId, owner, true)?.documents.some((document) => document.id === replacementPamId), true);
+  localDeleteDocument(replacementId, caseId);
+  assert.equal(localGetCase(caseId, owner, true)?.documents.length, 0);
 });
 
 test("registra una sola solicitud de asesoría sin autorizar reclamos", () => {

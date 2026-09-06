@@ -147,7 +147,7 @@ export function localGetCase(id: string, ownerUserId: string, includeAll = false
   if (!item || (!includeAll && item.owner_user_id !== ownerUserId)) return null;
   const caseDocuments = [...documents.values()].filter((document) => document.case_id === id).sort((a, b) => a.created_at.localeCompare(b.created_at)).map((document) => ({
     id: document.id, caseId: document.case_id, name: document.original_name, mimeType: document.mime_type, byteSize: document.byte_size,
-    classification: document.classification, confidence: document.classification_confidence, processingStatus: document.processing_status, processingError: document.processing_error, sourceExpiresAt: document.source_expires_at, sourceDeletedAt: document.source_deleted_at, pageFrom: document.page_from, pageTo: document.page_to,
+    classification: document.classification, internalOnly: /detectado automáticamente/i.test(document.classification), confidence: document.classification_confidence, processingStatus: document.processing_status, processingError: document.processing_error, sourceExpiresAt: document.source_expires_at, sourceDeletedAt: document.source_deleted_at, pageFrom: document.page_from, pageTo: document.page_to,
     createdAt: document.created_at, extraction: extractions.get(document.id),
   }));
   const analysis = analyses.get(id);
@@ -209,6 +209,14 @@ export function localDeleteDocument(documentId: string, caseId: string) {
   if (!document || document.case_id !== caseId) return null;
   documents.delete(documentId);
   extractions.delete(documentId);
+  if (/cuenta|mixto/i.test(document.classification)) {
+    for (const [derivedId, derived] of documents) {
+      if (derived.case_id === caseId && derived.id === `pam-${documentId}` && /detectado automáticamente/i.test(derived.classification)) {
+        documents.delete(derivedId);
+        extractions.delete(derivedId);
+      }
+    }
+  }
   if (/cuenta|mixto/i.test(document.classification)) analyses.delete(caseId);
   addActivity(caseId, "Documento eliminado", `${document.original_name} fue retirado de la revisión.`);
   const remaining = [...documents.values()].some((item) => item.case_id === caseId);
@@ -250,6 +258,55 @@ export function localSaveExtraction(documentId: string, extraction: DocumentExtr
     addActivity(document.case_id, "Paciente identificado", "El nombre informado en la cuenta clínica quedó asociado a la revisión.");
   }
   addActivity(document.case_id, "Extracción completada", `${savedFields} campos quedaron vinculados a su documento de origen.`);
+}
+
+/**
+ * A patient may upload one PDF containing both the provider account and the
+ * insurer's PAM. Keep the original document as the account source and create
+ * a separate internal PAM source so both pipelines remain unambiguous.
+ */
+export function localSaveMixedExtraction(documentId: string, extraction: DocumentExtraction, savedFields: number, patientName?: string) {
+  const document = documents.get(documentId);
+  if (!document) return undefined;
+  if (/pam|liquid/i.test(document.classification) && extraction.pam) {
+    localSaveExtraction(documentId, { ...extraction, account: undefined }, extraction.pam.fields.length);
+    return undefined;
+  }
+  if (!extraction.account || !extraction.pam || !/cuenta|mixto/i.test(document.classification)) {
+    localSaveExtraction(documentId, extraction, savedFields, patientName);
+    return undefined;
+  }
+
+  const accountExtraction: DocumentExtraction = { ...extraction, pam: undefined };
+  const pamExtraction: DocumentExtraction = {
+    ...extraction,
+    account: undefined,
+    pageKinds: extraction.pageKinds?.filter((page) => page.kind === "pam"),
+  };
+  localSaveExtraction(documentId, accountExtraction, accountExtraction.account?.fields.length || 0, patientName);
+
+  const existing = [...documents.values()].find((item) =>
+    item.case_id === document.case_id
+    && item.classification === "PAM / liquidación · detectado automáticamente"
+    && item.original_name === document.original_name,
+  );
+  const derivedId = existing?.id || `pam-${documentId}`;
+  if (!existing) {
+    localSaveDocument({
+      id: derivedId,
+      caseId: document.case_id,
+      name: document.original_name,
+      mimeType: document.mime_type,
+      byteSize: document.byte_size,
+      classification: "PAM / liquidación · detectado automáticamente",
+      confidence: document.classification_confidence,
+    });
+  }
+  localSaveExtraction(derivedId, pamExtraction, pamExtraction.pam?.fields.length || 0);
+  const derived = documents.get(derivedId);
+  if (derived) documents.set(derivedId, { ...derived, source_deleted_at: now() });
+  addActivity(document.case_id, "PAM detectado automáticamente", "El lector encontró páginas de PAM dentro de la cuenta y las dejó disponibles como fuente separada para conciliación.");
+  return derivedId;
 }
 
 export function localSaveAnalysis(caseId: string, analysis: ClinicalAccountAnalysis) {
