@@ -248,7 +248,18 @@ export function isDeveloperUser(user: AuthenticatedUser) {
     .split(",")
     .map(normalizeEmail)
     .filter(Boolean);
-  return allowed.includes(normalizeEmail(user.email));
+  if (allowed.includes(normalizeEmail(user.email))) return true;
+
+  // ChatGPT sessions do not carry the local `development` source. The Sites
+  // production environment therefore identifies the internal console by an
+  // explicit, separately managed account-user allowlist. Without this check
+  // the developer page could render successfully while protected API calls
+  // were classified as patient calls and returned only `patientResult`.
+  const allowedUserIds = (runtimeEnv("REVISATUCUENTA_ADMIN_USER_IDS") || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return allowedUserIds.includes(user.id.replace(/^chatgpt:/, "")) || allowedUserIds.includes(user.id);
 }
 
 export function sessionCookie(token: string, secure = runtimeEnv("NODE_ENV") === "production") {

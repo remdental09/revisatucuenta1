@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { signAuthToken, verifyAuthToken } from "../lib/server/auth.ts";
+import { isDeveloperUser, signAuthToken, verifyAuthToken } from "../lib/server/auth.ts";
 import {
   localCreateCase,
   localDeleteDocument,
@@ -27,6 +27,18 @@ test("accepts a valid signed session and rejects tampering", async () => {
   assert.equal(await verifyAuthToken(`${token.slice(0, -1)}x`, secret, "session", 1_500), undefined);
   assert.equal(await verifyAuthToken(token, secret, "session", 2_001), undefined);
   assert.equal(await verifyAuthToken(token, secret, "magic_link", 1_500), undefined);
+});
+
+test("reconoce la identidad ChatGPT del administrador como desarrollador", () => {
+  const previous = process.env.REVISATUCUENTA_ADMIN_USER_IDS;
+  process.env.REVISATUCUENTA_ADMIN_USER_IDS = "admin-user-1,admin-user-2";
+  try {
+    assert.equal(isDeveloperUser({ id: "chatgpt:admin-user-2", email: "owner@example.com", displayName: "Owner", source: "chatgpt" }), true);
+    assert.equal(isDeveloperUser({ id: "chatgpt:patient-user", email: "owner@example.com", displayName: "Owner", source: "chatgpt" }), false);
+  } finally {
+    if (previous === undefined) delete process.env.REVISATUCUENTA_ADMIN_USER_IDS;
+    else process.env.REVISATUCUENTA_ADMIN_USER_IDS = previous;
+  }
 });
 
 test("isolates volatile cases by owner", () => {
