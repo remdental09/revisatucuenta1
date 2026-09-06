@@ -107,7 +107,7 @@ function AuthenticationLoading() {
 }
 
 function DeveloperAccessUnavailable() {
-  return <main className="patient-login"><section className="patient-login-card"><PortalBrand/><div className="login-seal">⌁</div><p className="portal-kicker">CONSOLA DE DESARROLLO</p><h1>Acceso de desarrollo no habilitado.</h1><p>Esta consola no usa claves de piloto. Para abrirla durante el piloto, el entorno debe tener habilitado el modo de desarrollo abierto.</p><p className="patient-contact-note">Configuración requerida: <strong>REVISA_DEVELOPER_OPEN=true</strong></p><a className="back-link" href="/">← Volver</a></section></main>;
+  return <main className="patient-login"><section className="patient-login-card"><PortalBrand/><div className="login-seal">⌁</div><p className="portal-kicker">CONSOLA DE DESARROLLO</p><h1>Sesión de desarrollador requerida.</h1><p>Esta consola está separada de la vista paciente. La sesión paciente no puede abrirla y aquí no se muestran resultados clínicos del paciente.</p><p className="patient-contact-note">Ingresa con una identidad autorizada para el equipo revisor.</p><a className="back-link" href="/">← Volver</a></section></main>;
 }
 
 function EmailAccess({ returnTo }: { returnTo: string }) {
