@@ -102,6 +102,25 @@ test("instala las APIs de Promise requeridas por el lector PDF compatible", asyn
   assert.equal(await compatiblePromise.try?.(() => 17), 17);
 });
 
+test("permite iterar ReadableStream en Safari sin iterador asíncrono nativo", async () => {
+  if (typeof globalThis.ReadableStream !== "function" || typeof Symbol.asyncIterator !== "symbol") return;
+  const prototype = globalThis.ReadableStream.prototype as ReadableStream<unknown> & {
+    [Symbol.asyncIterator]?: () => AsyncIterator<unknown>;
+  };
+  const original = prototype[Symbol.asyncIterator];
+  Object.defineProperty(prototype, Symbol.asyncIterator, { configurable: true, writable: true, value: undefined });
+  try {
+    installPromiseWithResolversPolyfill();
+    const stream = new ReadableStream<unknown>({ start(controller) { controller.enqueue("ok"); controller.close(); } });
+    const iterator = prototype[Symbol.asyncIterator]?.call(stream);
+    assert.ok(iterator);
+    assert.deepEqual(await iterator.next(), { value: "ok", done: false });
+    await iterator.return?.();
+  } finally {
+    Object.defineProperty(prototype, Symbol.asyncIterator, { configurable: true, writable: true, value: original });
+  }
+});
+
 test("extracts Clínica Alemana rows and Vida Tres bonos", () => {
   const account = structureDocument(
     [{

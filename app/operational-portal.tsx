@@ -1170,10 +1170,10 @@ function PatientStart({ userEmail, onCreated }: { userEmail: string; onCreated: 
       }
       onCreated(id);
     } catch (reason) {
-      const message = errorMessage(reason, "No se pudo iniciar la revisión");
+      const message = extractionErrorMessage(reason);
       setError(file && /lector|ocr|renderizar|página/i.test(message)
-        ? "No pudimos verificar el RUN porque una página de la cuenta no se pudo leer completamente. El documento quedó recibido para revisión; reemplázalo si seleccionaste un archivo incorrecto."
-        : message);
+        ? "No pudimos leer completamente tu cuenta clínica en este navegador. El documento quedó recibido para revisión; puedes reintentarlo o reemplazarlo si seleccionaste un archivo incorrecto."
+        : message || "No se pudo iniciar la revisión");
     } finally {
       setBusy(false);
     }
