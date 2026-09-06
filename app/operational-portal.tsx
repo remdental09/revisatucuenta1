@@ -6,6 +6,7 @@ import { CURRENT_READER_VERSION, type DocumentExtraction, type ReaderAssistRespo
 import { assessExtractionQuality, buildReaderChangeProposal, buildReaderReviewPackage, readerChangeProposalToMarkdown, readerReviewPackageToMarkdown } from "../lib/extraction/reader-quality";
 import type { ClinicalAccountAnalysis, ChileanBillingLine, InclusionCandidate, PamTraceability } from "../lib/rules/chilean-account";
 import type { FunctionalEquivalenceAlert } from "../lib/rules/observed-corpus";
+import { buildPatientResult, type PatientResult } from "../lib/rules/patient-result";
 import { generateClarificationClaimMarkdown } from "../lib/claims/claim-generator";
 import { compareChileanRun, normalizeChileanRun } from "../lib/identity/chilean-run";
 import { WhatsAppContact } from "./whatsapp-contact";
@@ -58,6 +59,8 @@ type Snapshot = {
   case: { id: string; patientName: string; patientRun?: string; contactEmail?: string; episodeLabel: string; status: string; createdAt: string; updatedAt: string };
   documents: CaseDocument[];
   analysis?: ClinicalAccountAnalysis;
+  patientResult?: PatientResult;
+  patientIdentityStatus?: "matched" | "mismatch" | "unavailable";
   authorization?: Authorization;
   contract?: ServiceContract;
   activities: Activity[];
@@ -601,7 +604,7 @@ async function analyzeCase(caseId: string, document?: CaseDocument, episodeLabel
     }),
   });
   if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || "No se pudo analizar la cuenta");
-  return response.json() as Promise<ClinicalAccountAnalysis>;
+  return response.json() as Promise<ClinicalAccountAnalysis | { patientResult: PatientResult }>;
 }
 
 function emptyVisionExtraction(): DocumentExtraction {
@@ -1129,7 +1132,7 @@ function PatientAccountScanScene({ progress }: { progress: number }) {
   </div>;
 }
 
-function PatientStart({ userEmail, onCreated }: { userEmail: string; onCreated: (caseId: string) => void }) {
+function PatientStart({ userEmail, onCreated }: { userEmail: string; onCreated: (caseId: string, extraction?: DocumentExtraction) => void }) {
   const [name, setName] = useState("");
   const [run, setRun] = useState("");
   const [episode, setEpisode] = useState("Revisión de cuenta clínica");
@@ -1159,9 +1162,11 @@ function PatientStart({ userEmail, onCreated }: { userEmail: string; onCreated: 
         if (compareChileanRun(run, extractedRun) !== "matched") {
           // Send the patient to the case view so the warning is visible and
           // the account can be replaced without exposing the other identity.
-          onCreated(id);
+          onCreated(id, result.extraction);
           return;
         }
+        onCreated(id, result.extraction);
+        return;
       }
       onCreated(id);
     } catch (reason) {
@@ -1202,10 +1207,23 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
   const accountInputRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const autoAnalysisKeyRef = useRef("");
+  const patientExtractionsRef = useRef<Record<string, DocumentExtraction>>({});
 
   async function refresh() {
     if (!caseId) return;
-    try { setError(""); const next = hideStaleAnalysis(await getSnapshot(caseId)); setSnapshot(next); if (next.analysis) setStatus("complete"); else setStatus("idle"); }
+    try {
+      setError("");
+      const raw = hideStaleAnalysis(await getSnapshot(caseId));
+      const next = {
+        ...raw,
+        documents: raw.documents.map((document) => ({
+          ...document,
+          extraction: patientExtractionsRef.current[document.id] || document.extraction,
+        })),
+      };
+      setSnapshot(next);
+      if (next.analysis || next.patientResult?.available) setStatus("complete"); else setStatus("idle");
+    }
       catch (reason) { setError(errorMessage(reason, "No se pudo cargar la revisión")); }
   }
   useEffect(() => { void refresh(); }, [caseId]);
@@ -1216,7 +1234,8 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
     const file = event.target.files?.[0]; event.target.value = ""; if (!file || !caseId) return;
     setBusy(true); setProgress(0); setStage("Guardando PAM / liquidación");
     try {
-      await uploadDocument(caseId, file, "PAM / liquidación", (value) => { setProgress(value); setStage(value < 100 ? `Leyendo PAM / liquidación · ${value}%` : "Lectura del PAM completada"); });
+      const result = await uploadDocument(caseId, file, "PAM / liquidación", (value) => { setProgress(value); setStage(value < 100 ? `Leyendo PAM / liquidación · ${value}%` : "Lectura del PAM completada"); });
+      patientExtractionsRef.current[result.documentId] = result.extraction;
       await refresh();
       notify("PAM cargado y vinculado a la revisión");
     }
@@ -1236,6 +1255,7 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
       const result = previousAccount
         ? await replaceAccountDocument(caseId, previousAccount, file, updateProgress)
         : await uploadDocument(caseId, file, "Cuenta clinica", updateProgress);
+      patientExtractionsRef.current[result.documentId] = result.extraction;
       await refresh();
       notify(previousAccount
         ? "Cuenta clínica anterior eliminada y reemplazada correctamente"
@@ -1265,7 +1285,7 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
       const analysis = await analyzeCase(caseId, accountDoc(snapshot), snapshot.case.episodeLabel, pamDoc(snapshot));
       setSnapshot((current) => current ? {
         ...current,
-        analysis,
+        ...( "patientResult" in analysis ? { analysis: undefined, patientResult: analysis.patientResult } : { analysis, patientResult: buildPatientResult(analysis) }),
         case: { ...current.case, status: "analysis_ready", updatedAt: new Date().toISOString() },
       } : current);
       setProgress(100); setStage("Resultado disponible para revisión"); setStatus("complete");
@@ -1277,7 +1297,7 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
 
   useEffect(() => {
     const account = accountDoc(snapshot);
-    if (!snapshot || !caseId || snapshot.analysis || status === "running" || busy || !account || analysisBlocked(account) || patientRunVerification(snapshot) !== "matched") return;
+    if (!snapshot || !caseId || snapshot.analysis || snapshot.patientResult?.available || status === "running" || busy || !account || analysisBlocked(account) || patientRunVerification(snapshot) !== "matched") return;
     const key = `${caseId}:${account.id}`;
     if (autoAnalysisKeyRef.current === key) return;
     autoAnalysisKeyRef.current = key;
@@ -1326,20 +1346,22 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
     } finally { setBusy(false); setDeletingDocumentId(""); }
   }
 
-  if (!caseId) return <PatientStart userEmail={user.email} onCreated={setCaseId} />;
+  if (!caseId) return <PatientStart userEmail={user.email} onCreated={(id, extraction) => { if (extraction) patientExtractionsRef.current[id] = extraction; setCaseId(id); }} />;
   if (error && !snapshot) return <main className="patient-portal"><section className="patient-card patient-main"><h2>No se pudo abrir la revisión</h2><p>{error}</p><button className="portal-button portal-button-primary" onClick={() => void refresh()}>Reintentar</button></section></main>;
   if (!snapshot) return <main className="patient-portal"><section className="patient-card patient-main"><h2>Cargando revisión…</h2></section></main>;
 
-  const account = accountDoc(snapshot); const pam = pamDoc(snapshot); const accountTotal = totalFrom(account, "account"); const pamTotal = totalFrom(pam, "pam");
-  const runVerification = patientRunVerification(snapshot);
+  const account = accountDoc(snapshot); const pam = pamDoc(snapshot);
+  const runVerification = snapshot.patientIdentityStatus || patientRunVerification(snapshot);
   const readerAssessment = account?.extraction?.readerAssessment;
   const readerNeedsRefresh = extractionNeedsRefresh(account);
-  const patientAnalysis = readerNeedsRefresh || runVerification !== "matched" ? undefined : snapshot.analysis;
-  const patientReviewLines = possibleDisputeLines(patientAnalysis);
-  const patientReviewAmount = patientReviewLines.reduce((sum, assessment) => sum + assessment.line.amount, 0);
-  const patientHasIrregularities = patientReviewLines.length > 0;
+  const patientResult = readerNeedsRefresh || runVerification !== "matched"
+    ? { available: false, hasDispute: false, disputeAmount: 0 }
+    : snapshot.patientResult || buildPatientResult(snapshot.analysis);
+  const patientAnalysis = patientResult.available ? snapshot.analysis : undefined;
+  const patientReviewAmount = patientResult.disputeAmount;
+  const patientHasIrregularities = patientResult.hasDispute;
   const patientCanAnalyze = !analysisBlocked(account) && runVerification === "matched";
-  const patientStatus = patientAnalysis
+  const patientStatus = patientResult.available
     ? patientHasIrregularities ? "Irregularidades detectadas" : "Análisis completado"
     : account ? "Resultado en preparación" : "Revisión pendiente";
   const firstName = snapshot.case.patientName.split(" ")[0];
@@ -1347,7 +1369,7 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
     <header className="patient-topbar patient-space-topbar"><PortalBrand href="/"/><div className="patient-topbar-right"><span className="surface-pill patient-pill">Vista paciente</span><span className="avatar">{snapshot.case.patientName.slice(0, 2).toUpperCase()}</span><span className="patient-email">{user.email}</span><a className="patient-signout-button" href={signOutHref(user)} aria-label="Cerrar sesión">Cerrar sesión</a></div></header>
     <div className="patient-layout"><aside className="patient-sidebar"><div className="case-mini"><span className="case-icon">⌁</span><div><small>CASO ACTIVO</small><b>{snapshot.case.patientName}</b><span>RUN {snapshot.case.patientRun || "No informado"}</span><span>Caso {caseId.slice(0, 8)}</span></div></div><nav className="patient-nav">{(["Resumen", "Documentos", "Actividad"] as const).map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item}</button>)}</nav><div className="patient-sidebar-help"><span>?</span><div><b>¿Necesitas ayuda?</b><small>Escríbenos sobre tu caso.</small></div></div></aside>
       <section className="patient-main patient-space-main"><div className="patient-heading patient-space-heading"><div><p className="portal-kicker">Mi revisión</p><h1>Hola, {firstName}.</h1><p>{snapshot.case.episodeLabel}</p><div className="patient-identity-summary"><span>Paciente</span><strong>{snapshot.case.patientName}</strong><small>RUN {snapshot.case.patientRun || "No informado"}</small></div></div><span className="case-status"><i /> {patientStatus}</span></div>
-         {tab === "Resumen" && <PatientSummary account={account} pam={pam} pamTraceability={patientAnalysis?.pamTraceability} reviewAmount={patientReviewAmount} irregularityCount={patientReviewLines.length} analysisAvailable={Boolean(patientAnalysis)} analysisRunning={status === "running"} progress={progress} stage={stage} contract={snapshot.contract} busy={busy} runVerification={runVerification} readerReviewRequired={Boolean(runVerification !== "matched" || readerNeedsRefresh || account?.processingStatus === "failed" || account?.processingStatus === "review_required" || (readerAssessment && readerAssessment.status !== "ready"))} readerChangeNeeded={!patientCanAnalyze} onAccount={() => accountInputRef.current?.click()} onPam={() => inputRef.current?.click()} onAnalyze={() => void runAnalysis()} onOpenContract={() => void openContract()} contractBusy={contractBusy} />}
+         {tab === "Resumen" && <PatientSummary account={account} pam={pam} pamTraceability={patientAnalysis?.pamTraceability ? { ...patientAnalysis.pamTraceability, findings: [] } : undefined} reviewAmount={patientReviewAmount} analysisAvailable={patientResult.available} analysisRunning={status === "running"} progress={progress} stage={stage} contract={snapshot.contract} busy={busy} runVerification={runVerification} readerReviewRequired={Boolean(runVerification !== "matched" || readerNeedsRefresh || account?.processingStatus === "failed" || account?.processingStatus === "review_required" || (readerAssessment && readerAssessment.status !== "ready"))} readerChangeNeeded={!patientCanAnalyze} onAccount={() => accountInputRef.current?.click()} onPam={() => inputRef.current?.click()} onAnalyze={() => void runAnalysis()} onOpenContract={() => void openContract()} contractBusy={contractBusy} />}
         {tab === "Documentos" && <PatientDocuments snapshot={snapshot} deletingDocumentId={deletingDocumentId} onAccount={() => accountInputRef.current?.click()} onPam={() => inputRef.current?.click()} onDelete={(document) => void removeDocument(document)} />}
         {tab === "Actividad" && <PatientActivity activities={snapshot.activities} />}
       </section></div>
@@ -1380,12 +1402,11 @@ function PatientDocumentOrbit({ amount, label }: { amount: number; label: string
   </div>;
 }
 
-function PatientSummary({ account, pam, pamTraceability, reviewAmount, irregularityCount, analysisAvailable, analysisRunning, progress, stage, contract, busy, runVerification, readerReviewRequired, readerChangeNeeded, onAccount, onPam, onAnalyze, onOpenContract, contractBusy }: { account?: CaseDocument; pam?: CaseDocument; pamTraceability?: PamTraceability; reviewAmount: number; irregularityCount: number; analysisAvailable: boolean; analysisRunning: boolean; progress: number; stage: string; contract?: ServiceContract; busy: boolean; runVerification: "matched" | "mismatch" | "unavailable"; readerReviewRequired: boolean; readerChangeNeeded: boolean; onAccount: () => void; onPam: () => void; onAnalyze: () => void; onOpenContract: () => void; contractBusy: boolean }) {
+function PatientSummary({ account, pam, pamTraceability, reviewAmount, analysisAvailable, analysisRunning, progress, stage, contract, busy, runVerification, readerReviewRequired, readerChangeNeeded, onAccount, onPam, onAnalyze, onOpenContract, contractBusy }: { account?: CaseDocument; pam?: CaseDocument; pamTraceability?: PamTraceability; reviewAmount: number; analysisAvailable: boolean; analysisRunning: boolean; progress: number; stage: string; contract?: ServiceContract; busy: boolean; runVerification: "matched" | "mismatch" | "unavailable"; readerReviewRequired: boolean; readerChangeNeeded: boolean; onAccount: () => void; onPam: () => void; onAnalyze: () => void; onOpenContract: () => void; contractBusy: boolean }) {
   const accountReceived = Boolean(account);
   const pamReceived = Boolean(pam);
   const documentsReceived = accountReceived || pamReceived;
-  const hasIrregularities = analysisAvailable && irregularityCount > 0;
-  const irregularityLabel = `${irregularityCount} ${irregularityCount === 1 ? "cargo" : "cargos"}`;
+  const hasIrregularities = analysisAvailable && reviewAmount > 0;
   const summaryTitle = runVerification === "mismatch"
     ? "El RUN no coincide con la cuenta"
     : runVerification === "unavailable"
@@ -1399,7 +1420,7 @@ function PatientSummary({ account, pam, pamTraceability, reviewAmount, irregular
       ? "Recibimos tu cuenta, pero todavía no pudimos comprobar el RUN de forma completa. Debemos verificarlo antes de mostrar un resultado."
       : analysisAvailable
     ? hasIrregularities
-      ? `Encontramos ${irregularityLabel} que conviene revisar con más detalle. A continuación te mostramos el monto aproximado asociado.`
+      ? "Identificamos un monto que conviene revisar con más detalle. A continuación te mostramos únicamente el total en disputa."
       : "Revisamos la información disponible y no encontramos cargos que indiquen una irregularidad evidente."
     : accountReceived
       ? "Ya recibimos tu cuenta. Te mostraremos si encontramos cargos que conviene revisar y el monto aproximado asociado."
@@ -1443,7 +1464,7 @@ function PatientSummary({ account, pam, pamTraceability, reviewAmount, irregular
       {analysisAvailable && <>
         <div className="patient-review-amount">
           <div><span className="card-kicker">{hasIrregularities ? "MONTO APROXIMADO A REVISAR" : "MONTO APROXIMADO IDENTIFICADO"}</span><strong>{money(reviewAmount)}</strong></div>
-          <p>{hasIrregularities ? `El monto se relaciona con ${irregularityLabel} que conviene revisar. Es una estimación preliminar y no garantiza una devolución.` : "No identificamos un monto asociado a cargos que requieran revisión con la información disponible."}</p>
+          <p>{hasIrregularities ? "Este total es preliminar y no garantiza una devolución. Los antecedentes y los ítems revisados quedan reservados para el equipo revisor." : "No identificamos un monto asociado a cargos que requieran revisión con la información disponible."}</p>
         </div>
         {pamTraceability && <PatientPamTraceability trace={pamTraceability} accountReceived={accountReceived} pamReceived={pamReceived} />}
         {hasIrregularities && reviewAmount > 0 && <section className="patient-advisory-card">
@@ -1453,12 +1474,11 @@ function PatientSummary({ account, pam, pamTraceability, reviewAmount, irregular
       </>}
       <div className="patient-review-actions"><button className="portal-button portal-button-secondary" onClick={onAccount} disabled={busy}>{account ? "Reemplazar cuenta clínica" : "Agregar cuenta clínica"}</button><button className="portal-button portal-button-primary" onClick={onPam} disabled={busy}>{pam ? "Reemplazar documento de cobertura" : "Agregar documento de cobertura"}</button></div>
     </section>
-    <section className="patient-card next-card"><span className="card-kicker">SIGUIENTE PASO</span><h2>{runVerification !== "matched" ? "Verifica el RUN de la cuenta" : analysisAvailable ? hasIrregularities ? "Revisa los cargos observados" : "Resultado de la revisión" : accountReceived ? "Obtén el resultado de tu cuenta" : pamReceived ? "Falta la cuenta clínica" : "Completa tus documentos"}</h2><p>{runVerification !== "matched" ? "Carga la cuenta correcta o solicita una revisión para comprobar que el documento corresponde a tus datos." : analysisAvailable ? hasIrregularities ? "Encontramos posibles irregularidades y te mostramos el monto aproximado asociado. Puedes solicitar una propuesta de asesoría para revisar los antecedentes." : "Con la información disponible no encontramos cargos que requieran revisión." : documentsReceived ? "Carga la cuenta clínica para obtener el resultado y el monto aproximado de la revisión." : "Carga la cuenta clínica para obtener el resultado de la revisión."}</p></section>
+    <section className="patient-card next-card"><span className="card-kicker">SIGUIENTE PASO</span><h2>{runVerification !== "matched" ? "Verifica el RUN de la cuenta" : analysisAvailable ? hasIrregularities ? "Revisa el total en disputa" : "Resultado de la revisión" : accountReceived ? "Obtén el resultado de tu cuenta" : pamReceived ? "Falta la cuenta clínica" : "Completa tus documentos"}</h2><p>{runVerification !== "matched" ? "Carga la cuenta correcta o solicita una revisión para comprobar que el documento corresponde a tus datos." : analysisAvailable ? hasIrregularities ? "Te mostramos el total preliminar que conviene revisar. El detalle técnico queda reservado para el equipo revisor." : "Con la información disponible no encontramos un monto que requiera revisión." : documentsReceived ? "Carga la cuenta clínica para obtener el resultado y el total preliminar de la revisión." : "Carga la cuenta clínica para obtener el resultado de la revisión."}</p></section>
   </>;
 }
 
 function PatientPamTraceability({ trace, accountReceived, pamReceived }: { trace: PamTraceability; accountReceived: boolean; pamReceived: boolean }) {
-  const reviewFindings = trace.findings.filter((finding) => finding.status === "review").slice(0, 3);
   const pamLabel = !pamReceived || trace.status === "not_available" ? "Pendiente" : trace.status === "consistent" ? "Conciliado" : trace.status === "review_required" ? "Requiere revisión" : "Información insuficiente";
   return <section className="patient-pam-traceability">
     <div className="patient-pam-trace-head"><div><span className="card-kicker">CÓMO LLEGAMOS AL RESULTADO</span><h3>Cuenta clínica y PAM</h3></div><span className={`patient-pam-trace-status ${trace.status}`}>{pamLabel}</span></div>
@@ -1467,8 +1487,7 @@ function PatientPamTraceability({ trace, accountReceived, pamReceived }: { trace
       <div className={pamReceived ? "complete" : ""}><i>2</i><span>PAM</span><small>{pamReceived ? "Recibido" : "Puedes agregarlo después"}</small></div>
       <div className={trace.status === "review_required" || trace.status === "consistent" ? "complete" : "current"}><i>3</i><span>Comparación</span><small>{pamLabel}</small></div>
     </div>
-    <p>{trace.patientMessage}</p>
-    {reviewFindings.length > 0 && <div className="patient-pam-trace-findings">{reviewFindings.map((finding) => <article key={`${finding.id}-${finding.accountLineIds.join("-")}`}><b>{finding.title}</b><small>{finding.explanation}</small></article>)}</div>}
+    <p>La información de cobertura fue considerada en la revisión. El detalle de los ítems y fundamentos queda reservado para el equipo revisor.</p>
   </section>;
 }
 
@@ -1801,6 +1820,7 @@ function AuthenticatedDeveloperPortal({ initialCaseId = "", user }: { initialCas
     }, 180);
     try {
       const analysis = await analyzeCase(selected, accountDoc(snapshot), snapshot.case.episodeLabel, pamDoc(snapshot));
+      if ("patientResult" in analysis) throw new Error("La consola desarrollador recibió un resultado paciente inesperado");
       setSnapshot((current) => current ? {
         ...current,
         analysis,

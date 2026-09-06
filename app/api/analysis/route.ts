@@ -9,8 +9,9 @@ import {
   getObservedCorpusSnapshot,
   registerCorpusContribution,
 } from "../../../lib/server/observed-corpus-store.ts";
-import { requireApiUser } from "../../../lib/server/auth.ts";
+import { isDeveloperUser, requireApiUser } from "../../../lib/server/auth.ts";
 import { caseAccessResponse } from "../../../lib/server/case-access.ts";
+import { buildPatientResult } from "../../../lib/rules/patient-result.ts";
 import type { ReaderAssessment } from "../../../lib/extraction/types.ts";
 import { ReaderAssistError } from "../../../lib/server/openai-reader-assist.ts";
 import { requestAnalysisAssist } from "../../../lib/server/openai-analysis-assist.ts";
@@ -137,7 +138,7 @@ export async function POST(request: Request) {
     };
     if (!env?.DB) {
       localSaveAnalysis(body.caseId, analysis);
-      return Response.json(analysis);
+      return Response.json(isDeveloperUser(auth.user) ? analysis : { patientResult: buildPatientResult(analysis) });
     }
     await ensureCaseSchema(env.DB);
     await env.DB.prepare(`INSERT INTO case_analyses (id, case_id, analysis_json, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(case_id) DO UPDATE SET analysis_json = excluded.analysis_json, updated_at = CURRENT_TIMESTAMP`)
@@ -146,5 +147,5 @@ export async function POST(request: Request) {
     await env.DB.prepare(`INSERT INTO case_activities (id, case_id, title, detail) VALUES (?, ?, ?, ?)`)
       .bind(crypto.randomUUID(), body.caseId, "Análisis completado", "La cuenta clínica quedó clasificada y trazable por línea.").run();
   }
-  return Response.json(analysis);
+  return Response.json(isDeveloperUser(auth.user) ? analysis : { patientResult: buildPatientResult(analysis) });
 }
