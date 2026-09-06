@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isDeveloperUser, signAuthToken, verifyAuthToken } from "../lib/server/auth.ts";
+import { developerUserFromKey, isDeveloperUser, signAuthToken, verifyAuthToken } from "../lib/server/auth.ts";
 import {
   localCreateCase,
   localDeleteDocument,
@@ -44,14 +44,21 @@ test("reconoce la identidad ChatGPT del administrador como desarrollador", () =>
 
 test("reconoce las dos claves cortas de desarrollador y rechaza otras", () => {
   const previous = process.env.REVISATUCUENTA_ADMIN_USER_IDS;
+  const previousKeys = process.env.REVISATUCUENTA_DEVELOPER_KEYS;
   process.env.REVISATUCUENTA_ADMIN_USER_IDS = "lpaulr,aleretamal";
+  process.env.REVISATUCUENTA_DEVELOPER_KEYS = "lpaulr,aleretamal";
   try {
+    assert.equal(developerUserFromKey("lpaulr")?.id, "developer:lpaulr");
+    assert.equal(developerUserFromKey("ALERETAMAL")?.email, "aleretamal@revisatucuenta.local");
+    assert.equal(developerUserFromKey("otra-clave"), undefined);
     assert.equal(isDeveloperUser({ id: "chatgpt:opaque-1", email: "lpaulr@gmail.com", displayName: "Luis", source: "chatgpt" }), true);
     assert.equal(isDeveloperUser({ id: "chatgpt:opaque-2", email: "aleretamal@revisatucuenta.cl", displayName: "Ale", source: "chatgpt" }), true);
     assert.equal(isDeveloperUser({ id: "chatgpt:opaque-3", email: "otra@example.com", displayName: "Otra persona", source: "chatgpt" }), false);
   } finally {
     if (previous === undefined) delete process.env.REVISATUCUENTA_ADMIN_USER_IDS;
     else process.env.REVISATUCUENTA_ADMIN_USER_IDS = previous;
+    if (previousKeys === undefined) delete process.env.REVISATUCUENTA_DEVELOPER_KEYS;
+    else process.env.REVISATUCUENTA_DEVELOPER_KEYS = previousKeys;
   }
 });
 

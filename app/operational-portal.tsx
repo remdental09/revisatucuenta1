@@ -107,7 +107,30 @@ function AuthenticationLoading() {
 }
 
 function DeveloperAccessUnavailable() {
-  return <main className="patient-login"><section className="patient-login-card"><PortalBrand/><div className="login-seal">⌁</div><p className="portal-kicker">CONSOLA DE DESARROLLO</p><h1>Sesión de desarrollador requerida.</h1><p>Esta consola está separada de la vista paciente. La sesión paciente no puede abrirla y aquí no se muestran resultados clínicos del paciente.</p><p className="patient-contact-note">Ingresa con una identidad autorizada para el equipo revisor.</p><a className="back-link" href="/">← Volver</a></section></main>;
+  const [key, setKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const response = await fetch("/api/auth/developer", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ key }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "No se pudo abrir la consola");
+      window.location.replace("/?view=developer");
+    } catch (reason) {
+      setError(errorMessage(reason, "No se pudo abrir la consola"));
+      setBusy(false);
+    }
+  }
+
+  return <main className="patient-login"><form className="patient-login-card" onSubmit={submit}><PortalBrand/><div className="login-seal">⌁</div><p className="portal-kicker">ENTRADA PARA EL EQUIPO REVISOR</p><h1>Acceso de desarrollador.</h1><p>Esta entrada abre la consola técnica separada de la vista paciente. La consola muestra el trabajo interno y no entrega sus detalles al paciente.</p><label className="patient-field"><span>Clave de desarrollador</span><input aria-label="Clave de desarrollador" type="password" required autoComplete="current-password" placeholder="Ingresa tu clave" value={key} onChange={(event) => setKey(event.target.value)} /></label>{error && <p className="developer-empty-error" role="alert">{error}</p>}<button className="portal-button portal-button-primary" disabled={busy}>{busy ? "Verificando acceso…" : "Entrar a la consola →"}</button><p className="patient-contact-note">La sesión queda protegida en este dispositivo. Esta entrada no modifica ni comparte la vista paciente.</p><a className="back-link" href="/">← Volver a la vista paciente</a></form></main>;
 }
 
 function EmailAccess({ returnTo }: { returnTo: string }) {

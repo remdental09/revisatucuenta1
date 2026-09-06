@@ -125,6 +125,33 @@ function normalizeEmail(value: string) {
   return value.trim().toLowerCase();
 }
 
+function configuredDeveloperKeys() {
+  return [
+    runtimeEnv("REVISATUCUENTA_DEVELOPER_KEYS"),
+    runtimeEnv("REVISATUCUENTA_ADMIN_USER_IDS"),
+  ]
+    .filter(Boolean)
+    .flatMap((value) => value!.split(","))
+    .map(normalizeEmail)
+    .filter(Boolean);
+}
+
+/**
+ * Resolves the short developer key entered on the public console gate.
+ * The configured values stay server-side; the resulting identity is only
+ * written into a signed, HttpOnly session cookie by the API route.
+ */
+export function developerUserFromKey(key: string): AuthenticatedUser | undefined {
+  const normalized = normalizeEmail(key);
+  if (!normalized || !configuredDeveloperKeys().includes(normalized)) return;
+  return {
+    id: `developer:${normalized}`,
+    email: `${normalized}@revisatucuenta.local`,
+    displayName: normalized,
+    source: "email",
+  };
+}
+
 async function emailUserId(email: string) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(normalizeEmail(email)));
   return `email:${bytesToBase64Url(new Uint8Array(digest))}`;
@@ -255,10 +282,7 @@ export function isDeveloperUser(user: AuthenticatedUser) {
   // explicit, separately managed account-user allowlist. Without this check
   // the developer page could render successfully while protected API calls
   // were classified as patient calls and returned only `patientResult`.
-  const allowedUserIds = (runtimeEnv("REVISATUCUENTA_ADMIN_USER_IDS") || "")
-    .split(",")
-    .map((value) => value.trim().toLowerCase())
-    .filter(Boolean);
+  const allowedUserIds = configuredDeveloperKeys();
   const userId = user.id.replace(/^chatgpt:/, "").trim().toLowerCase();
   const email = normalizeEmail(user.email);
   const emailHandle = email.split("@", 1)[0] || email;
