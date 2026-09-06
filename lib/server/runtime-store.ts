@@ -287,8 +287,8 @@ export function localSaveMixedExtraction(documentId: string, extraction: Documen
 
   const existing = [...documents.values()].find((item) =>
     item.case_id === document.case_id
-    && item.classification === "PAM / liquidación · detectado automáticamente"
-    && item.original_name === document.original_name,
+    && item.id === `pam-${documentId}`
+    && item.classification === "PAM / liquidación · detectado automáticamente",
   );
   const derivedId = existing?.id || `pam-${documentId}`;
   if (!existing) {

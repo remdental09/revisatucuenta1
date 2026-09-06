@@ -103,7 +103,7 @@ test("separa un PDF mixto en cuenta y PAM interno sin duplicar la fuente", () =>
   assert.equal(snapshot?.documents.find((document) => document.id === derivedId)?.extraction?.account, undefined);
   assert.equal(snapshot?.documents.find((document) => document.id === derivedId)?.classification, "PAM / liquidación · detectado automáticamente");
   const replacementId = `mixed-replacement-${suffix}`;
-  localSaveDocument({ id: replacementId, caseId, name: "reemplazo.pdf", mimeType: "application/pdf", byteSize: 100, classification: "Cuenta clínica", confidence: 95 });
+  localSaveDocument({ id: replacementId, caseId, name: "cuenta-y-pam.pdf", mimeType: "application/pdf", byteSize: 100, classification: "Cuenta clínica", confidence: 95 });
   const replacementPamId = localSaveMixedExtraction(replacementId, {
     pageCount: 2,
     usedOcr: true,
