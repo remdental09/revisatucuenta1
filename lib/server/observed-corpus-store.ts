@@ -10,6 +10,11 @@ import { ensureCaseSchema } from "./case-schema.ts";
 export type CorpusContributionStatus = "pending_review" | "validated" | "rejected";
 export type CorpusSourceKind = "account" | "pam";
 
+// Uploaded accounts are isolated test inputs. They must never become memory
+// that changes the result of a later account, even after an operator reviews
+// the case. The bundled, de-identified rule corpus remains available.
+export const ACCOUNT_MEMORY_DISABLED = true;
+
 type StoredContribution = {
   caseId: string;
   status: CorpusContributionStatus;
@@ -20,6 +25,10 @@ type StoredContribution = {
 type CorpusState = Map<string, StoredContribution>;
 const runtimeGlobal = globalThis as typeof globalThis & { __revisaTuCuentaCorpusState?: CorpusState };
 const localContributions = runtimeGlobal.__revisaTuCuentaCorpusState ??= new Map<string, StoredContribution>();
+
+export function clearLocalCorpusContributions() {
+  localContributions.clear();
+}
 
 export function buildCorpusContribution(input: {
   caseId: string;
@@ -138,6 +147,7 @@ export async function registerCorpusContribution(
   caseId: string,
   contribution: ObservedCorpusContribution,
 ): Promise<CorpusContributionStatus> {
+  if (ACCOUNT_MEMORY_DISABLED) return "rejected";
   const timestamp = new Date().toISOString();
   if (!env?.DB) {
     const previous = localContributions.get(caseId);
@@ -177,6 +187,7 @@ export async function updateCorpusContributionStatus(
   caseId: string,
   status: CorpusContributionStatus,
 ): Promise<boolean> {
+  if (ACCOUNT_MEMORY_DISABLED) return false;
   if (!env?.DB) {
     const previous = localContributions.get(caseId);
     if (!previous) return false;
@@ -221,6 +232,7 @@ export async function removePendingCorpusContribution(
   caseId: string,
   sourceKind?: CorpusSourceKind,
 ) {
+  if (ACCOUNT_MEMORY_DISABLED) return;
   if (!env?.DB) {
     const previous = localContributions.get(caseId);
     if (!previous || previous.status === "validated") return;
@@ -266,6 +278,13 @@ export async function getObservedCorpusSnapshot(
   pendingCount: number;
   validatedCount: number;
 }> {
+  if (ACCOUNT_MEMORY_DISABLED) {
+    return {
+      corpus: OBSERVED_CHILEAN_ACCOUNT_CORPUS,
+      pendingCount: 0,
+      validatedCount: 0,
+    };
+  }
   let rows: StoredContribution[];
   if (!env?.DB) {
     rows = localRows();
@@ -301,6 +320,7 @@ export async function getObservedCorpusSnapshot(
 }
 
 export async function getCorpusContributionStatus(env: any, caseId: string) {
+  if (ACCOUNT_MEMORY_DISABLED) return undefined;
   if (!env?.DB) return localContributions.get(caseId)?.status;
   await ensureCaseSchema(env.DB);
   const row = await env.DB.prepare(`SELECT status FROM corpus_contributions WHERE case_id = ?`).bind(caseId).first();

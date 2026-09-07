@@ -1,5 +1,6 @@
 import { getCloudflareEnv } from "../../../lib/server/runtime-store.ts";
 import {
+  ACCOUNT_MEMORY_DISABLED,
   buildCorpusContribution,
   getObservedCorpusSnapshot,
   registerCorpusContribution,
@@ -62,6 +63,12 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const auth = await requireApiUser(request);
   if ("response" in auth) return auth.response;
+  if (ACCOUNT_MEMORY_DISABLED) {
+    return Response.json(
+      { error: "La memoria entre cuentas está desactivada; esta prueba no se conserva en el corpus." },
+      { status: 410, headers: { "cache-control": "no-store" } },
+    );
+  }
   const body = await request.json().catch(() => ({})) as CorpusObservationRequest;
   if (!body.caseId || !body.sourceKind || !["account", "pam"].includes(body.sourceKind)) {
     return Response.json({ error: "Se requiere caso y tipo de fuente account o pam" }, { status: 422 });

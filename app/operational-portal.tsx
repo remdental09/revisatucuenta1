@@ -4,9 +4,16 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { extractHealthcareDocument, extractionErrorMessage, prepareVisionPageImages } from "../lib/extraction/client";
 import { CURRENT_READER_VERSION, type DocumentExtraction, type ReaderAssistResponse, type VisionAssistResponse } from "../lib/extraction/types";
 import { assessExtractionQuality, buildReaderChangeProposal, buildReaderReviewPackage, readerChangeProposalToMarkdown, readerReviewPackageToMarkdown } from "../lib/extraction/reader-quality";
-import type { ClinicalAccountAnalysis, ChileanBillingLine, InclusionCandidate, PamTraceability } from "../lib/rules/chilean-account";
+import type { ClinicalAccountAnalysis, ChileanBillingLine, PamTraceability } from "../lib/rules/chilean-account";
 import type { FunctionalEquivalenceAlert } from "../lib/rules/observed-corpus";
-import { buildPatientResult, type PatientResult } from "../lib/rules/patient-result";
+import {
+  buildPatientResult,
+  bestCombinedCandidate,
+  DISPUTE_LLM_THRESHOLD as LLM_CANDIDATE_THRESHOLD,
+  llmCandidateForLine,
+  possibleDisputeAmount,
+  type PatientResult,
+} from "../lib/rules/patient-result";
 import { generateClarificationClaimMarkdown } from "../lib/claims/claim-generator";
 import { compareChileanRun, normalizeChileanRun } from "../lib/identity/chilean-run";
 import { WhatsAppContact } from "./whatsapp-contact";
@@ -213,19 +220,6 @@ function hideStaleAnalysis(snapshot: Snapshot) {
   };
 }
 
-function possibleDisputeLines(analysis?: ClinicalAccountAnalysis) {
-  return (analysis?.lineAssessments ?? [])
-    .filter((assessment) => Boolean(bestCombinedCandidate(analysis, assessment)));
-}
-
-function possibleDisputeAmount(analysis?: ClinicalAccountAnalysis) {
-  return possibleDisputeLines(analysis)
-    .reduce((sum, assessment) => sum + assessment.line.amount, 0);
-}
-
-const DEVELOPER_CANDIDATE_THRESHOLD = 0.45;
-const LLM_CANDIDATE_THRESHOLD = 0.7;
-type DeveloperLineAssessment = ClinicalAccountAnalysis["lineAssessments"][number];
 type DeveloperCategoryKey = "access" | "medication" | "monitoring" | "surgical" | "field";
 
 const developerCategoryLabels: Record<DeveloperCategoryKey, string> = {
@@ -249,55 +243,6 @@ function developerCategoryForLine(line: ChileanBillingLine): DeveloperCategoryKe
   if (/neurosorb|prolene|vicryl|ethilon|bisturi|electrobisturi|canula frazier|contador d[\\/ ]aguja/.test(text)) return "surgical";
   if (/gasa|guante|bata|mascarilla|sachet|torula|micropore|allevyn|povidona|lapiz marcador/.test(text)) return "field";
   return "access";
-}
-
-function bestDeveloperCandidate(assessment: DeveloperLineAssessment, bundle?: "operating_room") {
-  return assessment.candidates
-    .filter((candidate) => candidate.probability >= DEVELOPER_CANDIDATE_THRESHOLD && (!bundle || candidate.bundle === bundle))
-    .sort((left, right) => right.probability - left.probability)[0];
-}
-
-function llmCandidateForLine(
-  analysis: ClinicalAccountAnalysis | undefined,
-  lineId: string,
-  bundle?: "operating_room",
-): InclusionCandidate | undefined {
-  const sourceLine = analysis?.lineAssessments.find((item) => item.line.id === lineId)?.line;
-  const description = normalizeDeveloperText(sourceLine?.description);
-  if (/\bdia cama\b|\b(?:derecho de |derecho )?pabellon(?: quirurgico)?\b/.test(description)) return;
-  const hypothesis = analysis?.llmAssist?.lineHypotheses
-    .filter((item) =>
-      item.lineId === lineId
-      && item.decision === "review"
-      && item.confidence >= LLM_CANDIDATE_THRESHOLD
-      && item.bundle !== "procedure"
-      && item.bundle !== "professional_fees"
-      && item.bundle !== "unassigned"
-      && (!bundle || item.bundle === bundle),
-    )
-    .sort((left, right) => right.confidence - left.confidence)[0];
-  if (!hypothesis) return;
-  return {
-    bundle: hypothesis.bundle,
-    probability: hypothesis.confidence,
-    knowledgeIds: ["LLM-SECOND-READER-001"],
-    precedentIds: [],
-    precedentSupport: 0,
-    reasons: [hypothesis.rationale, ...hypothesis.evidence].filter(Boolean),
-    missingEvidence: hypothesis.missingEvidence,
-  };
-}
-
-function bestCombinedCandidate(
-  analysis: ClinicalAccountAnalysis | undefined,
-  assessment: DeveloperLineAssessment,
-  bundle?: "operating_room",
-) {
-  const deterministic = bestDeveloperCandidate(assessment, bundle);
-  const assisted = llmCandidateForLine(analysis, assessment.line.id, bundle);
-  if (!deterministic) return assisted;
-  if (!assisted) return deterministic;
-  return assisted.probability > deterministic.probability ? assisted : deterministic;
 }
 
 type DeveloperBreakdownItem = {
@@ -597,13 +542,10 @@ async function deleteDocumentRequest(caseId: string, documentId: string) {
   return payload as { documentId: string; deleted: boolean; name?: string };
 }
 
-async function replaceAccountDocument(caseId: string, file: File, onProgress?: (value: number) => void) {
+async function replaceAccountDocument(caseId: string, file: File, previousDocumentId: string, onProgress?: (value: number) => void) {
   const replacement = await uploadDocument(caseId, file, "Cuenta clínica", onProgress, { registerCorpus: false });
-  const corpusRegistered = await registerCorpusObservation(caseId, replacement.documentId, replacement.extraction, "Cuenta clínica");
-  if (replacement.pamDocumentId && replacement.extraction.pam) {
-    await registerCorpusObservation(caseId, replacement.pamDocumentId, { ...replacement.extraction, account: undefined }, "PAM / liquidación");
-  }
-  return { ...replacement, corpusRegistered };
+  await deleteDocumentRequest(caseId, previousDocumentId);
+  return { ...replacement, corpusRegistered: false };
 }
 
 async function analyzeCase(caseId: string, document?: CaseDocument, episodeLabel?: string, pamDocument?: CaseDocument) {
@@ -1303,15 +1245,15 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
     try {
       const updateProgress = (value: number) => { setProgress(value); setStage(value < 100 ? `Leyendo cuenta clínica · ${value}%` : "Lectura de la cuenta completada"); };
       const result = previousAccount
-        ? await replaceAccountDocument(caseId, file, updateProgress)
+        ? await replaceAccountDocument(caseId, file, previousAccount.id, updateProgress)
         : await uploadDocument(caseId, file, "Cuenta clinica", updateProgress);
       patientExtractionsRef.current[result.documentId] = result.extraction;
       await refresh();
       notify(previousAccount
-        ? "Nueva cuenta clínica almacenada; la versión anterior se conserva"
+        ? "Nueva cuenta clínica almacenada; la versión anterior fue eliminada"
         : result.corpusRegistered
           ? "Cuenta clínica cargada y vinculada a la revisión"
-          : "Cuenta clínica cargada; el aprendizaje quedó pendiente de sincronización");
+          : "Cuenta clínica cargada; esta prueba no se conserva como memoria de otra cuenta");
     }
     catch (reason) {
       notify(errorMessage(reason, "No se pudo cargar la cuenta clínica"));
@@ -1749,7 +1691,7 @@ function DeveloperNewCaseForm({ onCancel, onCreated }: { onCancel: () => void; o
 function AuthenticatedDeveloperPortal({ initialCaseId = "", user }: { initialCaseId?: string; user: SessionUser }) {
   const { cases, error: casesError, refresh: refreshCases } = useCases();
   const [selectedId, setSelectedId] = useState(initialCaseId);
-  const [snapshot, setSnapshot] = useState<Snapshot>(); const [tab, setTab] = useState<"overview" | "traceability" | "documents">("documents"); const [query, setQuery] = useState(""); const [busy, setBusy] = useState(false); const [notice, setNotice] = useState(""); const [newCaseOpen, setNewCaseOpen] = useState(false); const pilotResetBusy = false;
+  const [snapshot, setSnapshot] = useState<Snapshot>(); const [tab, setTab] = useState<"overview" | "traceability" | "documents">("documents"); const [query, setQuery] = useState(""); const [busy, setBusy] = useState(false); const [notice, setNotice] = useState(""); const [newCaseOpen, setNewCaseOpen] = useState(false); const [pilotResetBusy, setPilotResetBusy] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadStage, setUploadStage] = useState("");
   const [analysisStatus, setAnalysisStatus] = useState<"idle" | "running" | "complete" | "error">("idle");
@@ -1769,8 +1711,22 @@ function AuthenticatedDeveloperPortal({ initialCaseId = "", user }: { initialCas
   const selected = cases.some((item) => item.id === selectedId) ? selectedId : "";
   async function refresh() { if (!selected) return; try { const next = hideStaleAnalysis(await getSnapshot(selected)); setSnapshot(next); if (extractionNeedsRefresh(accountDoc(next))) setNotice("La extracción anterior quedó fuera de vigencia. Reemplaza la cuenta clínica para aplicar el lector actualizado."); } catch (reason) { setNotice(errorMessage(reason, "No se pudo cargar el expediente")); } }
   useEffect(() => { void refresh(); }, [selected]);
-  function clearPilotConsole() {
-    setNotice("La limpieza masiva está deshabilitada para conservar los documentos de pacientes.");
+  async function clearPilotConsole() {
+    if (!window.confirm("Se eliminarán los expedientes, documentos y análisis almacenados. ¿Continuar?")) return;
+    setPilotResetBusy(true);
+    try {
+      const response = await fetch("/api/admin/pilot-reset", { method: "POST" });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "No se pudo vaciar la consola");
+      setSnapshot(undefined);
+      setSelectedId("");
+      await refreshCases();
+      setNotice(payload.message || "La consola quedó vacía; las próximas cuentas se analizarán de forma aislada.");
+    } catch (reason) {
+      setNotice(errorMessage(reason, "No se pudo vaciar la consola"));
+    } finally {
+      setPilotResetBusy(false);
+    }
   }
   async function onFile(file: File, classification: string) {
     if (!selected) return;
@@ -1798,7 +1754,7 @@ function AuthenticatedDeveloperPortal({ initialCaseId = "", user }: { initialCas
         );
       };
       let result = previousAccount
-        ? await replaceAccountDocument(selected, file, updateProgress)
+        ? await replaceAccountDocument(selected, file, previousAccount.id, updateProgress)
         : await uploadDocument(selected, file, classification, updateProgress);
       let automaticVisionNotice = "";
       if (/cuenta|mixto/i.test(classification)) {
@@ -1832,10 +1788,10 @@ function AuthenticatedDeveloperPortal({ initialCaseId = "", user }: { initialCas
       await refresh();
       await refreshCases();
       setNotice(automaticVisionNotice || (previousAccount
-        ? "Nueva cuenta clínica almacenada; la versión anterior se conserva"
+        ? "Nueva cuenta clínica almacenada; la versión anterior fue eliminada"
         : result.corpusRegistered
           ? "Documento guardado, extraído y enviado a revisión de aprendizaje"
-          : "Documento guardado y extraído; el aprendizaje quedó pendiente de sincronización"));
+        : "Documento guardado y extraído; no se conserva memoria entre cuentas"));
     } catch (reason) {
       setNotice(errorMessage(reason, "No se pudo procesar el documento"));
       await refresh();
@@ -1867,7 +1823,7 @@ function AuthenticatedDeveloperPortal({ initialCaseId = "", user }: { initialCas
       setAnalysisStage("Resultado disponible para revisión");
       setAnalysisStatus("complete");
       await refresh(); await refreshCases(); setTab("traceability");
-      setNotice("Análisis guardado; la observación quedó pendiente de revisión de corpus");
+      setNotice("Análisis guardado de forma aislada; no se incorporó memoria de esta cuenta");
     } catch (reason) { setAnalysisStatus("error"); setNotice(errorMessage(reason, "No se pudo analizar el caso")); }
     finally { window.clearInterval(timer); setBusy(false); }
   }
@@ -1997,11 +1953,10 @@ function AuthenticatedDeveloperPortal({ initialCaseId = "", user }: { initialCas
       setUploadStage("");
     }
   }
-  async function onCorpusStatus(status: "pending_review" | "validated" | "rejected") { if (!selected) return; setBusy(true); try { const response = await fetch(`/api/cases/${encodeURIComponent(selected)}/corpus`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ status }) }); const payload = await response.json().catch(() => ({})); if (!response.ok) throw new Error(payload.error || "No se pudo actualizar el corpus"); await refresh(); setNotice(payload.message || "Estado del corpus actualizado"); } catch (reason) { setNotice(errorMessage(reason, "No se pudo actualizar el corpus")); } finally { setBusy(false); } }
   const visibleCases = useMemo(() => cases.filter((item) => `${item.patient_name} ${item.patient_run || ""} ${item.id} ${item.episode_label}`.toLowerCase().includes(query.toLowerCase())), [cases, query]);
   if (!selected) return <DeveloperEmpty error={casesError} onCreated={async (id) => { setSelectedId(id); await refreshCases(); }} />;
   const account = accountDoc(snapshot); const pam = pamDoc(snapshot); const total = totalFrom(account, "account");
-  return <main className="developer-portal"><aside className="developer-sidebar"><PortalBrand href="/" className="dev-brand"/><div className="dev-workspace-label">ESPACIO DE TRABAJO</div><nav className="dev-nav"><a className="active" href="/?view=developer"><span>▦</span> Expedientes <em>{cases.length}</em></a><a href="#rules"><span>◌</span> Reglas del motor</a><a href="#corpus"><span>⌁</span> Corpus observado</a></nav><div className="dev-sidebar-bottom"><a href={`/?view=patient&case=${encodeURIComponent(selected)}`} target="_blank" rel="noreferrer"><span>↗</span> Vista paciente</a><div className="dev-user"><span className="avatar">DEV</span><div><b>Desarrollador</b><small>{user.email}</small></div></div></div></aside><section className="developer-main"><header className="developer-header"><div><p className="portal-kicker">CONSOLA DE DESARROLLO</p><h1>Expedientes</h1><p>Revisión técnica sobre documentos protegidos y asociados a su propietario.</p></div><div className="developer-header-actions"><span className="surface-pill developer-pill">Vista desarrollador</span><button className="portal-button portal-button-primary" onClick={() => setNewCaseOpen((open) => !open)}>{newCaseOpen ? "Cerrar nuevo expediente" : "Nuevo expediente +"}</button><button className="portal-button portal-button-secondary" onClick={() => void clearPilotConsole()} disabled={pilotResetBusy}>{pilotResetBusy ? "Vaciando…" : "Vaciar consola piloto"}</button><a className="portal-button portal-button-secondary" href={`/?view=patient&case=${encodeURIComponent(selected)}`} target="_blank" rel="noreferrer">Abrir vista paciente ↗</a><a className="patient-signout-button" href={signOutHref(user)}>Cerrar sesión</a></div></header><div className="developer-body">{newCaseOpen && <DeveloperNewCaseForm onCancel={() => setNewCaseOpen(false)} onCreated={async (id) => { setNewCaseOpen(false); setSelectedId(id); await refreshCases(); }} />}<section className="case-queue"><div className="queue-header"><div><span className="card-kicker">BANDEJA DE CASOS</span><h2>Casos recientes <em>{cases.length}</em></h2></div></div><div className="queue-search">⌕ <input placeholder="Buscar paciente, cuenta o episodio" value={query} onChange={(event) => setQuery(event.target.value)} /></div><div className="queue-list">{visibleCases.map((item) => <button key={item.id} onClick={() => setSelectedId(item.id)} className={`dev-case-row ${selected === item.id ? "active" : ""}`}><span className="avatar">{item.patient_name.slice(0, 2).toUpperCase()}</span><div><b>{selected === item.id && snapshot ? patientNameForDeveloper(snapshot) : item.patient_name}</b><small>{item.id} · {item.document_count} documentos</small></div><em className={item.status.includes("analysis") ? "green" : "blue"}>{item.status}</em></button>)}</div></section><section className="case-detail"><div className="case-detail-head"><div><span className="case-breadcrumb">EXPEDIENTE / {selected}</span><h2>{snapshot ? patientNameForDeveloper(snapshot) : "Cargando…"}</h2><p>{snapshot?.case.episodeLabel || ""}</p></div><span className="case-state"><i /> {snapshot?.case.status || "Cargando"}</span></div>{snapshot && <><div className="dev-summary-metrics"><DevMetric label="Cuenta clínica" value={money(total)} detail="Documento base"/><DevMetric label="Desfragmentación" value={snapshot.analysis ? `${snapshot.analysis.lineAssessments.length} líneas` : "Pendiente"} detail="Hipótesis técnicas" pending={!snapshot.analysis}/><DevMetric label="Contexto PAM" value={pam ? "Recibido" : "Pendiente"} detail="Se conserva separado" pending={!pam}/><DevMetric label="Autorización" value={snapshot.authorization?.authorized ? "Otorgada" : "Pendiente"} detail="Gestión de reclamos" pending={!snapshot.authorization?.authorized}/><DevMetric label="Documentos" value={String(snapshot.documents.length)} detail="Fuentes del caso"/></div><div className="dev-tabs">{(["overview", "traceability", "documents"] as const).map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item === "overview" ? "Resumen" : item === "traceability" ? "Matriz de trazabilidad" : "Documentos"}</button>)}</div>{notice && <p className="patient-analysis-notice">{notice}</p>}{uploadStage && <UploadProgress progress={uploadProgress} stage={uploadStage} />}{analysisStatus === "running" && <AnalysisProgress progress={analysisProgress} stage={analysisStage} />}{tab === "overview" && <DeveloperOverview snapshot={snapshot} total={total} busy={busy} onAnalyze={() => void onAnalyze()} onExport={() => downloadJson(`${selected}-preinforme.json`, snapshot)} onClaimDraft={() => downloadClaim(`${selected}-solicitud-aclaracion.md`, snapshot)} onCorpusStatus={onCorpusStatus} />}{tab === "traceability" && <DeveloperTraceability snapshot={snapshot} onExport={() => downloadJson(`${selected}-matriz.json`, snapshot.analysis)} onExportMarkdown={() => snapshot.analysis && downloadMarkdown(`${selected}-matriz.md`, snapshot.analysis)} />}{tab === "documents" && <DeveloperDocuments snapshot={snapshot} busy={busy} pendingUpload={pendingUpload} uploadProgress={uploadProgress} uploadStage={uploadStage} onFile={(file, kind) => void onFile(file, kind)} onAnalyze={() => void onAnalyze()} onRetryReader={() => void onRetryReader()} readerAssistBusy={readerAssistBusy} readerAssistResponse={readerAssistDocumentId === account?.id ? readerAssistResponse : undefined} onReaderAssist={() => void onReaderAssist()} visionAssistBusy={visionAssistBusy} visionAssistResponse={visionAssistDocumentId === account?.id ? visionAssistResponse : undefined} onVisionAssist={() => void onVisionAssist()} />}</>}</section></div></section></main>;
+  return <main className="developer-portal"><aside className="developer-sidebar"><PortalBrand href="/" className="dev-brand"/><div className="dev-workspace-label">ESPACIO DE TRABAJO</div><nav className="dev-nav"><a className="active" href="/?view=developer"><span>▦</span> Expedientes <em>{cases.length}</em></a><a href="#rules"><span>◌</span> Reglas del motor</a><a href="#corpus"><span>⌁</span> Corpus observado</a></nav><div className="dev-sidebar-bottom"><a href={`/?view=patient&case=${encodeURIComponent(selected)}`} target="_blank" rel="noreferrer"><span>↗</span> Vista paciente</a><div className="dev-user"><span className="avatar">DEV</span><div><b>Desarrollador</b><small>{user.email}</small></div></div></div></aside><section className="developer-main"><header className="developer-header"><div><p className="portal-kicker">CONSOLA DE DESARROLLO</p><h1>Expedientes</h1><p>Revisión técnica sobre documentos protegidos y asociados a su propietario.</p></div><div className="developer-header-actions"><span className="surface-pill developer-pill">Vista desarrollador</span><button className="portal-button portal-button-primary" onClick={() => setNewCaseOpen((open) => !open)}>{newCaseOpen ? "Cerrar nuevo expediente" : "Nuevo expediente +"}</button><button className="portal-button portal-button-secondary" onClick={() => void clearPilotConsole()} disabled={pilotResetBusy}>{pilotResetBusy ? "Vaciando…" : "Vaciar consola piloto"}</button><a className="portal-button portal-button-secondary" href={`/?view=patient&case=${encodeURIComponent(selected)}`} target="_blank" rel="noreferrer">Abrir vista paciente ↗</a><a className="patient-signout-button" href={signOutHref(user)}>Cerrar sesión</a></div></header><div className="developer-body">{newCaseOpen && <DeveloperNewCaseForm onCancel={() => setNewCaseOpen(false)} onCreated={async (id) => { setNewCaseOpen(false); setSelectedId(id); await refreshCases(); }} />}<section className="case-queue"><div className="queue-header"><div><span className="card-kicker">BANDEJA DE CASOS</span><h2>Casos recientes <em>{cases.length}</em></h2></div></div><div className="queue-search">⌕ <input placeholder="Buscar paciente, cuenta o episodio" value={query} onChange={(event) => setQuery(event.target.value)} /></div><div className="queue-list">{visibleCases.map((item) => <button key={item.id} onClick={() => setSelectedId(item.id)} className={`dev-case-row ${selected === item.id ? "active" : ""}`}><span className="avatar">{item.patient_name.slice(0, 2).toUpperCase()}</span><div><b>{selected === item.id && snapshot ? patientNameForDeveloper(snapshot) : item.patient_name}</b><small>{item.id} · {item.document_count} documentos</small></div><em className={item.status.includes("analysis") ? "green" : "blue"}>{item.status}</em></button>)}</div></section><section className="case-detail"><div className="case-detail-head"><div><span className="case-breadcrumb">EXPEDIENTE / {selected}</span><h2>{snapshot ? patientNameForDeveloper(snapshot) : "Cargando…"}</h2><p>{snapshot?.case.episodeLabel || ""}</p></div><span className="case-state"><i /> {snapshot?.case.status || "Cargando"}</span></div>{snapshot && <><div className="dev-summary-metrics"><DevMetric label="Cuenta clínica" value={money(total)} detail="Documento base"/><DevMetric label="Desfragmentación" value={snapshot.analysis ? `${snapshot.analysis.lineAssessments.length} líneas` : "Pendiente"} detail="Hipótesis técnicas" pending={!snapshot.analysis}/><DevMetric label="Contexto PAM" value={pam ? "Recibido" : "Pendiente"} detail="Se conserva separado" pending={!pam}/><DevMetric label="Autorización" value={snapshot.authorization?.authorized ? "Otorgada" : "Pendiente"} detail="Gestión de reclamos" pending={!snapshot.authorization?.authorized}/><DevMetric label="Documentos" value={String(snapshot.documents.length)} detail="Fuentes del caso"/></div><div className="dev-tabs">{(["overview", "traceability", "documents"] as const).map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item === "overview" ? "Resumen" : item === "traceability" ? "Matriz de trazabilidad" : "Documentos"}</button>)}</div>{notice && <p className="patient-analysis-notice">{notice}</p>}{uploadStage && <UploadProgress progress={uploadProgress} stage={uploadStage} />}{analysisStatus === "running" && <AnalysisProgress progress={analysisProgress} stage={analysisStage} />}{tab === "overview" && <DeveloperOverview snapshot={snapshot} total={total} busy={busy} onAnalyze={() => void onAnalyze()} onExport={() => downloadJson(`${selected}-preinforme.json`, snapshot)} onClaimDraft={() => downloadClaim(`${selected}-solicitud-aclaracion.md`, snapshot)} />}{tab === "traceability" && <DeveloperTraceability snapshot={snapshot} onExport={() => downloadJson(`${selected}-matriz.json`, snapshot.analysis)} onExportMarkdown={() => snapshot.analysis && downloadMarkdown(`${selected}-matriz.md`, snapshot.analysis)} />}{tab === "documents" && <DeveloperDocuments snapshot={snapshot} busy={busy} pendingUpload={pendingUpload} uploadProgress={uploadProgress} uploadStage={uploadStage} onFile={(file, kind) => void onFile(file, kind)} onAnalyze={() => void onAnalyze()} onRetryReader={() => void onRetryReader()} readerAssistBusy={readerAssistBusy} readerAssistResponse={readerAssistDocumentId === account?.id ? readerAssistResponse : undefined} onReaderAssist={() => void onReaderAssist()} visionAssistBusy={visionAssistBusy} visionAssistResponse={visionAssistDocumentId === account?.id ? visionAssistResponse : undefined} />}</>}</section></div></section></main>;
 }
 
 function DeveloperCaseIdentity({ snapshot }: { snapshot: Snapshot }) {
@@ -2022,8 +1977,8 @@ function DeveloperCaseIdentity({ snapshot }: { snapshot: Snapshot }) {
 }
 
 function DevMetric({ label, value, detail, pending }: { label: string; value: string; detail: string; pending?: boolean }) { return <article className={`dev-metric ${pending ? "pending" : ""}`}><span>{label}</span><strong>{value}</strong><small>{detail}</small></article>; }
-function DeveloperOverview({ snapshot, total, busy, onAnalyze, onExport, onClaimDraft, onCorpusStatus }: { snapshot: Snapshot; total: number; busy: boolean; onAnalyze: () => void; onExport: () => void; onClaimDraft: () => void; onCorpusStatus: (status: "pending_review" | "validated" | "rejected") => void }) { const account = accountDoc(snapshot); const analysis = snapshot.analysis; const candidates = analysis?.lineAssessments.filter((item) => Boolean(bestCombinedCandidate(analysis, item))) || []; return <div className="developer-overview"><DeveloperCaseIdentity snapshot={snapshot}/><div className="dev-flow-card"><div className="card-heading"><div><span className="card-kicker">FLUJO DEL EXPEDIENTE</span><h3>Cuenta clínica primero</h3></div><span className="dev-percentage">{analysis ? "100%" : "50%"}</span></div><div className="dev-flow"><FlowStep number="01" title="Cuenta" state={account ? "complete" : "pending"} detail={account ? "Recibida" : "Pendiente"}/><i/><FlowStep number="02" title="Análisis de cuenta" state={analysis ? "complete" : account ? "current" : "pending"} detail={analysis ? "Listo" : account ? "En curso" : "Esperando cuenta"}/><i/><FlowStep number="03" title="Cobertura PAM" state={pamDoc(snapshot) ? "complete" : "pending"} detail={pamDoc(snapshot) ? "Aislada" : "Opcional"}/><i/><FlowStep number="04" title="Conciliación posterior" state="pending" detail="No ejecutada"/></div></div><div className="developer-scope-card"><div><span className="card-kicker">ALCANCE ACTUAL</span><h3>Posibles desfragmentaciones del prestador</h3><p>Se revisan glosas, códigos, cantidades y vínculos dentro de la cuenta clínica. El PAM informa cobertura, bonificación, copago y rechazos; no determina desfragmentaciones ni reemplaza la cuenta.</p></div><span>OPERATIVO</span></div><div className="dev-analysis-grid"><article><span className="card-kicker">CUENTA CLÍNICA</span><strong>{money(total)}</strong><small>Total informado por el prestador</small></article><article><span className="card-kicker">LÍNEAS CANDIDATAS</span><strong>{candidates.length}</strong><small>Reglas y segunda lectura LLM</small></article><article><span className="card-kicker">PRÓXIMA ACCIÓN</span><strong>{analysis ? "Exportar" : "Analizar"}</strong><small>{analysis ? "Preinforme del caso" : "Ejecutar motor + LLM"}</small></article></div><div className="developer-actions"><button className="portal-button portal-button-primary" onClick={onAnalyze} disabled={busy}>{busy ? "Procesando…" : analysis ? "Actualizar análisis" : "Abrir analizador"} →</button><button className="portal-button portal-button-secondary" onClick={onExport}>Exportar preinforme</button><button className="portal-button portal-button-secondary" onClick={onClaimDraft}>Generar reclamo base</button></div><CorpusLearningPanel status={snapshot.corpusStatus} busy={busy} onStatus={onCorpusStatus}/>{analysis && <DeveloperAnalysisDetail analysis={analysis}/>}</div>; }
-function CorpusLearningPanel({ status, busy, onStatus }: { status?: Snapshot["corpusStatus"]; busy: boolean; onStatus: (status: "pending_review" | "validated" | "rejected") => void }) { const label = status === "validated" ? "Activo en corpus" : status === "rejected" ? "No incorporado" : status === "pending_review" ? "Pendiente de validación" : "Sin observación registrada"; return <section className="corpus-learning-panel"><div><span className="card-kicker">APRENDIZAJE INCREMENTAL</span><h3>{label}</h3><p>Las observaciones de cuenta y PAM se registran por separado. Solo una revisión humana las incorpora al corpus correspondiente.</p></div><div className="corpus-learning-actions"><button className="portal-button portal-button-secondary" onClick={() => onStatus("validated")} disabled={busy || status === "validated"}>Validar aporte</button><button className="portal-button portal-button-secondary" onClick={() => onStatus("rejected")} disabled={busy || status === "rejected"}>Rechazar</button></div></section>; }
+function DeveloperOverview({ snapshot, total, busy, onAnalyze, onExport, onClaimDraft }: { snapshot: Snapshot; total: number; busy: boolean; onAnalyze: () => void; onExport: () => void; onClaimDraft: () => void }) { const account = accountDoc(snapshot); const analysis = snapshot.analysis; const candidates = analysis?.lineAssessments.filter((item) => Boolean(bestCombinedCandidate(analysis, item))) || []; return <div className="developer-overview"><DeveloperCaseIdentity snapshot={snapshot}/><div className="dev-flow-card"><div className="card-heading"><div><span className="card-kicker">FLUJO DEL EXPEDIENTE</span><h3>Cuenta clínica primero</h3></div><span className="dev-percentage">{analysis ? "100%" : "50%"}</span></div><div className="dev-flow"><FlowStep number="01" title="Cuenta" state={account ? "complete" : "pending"} detail={account ? "Recibida" : "Pendiente"}/><i/><FlowStep number="02" title="Análisis de cuenta" state={analysis ? "complete" : account ? "current" : "pending"} detail={analysis ? "Listo" : account ? "En curso" : "Esperando cuenta"}/><i/><FlowStep number="03" title="Cobertura PAM" state={pamDoc(snapshot) ? "complete" : "pending"} detail={pamDoc(snapshot) ? "Aislada" : "Opcional"}/><i/><FlowStep number="04" title="Conciliación posterior" state="pending" detail="No ejecutada"/></div></div><div className="developer-scope-card"><div><span className="card-kicker">ALCANCE ACTUAL</span><h3>Posibles desfragmentaciones del prestador</h3><p>Se revisan glosas, códigos, cantidades y vínculos dentro de la cuenta clínica. El PAM informa cobertura, bonificación, copago y rechazos; no determina desfragmentaciones ni reemplaza la cuenta.</p></div><span>OPERATIVO</span></div><div className="dev-analysis-grid"><article><span className="card-kicker">CUENTA CLÍNICA</span><strong>{money(total)}</strong><small>Total informado por el prestador</small></article><article><span className="card-kicker">LÍNEAS CANDIDATAS</span><strong>{candidates.length}</strong><small>Reglas y segunda lectura LLM</small></article><article><span className="card-kicker">PRÓXIMA ACCIÓN</span><strong>{analysis ? "Exportar" : "Analizar"}</strong><small>{analysis ? "Preinforme del caso" : "Ejecutar motor + LLM"}</small></article></div><div className="developer-actions"><button className="portal-button portal-button-primary" onClick={onAnalyze} disabled={busy}>{busy ? "Procesando…" : analysis ? "Actualizar análisis" : "Abrir analizador"} →</button><button className="portal-button portal-button-secondary" onClick={onExport}>Exportar preinforme</button><button className="portal-button portal-button-secondary" onClick={onClaimDraft}>Generar reclamo base</button></div><CorpusLearningPanel/>{analysis && <DeveloperAnalysisDetail analysis={analysis}/>}</div>; }
+function CorpusLearningPanel() { return <section className="corpus-learning-panel"><div><span className="card-kicker">PRUEBAS AISLADAS</span><h3>Memoria entre cuentas desactivada</h3><p>Esta cuenta se analiza contra las reglas base y no se incorpora al corpus. La siguiente cuenta comienza sin aprendizaje de esta prueba.</p></div></section>; }
 
 function DeveloperTraceability({ snapshot, onExport, onExportMarkdown }: { snapshot: Snapshot; onExport: () => void; onExportMarkdown: () => void }) { return <div className="traceability-view"><DeveloperCaseIdentity snapshot={snapshot}/><div className="traceability-toolbar"><div><span className="card-kicker">MATRIZ DE CUENTA CLÍNICA</span><h3>Evidencia línea por línea</h3></div><div className="traceability-toolbar-actions"><button className="portal-button portal-button-secondary" onClick={onExport}>Exportar .json</button><button className="portal-button portal-button-secondary" onClick={onExportMarkdown}>Exportar .md</button></div></div>{snapshot.analysis ? <DeveloperAnalysisDetail analysis={snapshot.analysis}/> : <section className="trace-note"><span>i</span><p>Ejecuta el análisis desde Resumen para generar la matriz.</p></section>}</div>; }
 function PrecedentProjectionPanel({ analysis, rows }: { analysis: ClinicalAccountAnalysis; rows: ClinicalAccountAnalysis["lineAssessments"] }) {

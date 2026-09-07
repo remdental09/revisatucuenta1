@@ -1,6 +1,7 @@
 import { ensureCaseSchema } from "../../../../../lib/server/case-schema.ts";
 import { getCloudflareEnv, localGetCase } from "../../../../../lib/server/runtime-store.ts";
 import {
+  ACCOUNT_MEMORY_DISABLED,
   getCorpusContributionStatus,
   getObservedCorpusSnapshot,
   updateCorpusContributionStatus,
@@ -18,6 +19,9 @@ export async function GET(
   const { id } = await context.params;
   const auth = await requireApiUser(request);
   if ("response" in auth) return auth.response;
+  if (ACCOUNT_MEMORY_DISABLED) {
+    return Response.json({ caseId: id, status: "rejected", activeInCorpus: false, message: "La memoria entre cuentas está desactivada." });
+  }
   const env = await getCloudflareEnv();
   const denied = await caseAccessResponse(env, id, auth.user);
   if (denied) return denied;
@@ -41,6 +45,12 @@ export async function POST(
   const { id } = await context.params;
   const auth = await requireApiUser(request);
   if ("response" in auth) return auth.response;
+  if (ACCOUNT_MEMORY_DISABLED) {
+    return Response.json(
+      { error: "La memoria entre cuentas está desactivada; no se puede validar ni conservar esta cuenta." },
+      { status: 410, headers: { "cache-control": "no-store" } },
+    );
+  }
   const developerDenied = developerAccessResponse(auth.user);
   if (developerDenied) return developerDenied;
   const body = await request.json().catch(() => ({})) as { status?: CorpusContributionStatus };

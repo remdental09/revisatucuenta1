@@ -1,19 +1,17 @@
 import { ensureCaseSchema } from "./case-schema.ts";
-import { localResetPilot, volatileRuntimeMode } from "./runtime-store.ts";
+import { localResetPilot } from "./runtime-store.ts";
+import { clearLocalCorpusContributions } from "./observed-corpus-store.ts";
 
-export const PILOT_RESET_VERSION = "2026-08-30-empty-console-v2";
+export const PILOT_RESET_VERSION = "2026-09-07-memoryless-v1";
 const PILOT_RESET_FLAG = "pilot_reset_version";
 
 /**
- * One-time cleanup for the pilot deployment. Case records and their temporary
- * source files are removed, while validated corpus observations remain intact.
+ * One-time cleanup for the pilot deployment. Case records, source files,
+ * analyses, contracts, activities and account observations are removed.
  */
 export async function resetPilotData(env: any) {
   if (!env?.DB) {
-    // Volatile mode is used for isolated training runs. Keep its in-memory
-    // cases available while the operator switches between developer/patient
-    // views; production keeps the one-time pilot cleanup behavior.
-    if (await volatileRuntimeMode()) return { reset: false, deletedCases: 0, deletedDocuments: 0 };
+    clearLocalCorpusContributions();
     return localResetPilot(PILOT_RESET_VERSION);
   }
 
@@ -39,7 +37,7 @@ export async function resetPilotData(env: any) {
     env.DB.prepare(`DELETE FROM case_activities`),
     env.DB.prepare(`DELETE FROM documents`),
     env.DB.prepare(`DELETE FROM cases`),
-    env.DB.prepare(`DELETE FROM corpus_contributions WHERE status <> 'validated'`),
+    env.DB.prepare(`DELETE FROM corpus_contributions`),
     env.DB.prepare(`INSERT OR REPLACE INTO runtime_flags (flag_key, flag_value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)`).bind(PILOT_RESET_FLAG, PILOT_RESET_VERSION),
   ]);
   return { reset: true, deletedCases: Number(cases?.count || 0), deletedDocuments: documents.results.length };

@@ -502,15 +502,15 @@ test("la repetición histórica no se convierte sola en fragmentación", () => {
   assert.equal(analysis.lineAssessments[0]!.candidates.length, 0);
 });
 
-test("al retirar una cuenta pendiente conserva el PAM asociado", async () => {
+test("no conserva observaciones de cuentas entre pruebas", async () => {
   const caseId = `source-cleanup-${randomUUID()}`;
-  await registerCorpusContribution(null, caseId, buildCorpusContribution({
+  const accountStatus = await registerCorpusContribution(null, caseId, buildCorpusContribution({
     caseId,
     sourceKind: "account",
     sourceDocumentId: "account-document",
     lines: [{ ...base, id: "account-line", description: "Cuenta clínica de prueba", amount: 1200 }],
   }));
-  await registerCorpusContribution(null, caseId, buildCorpusContribution({
+  const pamStatus = await registerCorpusContribution(null, caseId, buildCorpusContribution({
     caseId,
     sourceKind: "pam",
     sourceDocumentId: "pam-document",
@@ -520,12 +520,14 @@ test("al retirar una cuenta pendiente conserva el PAM asociado", async () => {
   await removePendingCorpusContribution(null, caseId, "account");
   const accountSnapshot = await getObservedCorpusSnapshot(null, "account");
   const pamSnapshot = await getObservedCorpusSnapshot(null, "pam");
+  assert.equal(accountStatus, "rejected");
+  assert.equal(pamStatus, "rejected");
   assert.equal(accountSnapshot.pendingCount, 0);
-  assert.equal(pamSnapshot.pendingCount, 1);
+  assert.equal(pamSnapshot.pendingCount, 0);
   assert.equal(pamSnapshot.corpus.observationCount, OBSERVED_CHILEAN_ACCOUNT_CORPUS.observationCount);
 });
 
-test("incorpora cuentas nuevas al corpus sólo después de validarlas", async () => {
+test("analiza cada cuenta sin incorporarla al corpus", async () => {
   const caseId = `corpus-test-${randomUUID()}`;
   const created = await createCaseRequest(new Request("http://localhost/api/cases", {
     method: "POST",
@@ -546,7 +548,7 @@ test("incorpora cuentas nuevas al corpus sólo después de validarlas", async ()
   }));
   const firstPayload = await firstAnalysis.json() as { corpusLearning?: { status: string }; observedCorpus: { caseCount: number } };
   assert.equal(firstAnalysis.status, 200);
-  assert.equal(firstPayload.corpusLearning?.status, "pending_review");
+  assert.equal(firstPayload.corpusLearning?.status, "rejected");
   assert.equal(firstPayload.observedCorpus.caseCount, OBSERVED_CHILEAN_ACCOUNT_CORPUS.caseCount);
 
   const validated = await updateCorpusRequest(new Request(`http://localhost/api/cases/${caseId}/corpus`, {
@@ -555,9 +557,8 @@ test("incorpora cuentas nuevas al corpus sólo después de validarlas", async ()
     body: JSON.stringify({ status: "validated" }),
   }), { params: Promise.resolve({ id: caseId }) });
   const validatedPayload = await validated.json() as { activeInCorpus: boolean; caseCount: number };
-  assert.equal(validated.status, 200);
-  assert.equal(validatedPayload.activeInCorpus, true);
-  assert.equal(validatedPayload.caseCount, OBSERVED_CHILEAN_ACCOUNT_CORPUS.caseCount + 1);
+  assert.equal(validated.status, 410);
+  assert.equal(validatedPayload.activeInCorpus, undefined);
 
   const secondAnalysis = await analyzeAccountRequest(new Request("http://localhost/api/analysis", {
     method: "POST",
@@ -565,12 +566,12 @@ test("incorpora cuentas nuevas al corpus sólo después de validarlas", async ()
     body: JSON.stringify(requestBody),
   }));
   const secondPayload = await secondAnalysis.json() as { observedCorpus: { caseCount: number; observationCount: number }; lineAssessments: Array<{ observedEquivalents: Array<{ description: string }> }> };
-  assert.equal(secondPayload.observedCorpus.caseCount, OBSERVED_CHILEAN_ACCOUNT_CORPUS.caseCount + 1);
-  assert.equal(secondPayload.observedCorpus.observationCount, OBSERVED_CHILEAN_ACCOUNT_CORPUS.observationCount + 1);
-  assert.equal(secondPayload.lineAssessments[0]?.observedEquivalents[0]?.description, "Termómetro incremental de prueba");
+  assert.equal(secondPayload.observedCorpus.caseCount, OBSERVED_CHILEAN_ACCOUNT_CORPUS.caseCount);
+  assert.equal(secondPayload.observedCorpus.observationCount, OBSERVED_CHILEAN_ACCOUNT_CORPUS.observationCount);
+  assert.equal(secondPayload.lineAssessments[0]?.observedEquivalents.length, 0);
 });
 
-test("acumula cuenta y PAM en una observación pendiente antes de activar el corpus", async () => {
+test("rechaza el registro manual de observaciones de cuenta y PAM", async () => {
   const caseId = `account-pam-corpus-${randomUUID()}`;
   const created = await createCaseRequest(new Request("http://localhost/api/cases", {
     method: "POST",
@@ -589,8 +590,7 @@ test("acumula cuenta y PAM en una observación pendiente antes de activar el cor
       lines: [{ id: "account-line", description: "Apósito estéril", amount: 1200, page: 1, section: "Materiales clínicos" }],
     }),
   }));
-  assert.equal(account.status, 200);
-  assert.equal((await account.json()).status, "pending_review");
+  assert.equal(account.status, 410);
 
   const pam = await registerCorpusObservationRequest(new Request("http://localhost/api/corpus", {
     method: "POST",
@@ -603,17 +603,16 @@ test("acumula cuenta y PAM en una observación pendiente antes de activar el cor
     }),
   }));
   const pamPayload = await pam.json() as { status: string; activeInCorpus: boolean };
-  assert.equal(pam.status, 200);
-  assert.equal(pamPayload.status, "pending_review");
-  assert.equal(pamPayload.activeInCorpus, false);
+  assert.equal(pam.status, 410);
+  assert.equal(pamPayload.status, undefined);
+  assert.equal(pamPayload.activeInCorpus, undefined);
 
   const validated = await updateCorpusRequest(new Request(`http://localhost/api/cases/${caseId}/corpus`, {
     method: "POST",
     headers: { ...testAuthHeaders, "content-type": "application/json" },
     body: JSON.stringify({ status: "validated" }),
   }), { params: Promise.resolve({ id: caseId }) });
-  assert.equal(validated.status, 200);
-  assert.equal((await validated.json()).activeInCorpus, true);
+  assert.equal(validated.status, 410);
 });
 
 test("mantiene el PAM validado fuera del corpus de análisis de cuenta", async () => {
@@ -637,14 +636,14 @@ test("mantiene el PAM validado fuera del corpus de análisis de cuenta", async (
       lines: [{ id: "pam-only-line", description: "Prestación exclusiva de liquidación PAM", amount: 1200, page: 1, section: "PAM" }],
     }),
   }));
-  assert.equal(pam.status, 200);
+  assert.equal(pam.status, 410);
 
   const validated = await updateCorpusRequest(new Request(`http://localhost/api/cases/${caseId}/corpus`, {
     method: "POST",
     headers: { ...testAuthHeaders, "content-type": "application/json" },
     body: JSON.stringify({ status: "validated" }),
   }), { params: Promise.resolve({ id: caseId }) });
-  assert.equal(validated.status, 200);
+  assert.equal(validated.status, 410);
 
   const accountProbe = await analyzeAccountRequest(new Request("http://localhost/api/analysis", {
     method: "POST",

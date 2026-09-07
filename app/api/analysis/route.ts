@@ -4,11 +4,7 @@ import {
 } from "../../../lib/rules/chilean-account.ts";
 import { ensureCaseSchema } from "../../../lib/server/case-schema.ts";
 import { getCloudflareEnv, localSaveAnalysis } from "../../../lib/server/runtime-store.ts";
-import {
-  buildCorpusContribution,
-  getObservedCorpusSnapshot,
-  registerCorpusContribution,
-} from "../../../lib/server/observed-corpus-store.ts";
+import { getObservedCorpusSnapshot } from "../../../lib/server/observed-corpus-store.ts";
 import { isDeveloperUser, requireApiUser } from "../../../lib/server/auth.ts";
 import { caseAccessResponse } from "../../../lib/server/case-access.ts";
 import { buildPatientResult } from "../../../lib/rules/patient-result.ts";
@@ -84,8 +80,9 @@ export async function POST(request: Request) {
     const denied = await caseAccessResponse(env, body.caseId, auth.user);
     if (denied) return denied;
   }
-  // Account hypotheses continue to use the validated account corpus. PAM lines
-  // are kept as a separate source and now feed an explicit reconciliation layer.
+  // Every uploaded account is an isolated test. Only the bundled,
+  // de-identified rule corpus is used; this execution cannot teach a later
+  // account anything about the current one.
   const corpusSnapshot = await getObservedCorpusSnapshot(env, "account");
   const analysis = analyzeClinicalAccount(body.lines, undefined, corpusSnapshot.corpus, {
     pamLines: body.pamLines as ChileanBillingLine[] | undefined,
@@ -115,27 +112,10 @@ export async function POST(request: Request) {
   analysis.observedCorpus.pendingContributionCount = corpusSnapshot.pendingCount;
   analysis.observedCorpus.validatedContributionCount = corpusSnapshot.validatedCount;
   analysis.corpusLearning = {
-    status: "not_registered",
-    message: "Esta ejecución no se vinculó a un expediente para incorporación al corpus.",
+    status: "rejected",
+    message: "La cuenta se analizó de forma aislada y no se conserva como memoria de otra cuenta.",
   };
   if (body.caseId) {
-    const contribution = buildCorpusContribution({
-      caseId: body.caseId,
-      episodeClass: body.episodeLabel,
-      sourceKind: "account",
-      sourceDocumentId: body.lines[0]?.documentId,
-      lines: body.lines,
-    });
-    const corpusStatus = await registerCorpusContribution(env, body.caseId, contribution);
-    const nextSnapshot = await getObservedCorpusSnapshot(env, "account");
-    analysis.observedCorpus.pendingContributionCount = nextSnapshot.pendingCount;
-    analysis.observedCorpus.validatedContributionCount = nextSnapshot.validatedCount;
-    analysis.corpusLearning = {
-      status: corpusStatus,
-      message: corpusStatus === "validated"
-        ? "La cuenta ya está incorporada como observación validada del corpus."
-        : "La cuenta quedó como observación pendiente. Se incorporará al corpus activo después de revisión interna.",
-    };
     if (!env?.DB) {
       localSaveAnalysis(body.caseId, analysis);
       return Response.json(isDeveloperUser(auth.user) ? analysis : { patientResult: buildPatientResult(analysis) });
