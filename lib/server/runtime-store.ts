@@ -194,7 +194,7 @@ export function localDocumentCaseId(documentId: string) {
 
 export function localSaveDocument(input: { id: string; caseId: string; name: string; mimeType: string; byteSize: number; classification: string; confidence: number }) {
   const timestamp = now();
-  documents.set(input.id, { id: input.id, case_id: input.caseId, original_name: input.name, mime_type: input.mimeType, byte_size: input.byteSize, classification: input.classification, classification_confidence: input.confidence, processing_status: "extracting", source_expires_at: new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString(), created_at: timestamp });
+  documents.set(input.id, { id: input.id, case_id: input.caseId, original_name: input.name, mime_type: input.mimeType, byte_size: input.byteSize, classification: input.classification, classification_confidence: input.confidence, processing_status: "extracting", created_at: timestamp });
   if (/cuenta|mixto/i.test(input.classification)) analyses.delete(input.caseId);
   addActivity(input.caseId, "Documento incorporado", `${input.name} quedó disponible para revisión.`);
   const item = cases.get(input.caseId);
@@ -246,7 +246,7 @@ export function localSaveExtraction(documentId: string, extraction: DocumentExtr
     ...document,
     processing_status: reviewRequired ? "review_required" : "ready",
     processing_error: undefined,
-    source_deleted_at: reviewRequired ? document.source_deleted_at : now(),
+    source_deleted_at: document.source_deleted_at,
   });
   if (reviewRequired) {
     const currentCase = cases.get(document.case_id);

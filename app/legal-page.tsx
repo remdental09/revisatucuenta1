@@ -37,24 +37,25 @@ function PrivacyContent() {
       <h2>3. Para qué usamos la información</h2>
       <LegalList>
         <li>Verificar que sólo el correo autorizado acceda a la revisión.</li>
-        <li>Ordenar y leer los documentos entregados, generar un resultado preliminar y permitir su revisión humana cuando corresponda.</li>
+        <li>Ordenar, almacenar y leer los documentos entregados, enviarlos al buzón operativo del equipo revisor, generar un resultado preliminar y permitir su revisión humana cuando corresponda.</li>
+        <li>Validar y mejorar las reglas internas del sistema de análisis, manteniendo trazabilidad y control humano sobre los resultados.</li>
         <li>Preparar comunicaciones, solicitudes de aclaración o gestiones administrativas que la persona autorice.</li>
         <li>Proteger la plataforma, mantener trazabilidad, atender solicitudes de la persona y cumplir obligaciones legales.</li>
       </LegalList>
       <p>El resultado es preliminar: no constituye por sí solo una decisión médica, una declaración de cobro indebido ni una promesa de devolución.</p>
 
       <h2>4. Proveedores y comunicaciones</h2>
-      <p>Podemos utilizar proveedores tecnológicos para hosting, base de datos, almacenamiento de documentos, correo transaccional, lectura documental y seguridad. Cada proveedor debe operar sólo según el encargo recibido, con confidencialidad y medidas de seguridad. Los datos sólo se comunicarán al prestador involucrado, a la autoridad competente cuando corresponda o a proveedores necesarios para prestar el servicio.</p>
+      <p>Podemos utilizar proveedores tecnológicos para hosting, base de datos, almacenamiento de documentos, correo transaccional, entrega al buzón operativo del equipo revisor, lectura documental y seguridad. Cada proveedor debe operar sólo según el encargo recibido, con confidencialidad y medidas de seguridad. Los datos sólo se comunicarán al equipo revisor, al prestador involucrado, a la autoridad competente cuando corresponda o a proveedores necesarios para prestar el servicio.</p>
       <p>Cloudflare informa que ciertos datos técnicos de sus cookies pueden procesarse por defecto en Estados Unidos. Esta transferencia y las de cualquier otro proveedor deben mantenerse descritas y actualizadas en la versión vigente de esta política.</p>
 
       <h2>5. Conservación y eliminación</h2>
-      <p>El documento original se elimina después de una extracción exitosa. Si la lectura requiere revisión humana, la fuente queda retenida como máximo por 72 horas, sujeto a que la eliminación técnica se complete. Los datos estructurados del caso, autorizaciones y resultado se conservan sólo durante la gestión, los plazos legales aplicables y el período de evidencia que defina la sociedad; luego deben eliminarse, bloquearse o anonimizarse cuando corresponda.</p>
+      <p>Los originales cargados se almacenan cifrados en la plataforma y también se entregan al buzón operativo del equipo revisor. Se conservan durante la gestión, los plazos legales aplicables y el período de evidencia y validación interna que defina la sociedad. La persona puede solicitar su eliminación cuando corresponda; al ejecutarla, el archivo se retira del almacenamiento de la plataforma y debe retirarse también de las copias operativas sujetas a esa solicitud.</p>
 
       <h2>6. Derechos y revocación</h2>
       <p>La persona puede solicitar información sobre sus datos, corrección y, cuando corresponda, eliminación, bloqueo u oposición; también puede revocar autorizaciones para usos futuros. La revocación no invalida tratamientos realizados lícitamente ni actuaciones ya presentadas. La sociedad debe habilitar un canal verificable y responder conforme a la ley aplicable.</p>
 
       <h2>7. Seguridad y privacidad por diseño</h2>
-      <p>El acceso se verifica por correo, las sesiones usan una cookie HttpOnly y Secure en producción, y los documentos originales se eliminan según el ciclo indicado. No se deben incorporar herramientas de analítica o publicidad que reciban RUN, correo, identificadores de casos, URLs con información clínica o documentos de pacientes.</p>
+      <p>El acceso se verifica por correo, las sesiones usan una cookie HttpOnly y Secure en producción, y los documentos originales se almacenan cifrados con acceso restringido al expediente y al equipo revisor. No se deben incorporar herramientas de analítica o publicidad que reciban RUN, correo, identificadores de casos, URLs con información clínica o documentos de pacientes.</p>
 
       <h2>8. Cambios</h2>
       <p>La política debe mostrar siempre su versión y fecha. Los cambios relevantes deben comunicarse antes de aplicar una nueva finalidad. Esta versión corresponde al piloto y debe ser revisada por asesoría jurídica chilena antes de operar comercialmente.</p>
@@ -111,7 +112,7 @@ export function LegalPage({ section }: { section: LegalSection }) {
       <article className="legal-document">
         <p className="legal-kicker">DOCUMENTO DE PRIVACIDAD · PILOTO</p>
         <h1>{cookies ? "Política de cookies" : "Política de privacidad"}</h1>
-        <p className="legal-version">Versión 2026-09-04-v1 · publicada el 4 de septiembre de 2026</p>
+        <p className="legal-version">Versión 2026-09-07-v3 · publicada el 7 de septiembre de 2026</p>
         <div className="legal-notice"><strong>Importante:</strong> esta versión describe el piloto. La entidad operadora debe completar sus datos legales y validar el texto con asesoría jurídica chilena antes del uso comercial.</div>
         {cookies ? <CookiesContent /> : <PrivacyContent />}
         <footer className="legal-footer"><LegalBrand /><span>Revisa tus cuentas de hospitalización en clínicas.</span></footer>

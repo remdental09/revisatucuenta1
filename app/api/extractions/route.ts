@@ -130,22 +130,12 @@ export async function POST(request: Request) {
     await env.DB.prepare(`INSERT INTO case_activities (id, case_id, title, detail, pending) VALUES (?, ?, ?, ?, 1)`)
       .bind(crypto.randomUUID(), String(document.case_id), "Revisión humana requerida", "El formato o algunos renglones necesitan validación antes de emitir un resultado.").run();
   }
-  let sourceDeleted = false;
-  if (!reviewRequired && env.DOCUMENTS && document?.storage_key) {
-    try {
-      await env.DOCUMENTS.delete(String(document.storage_key));
-      await env.DB.prepare(`UPDATE documents SET source_deleted_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(body.documentId).run();
-      sourceDeleted = true;
-    } catch {
-      // The retention deadline remains recorded so an opportunistic cleanup can retry.
-    }
-  }
   return Response.json({
     savedFields: accountFields.length + pamFields.length,
     patientNameRegistered: Boolean(patientAccountField),
     derivedPamDocumentId,
     processingStatus: reviewRequired ? "review_required" : "ready",
-    sourceDeleted,
-    sourceRetainedUntil: reviewRequired && document?.source_expires_at ? String(document.source_expires_at) : undefined,
+    sourceDeleted: false,
+    sourceRetainedUntil: undefined,
   }, { status: 201 });
 }

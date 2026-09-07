@@ -1,8 +1,7 @@
 import { ensureCaseSchema } from "../../../lib/server/case-schema.ts";
 import { getCloudflareEnv, localCreateCase, localListCases } from "../../../lib/server/runtime-store.ts";
 import { isDeveloperUser, requireApiUser } from "../../../lib/server/auth.ts";
-import { purgeExpiredDocumentSources } from "../../../lib/server/source-retention.ts";
-import { resetPilotData } from "../../../lib/server/pilot-reset.ts";
+import { preserveDocumentSources } from "../../../lib/server/source-retention.ts";
 import { isValidChileanRun, normalizeChileanRun } from "../../../lib/identity/chilean-run.ts";
 
 export async function GET(request: Request) {
@@ -10,8 +9,7 @@ export async function GET(request: Request) {
   if ("response" in auth) return auth.response;
   const developer = isDeveloperUser(auth.user);
   const env = await getCloudflareEnv();
-  await purgeExpiredDocumentSources(env);
-  if (developer) await resetPilotData(env);
+  await preserveDocumentSources(env);
   if (!env?.DB) return Response.json({ cases: localListCases(auth.user.id, developer) });
   await ensureCaseSchema(env.DB);
   const query = developer

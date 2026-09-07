@@ -68,7 +68,6 @@ type Snapshot = {
   corpusStatus?: "pending_review" | "validated" | "rejected";
 };
 
-const PILOT_RESET_VERSION = "2026-08-30-empty-console-v2";
 type CaseRow = { id: string; patient_name: string; patient_run?: string; episode_label: string; status: string; document_count: number };
 type SessionUser = { id: string; email: string; displayName: string; source: "chatgpt" | "email" | "development" | "pilot" };
 
@@ -395,7 +394,8 @@ function processingLabel(document?: CaseDocument) {
   if (document.processingStatus === "failed") return `Falló la lectura${document.processingError ? `: ${document.processingError}` : ""}`;
   if (document.processingStatus === "review_required") return "Lectura pendiente de revisión humana";
   if (document.processingStatus === "extracting") return "Extracción en curso";
-  if (document.processingStatus === "ready" && document.sourceDeletedAt) return "Extraído · original eliminado";
+  if (document.processingStatus === "ready" && document.sourceDeletedAt) return "Extraído · original ya eliminado";
+  if (document.processingStatus === "ready") return "Extraído · original cifrado almacenado";
   if (document.processingStatus === "ready" || document.extraction) return "Extraído";
   return "Pendiente";
 }
@@ -553,7 +553,7 @@ async function retryStoredDocument(caseId: string, document: CaseDocument, onPro
   onProgress?.(2);
   try {
     const sourceResponse = await fetch(sourceUrl, { cache: "no-store" });
-    if (!sourceResponse.ok) throw new Error((await sourceResponse.json().catch(() => ({}))).error || "El original temporal ya no está disponible");
+    if (!sourceResponse.ok) throw new Error((await sourceResponse.json().catch(() => ({}))).error || "El original ya no está disponible");
     const sourceBlob = await sourceResponse.blob();
     const sourceFile = new File([sourceBlob], document.name, { type: document.mimeType || sourceBlob.type || "application/pdf" });
     const extracted = await extractHealthcareDocument(sourceFile, expectedKind(document.classification), onProgress);
@@ -590,21 +590,13 @@ async function deleteDocumentRequest(caseId: string, documentId: string) {
   return payload as { documentId: string; deleted: boolean; name?: string };
 }
 
-async function replaceAccountDocument(caseId: string, previous: CaseDocument, file: File, onProgress?: (value: number) => void) {
+async function replaceAccountDocument(caseId: string, file: File, onProgress?: (value: number) => void) {
   const replacement = await uploadDocument(caseId, file, "Cuenta clínica", onProgress, { registerCorpus: false });
-  try {
-    await deleteDocumentRequest(caseId, previous.id);
-    const corpusRegistered = await registerCorpusObservation(caseId, replacement.documentId, replacement.extraction, "Cuenta clínica");
-    if (replacement.pamDocumentId && replacement.extraction.pam) {
-      await registerCorpusObservation(caseId, replacement.pamDocumentId, { ...replacement.extraction, account: undefined }, "PAM / liquidación");
-    }
-    return { ...replacement, corpusRegistered };
-  } catch (reason) {
-    // If the old document could not be removed, roll back the new one so the
-    // case never exposes two competing clinical accounts.
-    await deleteDocumentRequest(caseId, replacement.documentId).catch(() => undefined);
-    throw reason;
+  const corpusRegistered = await registerCorpusObservation(caseId, replacement.documentId, replacement.extraction, "Cuenta clínica");
+  if (replacement.pamDocumentId && replacement.extraction.pam) {
+    await registerCorpusObservation(caseId, replacement.pamDocumentId, { ...replacement.extraction, account: undefined }, "PAM / liquidación");
   }
+  return { ...replacement, corpusRegistered };
 }
 
 async function analyzeCase(caseId: string, document?: CaseDocument, episodeLabel?: string, pamDocument?: CaseDocument) {
@@ -690,7 +682,7 @@ async function requestVisionReview(
   sourceFile: File | undefined,
   onProgress?: (progress: number) => void,
 ) {
-  if (sourceDocument.sourceDeletedAt) throw new Error("El original temporal ya no está disponible para GPT Vision.");
+  if (sourceDocument.sourceDeletedAt) throw new Error("El original ya no está disponible para GPT Vision.");
   const pages = visionPagesForExtraction(extraction);
   if (!pages.length) throw new Error("No hay páginas seleccionadas para revisión visual.");
   let file = sourceFile;
@@ -699,7 +691,7 @@ async function requestVisionReview(
     const sourceResponse = await fetch(sourceUrl, { cache: "no-store" });
     if (!sourceResponse.ok) {
       const payload = await sourceResponse.json().catch(() => ({}));
-      throw new Error(payload.error || "El original temporal ya no está disponible para visión.");
+      throw new Error(payload.error || "El original ya no está disponible para visión.");
     }
     const sourceBlob = await sourceResponse.blob();
     file = new File([sourceBlob], sourceDocument.name, { type: sourceDocument.mimeType || sourceBlob.type || "application/pdf" });
@@ -1164,7 +1156,7 @@ function PatientAccountScanScene({ progress }: { progress: number }) {
       </div>
       <i className="patient-scan-beam" style={{ top: `${scanPosition}%` }} />
     </div>
-    <span className="patient-scan-coordinates">SECURE READER / LOCAL PROCESSING</span>
+    <span className="patient-scan-coordinates">SECURE READER / TEAM REVIEW</span>
   </div>;
 }
 
@@ -1215,7 +1207,7 @@ function PatientStart({ userEmail, onCreated }: { userEmail: string; onCreated: 
     }
   }
 
-  return <main className="patient-login patient-start-shell"><form className="patient-login-card patient-start-card" onSubmit={submit}><PortalBrand/><div className="login-seal">⌁</div><p className="portal-kicker">Comienza tu revisión</p><h1>Comienza tu revisión.</h1><p>Tu revisión quedará asociada al correo verificado.</p><div className="patient-verified-email"><span>Correo verificado</span><strong>{userEmail}</strong></div><label className="patient-field">Nombre completo<input aria-label="Nombre completo" required autoComplete="name" placeholder="Ej. María Rodríguez" value={name} onChange={(event) => setName(event.target.value)} /></label><label className="patient-field">RUN<input aria-label="RUN" required inputMode="numeric" autoComplete="off" placeholder="12.345.678-9" value={run} onChange={(event) => setRun(event.target.value)} onBlur={() => setRun(normalizeChileanRun(run))} /></label><label className="patient-field">Episodio o atención<input aria-label="Episodio" placeholder="Ej. Revisión de cuenta clínica" value={episode} onChange={(event) => setEpisode(event.target.value)} /></label><label className="portal-button portal-button-secondary"><input type="file" accept="application/pdf,image/jpeg,image/png" hidden onChange={(event) => setFile(event.target.files?.[0])} />{file ? file.name : "Cargar cuenta clínica"}</label>{error && <p className="patient-analysis-notice">{error}</p>}{busy && <div className="patient-scan-panel"><PatientAccountScanScene progress={uploadProgress} /><UploadProgress progress={uploadProgress} stage={uploadStage || "Preparando tu revisión"} /></div>}<button className="portal-button portal-button-primary" disabled={busy}>{busy ? "Preparando revisión…" : "Iniciar revisión"}</button><p className="patient-contact-note">El RUN se usa sólo para identificar tu cuenta y se trata junto con tus datos personales según la autorización informada. Recibirás un resultado preliminar; el documento original se cifra mientras se procesa.</p><a className="back-link" href="/">← Volver</a></form></main>;
+  return <main className="patient-login patient-start-shell"><form className="patient-login-card patient-start-card" onSubmit={submit}><PortalBrand/><div className="login-seal">⌁</div><p className="portal-kicker">Comienza tu revisión</p><h1>Comienza tu revisión.</h1><p>Tu revisión quedará asociada al correo verificado.</p><div className="patient-verified-email"><span>Correo verificado</span><strong>{userEmail}</strong></div><label className="patient-field">Nombre completo<input aria-label="Nombre completo" required autoComplete="name" placeholder="Ej. María Rodríguez" value={name} onChange={(event) => setName(event.target.value)} /></label><label className="patient-field">RUN<input aria-label="RUN" required inputMode="numeric" autoComplete="off" placeholder="12.345.678-9" value={run} onChange={(event) => setRun(event.target.value)} onBlur={() => setRun(normalizeChileanRun(run))} /></label><label className="patient-field">Episodio o atención<input aria-label="Episodio" placeholder="Ej. Revisión de cuenta clínica" value={episode} onChange={(event) => setEpisode(event.target.value)} /></label><label className="portal-button portal-button-secondary"><input type="file" accept="application/pdf,image/jpeg,image/png" hidden onChange={(event) => setFile(event.target.files?.[0])} />{file ? file.name : "Cargar cuenta clínica"}</label>{error && <p className="patient-analysis-notice">{error}</p>}{busy && <div className="patient-scan-panel"><PatientAccountScanScene progress={uploadProgress} /><UploadProgress progress={uploadProgress} stage={uploadStage || "Preparando tu revisión"} /></div>}<button className="portal-button portal-button-primary" disabled={busy}>{busy ? "Preparando revisión…" : "Iniciar revisión"}</button><p className="patient-contact-note">Todo documento que subas se almacenará cifrado y se enviará al buzón operativo del equipo revisor. El RUN y los datos de salud se tratan según la política de privacidad.</p><a className="back-link" href="/">← Volver</a></form></main>;
 }
 
 export function PatientPortal({ initialCaseId = "" }: { initialCaseId?: string }) {
@@ -1242,6 +1234,7 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
   const [deletingDocumentId, setDeletingDocumentId] = useState("");
   const accountInputRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const contractInputRef = useRef<HTMLInputElement>(null);
   const autoAnalysisKeyRef = useRef("");
   const patientExtractionsRef = useRef<Record<string, DocumentExtraction>>({});
 
@@ -1282,6 +1275,20 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
     finally { setBusy(false); }
   }
 
+  async function handleContractDocument(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]; event.target.value = ""; if (!file || !caseId) return;
+    setBusy(true); setProgress(0); setStage("Guardando contrato / plan");
+    try {
+      const result = await uploadDocument(caseId, file, "Contrato / plan", (value) => { setProgress(value); setStage(value < 100 ? `Leyendo contrato / plan · ${value}%` : "Lectura del contrato completada"); });
+      patientExtractionsRef.current[result.documentId] = result.extraction;
+      await refresh();
+      notify("Contrato / plan almacenado y vinculado a la revisión");
+    } catch (reason) {
+      notify(errorMessage(reason, "No se pudo cargar el contrato / plan"));
+      await refresh();
+    } finally { setBusy(false); }
+  }
+
   async function handleAccount(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]; event.target.value = ""; if (!file || !caseId) return;
     const previousAccount = accountDoc(snapshot);
@@ -1289,12 +1296,12 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
     try {
       const updateProgress = (value: number) => { setProgress(value); setStage(value < 100 ? `Leyendo cuenta clínica · ${value}%` : "Lectura de la cuenta completada"); };
       const result = previousAccount
-        ? await replaceAccountDocument(caseId, previousAccount, file, updateProgress)
+        ? await replaceAccountDocument(caseId, file, updateProgress)
         : await uploadDocument(caseId, file, "Cuenta clinica", updateProgress);
       patientExtractionsRef.current[result.documentId] = result.extraction;
       await refresh();
       notify(previousAccount
-        ? "Cuenta clínica anterior eliminada y reemplazada correctamente"
+        ? "Nueva cuenta clínica almacenada; la versión anterior se conserva"
         : result.corpusRegistered
           ? "Cuenta clínica cargada y vinculada a la revisión"
           : "Cuenta clínica cargada; el aprendizaje quedó pendiente de sincronización");
@@ -1406,10 +1413,10 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
     <div className="patient-layout"><aside className="patient-sidebar"><div className="case-mini"><span className="case-icon">⌁</span><div><small>CASO ACTIVO</small><b>{snapshot.case.patientName}</b><span>RUN {snapshot.case.patientRun || "No informado"}</span><span>Caso {caseId.slice(0, 8)}</span></div></div><nav className="patient-nav">{(["Resumen", "Documentos", "Actividad"] as const).map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item}</button>)}</nav><div className="patient-sidebar-help"><span>?</span><div><b>¿Necesitas ayuda?</b><small>Escríbenos sobre tu caso.</small></div></div></aside>
       <section className="patient-main patient-space-main"><div className="patient-heading patient-space-heading"><div><p className="portal-kicker">Mi revisión</p><h1>Hola, {firstName}.</h1><p>{snapshot.case.episodeLabel}</p><div className="patient-identity-summary"><span>Paciente</span><strong>{snapshot.case.patientName}</strong><small>RUN {snapshot.case.patientRun || "No informado"}</small></div></div><span className="case-status"><i /> {patientStatus}</span></div>
          {tab === "Resumen" && <PatientSummary account={account} pam={pam} pamTraceability={patientAnalysis?.pamTraceability ? { ...patientAnalysis.pamTraceability, findings: [] } : undefined} reviewAmount={patientReviewAmount} analysisAvailable={patientResult.available} analysisRunning={status === "running"} progress={progress} stage={stage} contract={snapshot.contract} busy={busy} runVerification={runVerification} readerReviewRequired={Boolean(runVerification !== "matched" || readerNeedsRefresh || account?.processingStatus === "failed" || account?.processingStatus === "review_required" || (readerAssessment && readerAssessment.status !== "ready"))} readerChangeNeeded={!patientCanAnalyze} onAccount={() => accountInputRef.current?.click()} onPam={() => inputRef.current?.click()} onAnalyze={() => void runAnalysis()} onOpenContract={() => void openContract()} contractBusy={contractBusy} />}
-        {tab === "Documentos" && <PatientDocuments snapshot={snapshot} deletingDocumentId={deletingDocumentId} onAccount={() => accountInputRef.current?.click()} onPam={() => inputRef.current?.click()} onDelete={(document) => void removeDocument(document)} />}
+        {tab === "Documentos" && <PatientDocuments snapshot={snapshot} deletingDocumentId={deletingDocumentId} onAccount={() => accountInputRef.current?.click()} onPam={() => inputRef.current?.click()} onContract={() => contractInputRef.current?.click()} onDelete={(document) => void removeDocument(document)} />}
         {tab === "Actividad" && <PatientActivity activities={snapshot.activities} />}
       </section></div>
-    <input ref={accountInputRef} type="file" accept="application/pdf,image/jpeg,image/png" hidden onChange={handleAccount} /><input ref={inputRef} type="file" accept="application/pdf,image/jpeg,image/png" hidden onChange={handlePam} />{contractOpen && <PatientContractModal contract={contractDraft} busy={contractBusy} error={contractError} onClose={() => setContractOpen(false)} onAccept={(input) => void acceptContract(input)} />}{toast && <div className="portal-toast"><span>✓</span>{toast}</div>}
+    <input ref={accountInputRef} type="file" accept="application/pdf,image/jpeg,image/png" hidden onChange={handleAccount} /><input ref={inputRef} type="file" accept="application/pdf,image/jpeg,image/png" hidden onChange={handlePam} /><input ref={contractInputRef} type="file" accept="application/pdf,image/jpeg,image/png" hidden onChange={handleContractDocument} />{contractOpen && <PatientContractModal contract={contractDraft} busy={contractBusy} error={contractError} onClose={() => setContractOpen(false)} onAccept={(input) => void acceptContract(input)} />}{toast && <div className="portal-toast"><span>✓</span>{toast}</div>}
   </main>;
 }
 
@@ -1576,9 +1583,9 @@ function PatientContractModal({ contract, busy, error, onClose, onAccept }: { co
   </div>;
 }
 
-function PatientDocuments({ snapshot, deletingDocumentId, onAccount, onPam, onDelete }: { snapshot: Snapshot; deletingDocumentId: string; onAccount: () => void; onPam: () => void; onDelete: (document: CaseDocument) => void }) {
+function PatientDocuments({ snapshot, deletingDocumentId, onAccount, onPam, onContract, onDelete }: { snapshot: Snapshot; deletingDocumentId: string; onAccount: () => void; onPam: () => void; onContract: () => void; onDelete: (document: CaseDocument) => void }) {
   const visibleDocuments = snapshot.documents.filter((doc) => !doc.internalOnly);
-  return <section className="patient-card documents-view"><div className="card-heading"><div><span className="card-kicker">DOCUMENTOS DEL CASO</span><h2>Fuentes cargadas</h2></div><div className="document-actions"><button className="portal-button portal-button-secondary" onClick={onAccount}>Agregar cuenta +</button><button className="portal-button portal-button-primary" onClick={onPam}>Agregar PAM +</button></div></div><div className="document-list">{visibleDocuments.map((doc) => <article className="patient-document clinic" key={doc.id}><span className="file-mark">PDF</span><div><span>{doc.classification}</span><b>{doc.name}</b><small>{doc.extraction?.pageCount || "-"} páginas · {processingLabel(doc)}</small>{doc.processingStatus === "review_required" && doc.sourceExpiresAt && <small>Original cifrado disponible temporalmente hasta {new Date(doc.sourceExpiresAt).toLocaleString("es-CL")}</small>}</div><div className="document-status"><em>{doc.processingStatus === "failed" ? "Requiere atención" : "Protegido"}</em><button className="patient-document-delete" onClick={() => onDelete(doc)} disabled={Boolean(deletingDocumentId)}>{deletingDocumentId === doc.id ? "Borrando…" : "Borrar documento"}</button></div></article>)}</div><div className="document-tip"><span>i</span><p>La cuenta muestra los cargos del prestador y el PAM la liquidación de cobertura. Cada documento mantiene su origen y estado de procesamiento.</p></div></section>;
+  return <section className="patient-card documents-view"><div className="card-heading"><div><span className="card-kicker">DOCUMENTOS DEL CASO</span><h2>Fuentes cargadas</h2></div><div className="document-actions"><button className="portal-button portal-button-secondary" onClick={onAccount}>Agregar cuenta +</button><button className="portal-button portal-button-primary" onClick={onPam}>Agregar PAM +</button><button className="portal-button portal-button-secondary" onClick={onContract}>Agregar contrato / plan +</button></div></div><div className="document-list">{visibleDocuments.map((doc) => <article className="patient-document clinic" key={doc.id}><span className="file-mark">PDF</span><div><span>{doc.classification}</span><b>{doc.name}</b><small>{doc.extraction?.pageCount || "-"} páginas · {processingLabel(doc)}</small></div><div className="document-status"><em>{doc.processingStatus === "failed" ? "Requiere atención" : "Protegido"}</em><button className="patient-document-delete" onClick={() => onDelete(doc)} disabled={Boolean(deletingDocumentId)}>{deletingDocumentId === doc.id ? "Borrando…" : "Borrar documento"}</button></div></article>)}</div><div className="document-tip"><span>i</span><p>La cuenta, el PAM y los demás antecedentes quedan almacenados cifrados y vinculados a su expediente para la revisión.</p></div></section>;
 }
 function PatientActivity({ activities }: { activities: Activity[] }) {
   return <section className="patient-card activity-view"><span className="card-kicker">ACTIVIDAD</span><h2>Movimientos de la revisión</h2><div className="activity-list">{activities.length ? activities.slice(0, 20).map((activity) => <div className={`activity-item ${activity.pending ? "pending" : ""}`} key={activity.id}><span className="activity-dot" /><div><small>{new Date(activity.date).toLocaleString("es-CL")}</small><b>{activity.title}</b><p>{activity.detail}</p></div></div>) : <div className="activity-item pending"><span className="activity-dot" /><div><small>Ahora</small><b>Esperando documentos</b><p>Los movimientos de carga, extracción, revisión y análisis aparecerán aquí.</p></div></div>}</div></section>;
@@ -1587,7 +1594,6 @@ function PatientActivity({ activities }: { activities: Activity[] }) {
 function useCases() {
   const [cases, setCases] = useState<CaseRow[]>([]); const [error, setError] = useState("");
   const refresh = async () => { try {
-    await fetch("/api/admin/pilot-reset", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ version: PILOT_RESET_VERSION }) }).catch(() => undefined);
     const response = await fetch("/api/cases", { cache: "no-store" }); const payload = await response.json(); if (!response.ok) throw new Error(payload.error); setCases(payload.cases || []);
   } catch (reason) { setError(errorMessage(reason, "No se pudieron cargar los casos")); } };
   useEffect(() => { void refresh(); }, []); return { cases, error, refresh };
@@ -1735,7 +1741,7 @@ function DeveloperNewCaseForm({ onCancel, onCreated }: { onCancel: () => void; o
 function AuthenticatedDeveloperPortal({ initialCaseId = "", user }: { initialCaseId?: string; user: SessionUser }) {
   const { cases, error: casesError, refresh: refreshCases } = useCases();
   const [selectedId, setSelectedId] = useState(initialCaseId);
-  const [snapshot, setSnapshot] = useState<Snapshot>(); const [tab, setTab] = useState<"overview" | "traceability" | "documents">("documents"); const [query, setQuery] = useState(""); const [busy, setBusy] = useState(false); const [notice, setNotice] = useState(""); const [newCaseOpen, setNewCaseOpen] = useState(false); const [pilotResetBusy, setPilotResetBusy] = useState(false);
+  const [snapshot, setSnapshot] = useState<Snapshot>(); const [tab, setTab] = useState<"overview" | "traceability" | "documents">("documents"); const [query, setQuery] = useState(""); const [busy, setBusy] = useState(false); const [notice, setNotice] = useState(""); const [newCaseOpen, setNewCaseOpen] = useState(false); const pilotResetBusy = false;
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadStage, setUploadStage] = useState("");
   const [analysisStatus, setAnalysisStatus] = useState<"idle" | "running" | "complete" | "error">("idle");
@@ -1755,22 +1761,8 @@ function AuthenticatedDeveloperPortal({ initialCaseId = "", user }: { initialCas
   const selected = cases.some((item) => item.id === selectedId) ? selectedId : "";
   async function refresh() { if (!selected) return; try { const next = hideStaleAnalysis(await getSnapshot(selected)); setSnapshot(next); if (extractionNeedsRefresh(accountDoc(next))) setNotice("La extracción anterior quedó fuera de vigencia. Reemplaza la cuenta clínica para aplicar el lector actualizado."); } catch (reason) { setNotice(errorMessage(reason, "No se pudo cargar el expediente")); } }
   useEffect(() => { void refresh(); }, [selected]);
-  async function clearPilotConsole() {
-    if (!window.confirm("¿Vaciar la consola piloto? Se eliminarán los casos, documentos y análisis antiguos de Railway; el corpus validado se conserva.")) return;
-    setPilotResetBusy(true);
-    try {
-      const response = await fetch("/api/admin/pilot-reset", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ version: PILOT_RESET_VERSION }) });
-      const payload = await response.json().catch(() => ({})) as { reset?: boolean; deletedCases?: number; deletedDocuments?: number; error?: string };
-      if (!response.ok) throw new Error(payload.error || "No se pudo vaciar la consola");
-      setSelectedId("");
-      setSnapshot(undefined);
-      setNotice(payload.reset ? `Consola vaciada: ${payload.deletedCases || 0} expedientes y ${payload.deletedDocuments || 0} documentos eliminados.` : "La consola ya estaba vacía.");
-      await refreshCases();
-    } catch (reason) {
-      setNotice(errorMessage(reason, "No se pudo vaciar la consola"));
-    } finally {
-      setPilotResetBusy(false);
-    }
+  function clearPilotConsole() {
+    setNotice("La limpieza masiva está deshabilitada para conservar los documentos de pacientes.");
   }
   async function onFile(file: File, classification: string) {
     if (!selected) return;
@@ -1798,7 +1790,7 @@ function AuthenticatedDeveloperPortal({ initialCaseId = "", user }: { initialCas
         );
       };
       let result = previousAccount
-        ? await replaceAccountDocument(selected, previousAccount, file, updateProgress)
+        ? await replaceAccountDocument(selected, file, updateProgress)
         : await uploadDocument(selected, file, classification, updateProgress);
       let automaticVisionNotice = "";
       if (/cuenta|mixto/i.test(classification)) {
@@ -1832,7 +1824,7 @@ function AuthenticatedDeveloperPortal({ initialCaseId = "", user }: { initialCas
       await refresh();
       await refreshCases();
       setNotice(automaticVisionNotice || (previousAccount
-        ? "Cuenta clínica anterior eliminada y reemplazada correctamente"
+        ? "Nueva cuenta clínica almacenada; la versión anterior se conserva"
         : result.corpusRegistered
           ? "Documento guardado, extraído y enviado a revisión de aprendizaje"
           : "Documento guardado y extraído; el aprendizaje quedó pendiente de sincronización"));
@@ -1874,7 +1866,7 @@ function AuthenticatedDeveloperPortal({ initialCaseId = "", user }: { initialCas
   async function onRetryReader() {
     const document = accountDoc(snapshot);
     if (!selected || !document || document.sourceDeletedAt) {
-      setNotice("El original temporal ya no está disponible; reemplaza la cuenta para volver a leerla.");
+      setNotice("El original ya no está disponible; reemplaza la cuenta para volver a leerla.");
       return;
     }
     setBusy(true);
@@ -1920,7 +1912,7 @@ function AuthenticatedDeveloperPortal({ initialCaseId = "", user }: { initialCas
       }
       await refresh();
       await refreshCases();
-      setNotice(automaticVisionNotice || "La cuenta fue releída desde el original temporal; no fue necesario volver a subirla.");
+      setNotice(automaticVisionNotice || "La cuenta fue releída desde el original almacenado; no fue necesario volver a subirla.");
     } catch (reason) {
       setNotice(errorMessage(reason, "No se pudo reintentar la lectura"));
       await refresh();
@@ -1964,7 +1956,7 @@ function AuthenticatedDeveloperPortal({ initialCaseId = "", user }: { initialCas
       return;
     }
     if (account.sourceDeletedAt) {
-      setNotice("El original temporal ya no está disponible para GPT Vision. Reemplaza la cuenta para preparar una nueva lectura visual.");
+      setNotice("El original ya no está disponible para GPT Vision. Reemplaza la cuenta para preparar una nueva lectura visual.");
       return;
     }
     const extraction = account.extraction ?? emptyVisionExtraction();
@@ -2211,7 +2203,7 @@ function ReaderFailurePanel({ document: sourceDocument, busy, onRetry }: { docum
   const reviewRequired = ["failed", "review_required"].includes(sourceDocument.processingStatus || "");
   if (!reviewRequired) return null;
   const failed = sourceDocument.processingStatus === "failed";
-  return <section className="reader-quality-panel reader_change_needed"><div className="reader-quality-head"><div><span className="card-kicker">LECTURA TÉCNICA</span><h3>{failed ? "La cuenta requiere una relectura" : "La cuenta quedó marcada para revisión"}</h3><p>{failed ? "El archivo original sigue vinculado temporalmente al expediente. La extracción falló antes de producir una matriz confiable, por lo que no se mostrarán montos ni hipótesis inventadas." : "La extracción está disponible, pero el lector detectó un formato complejo o renglones dudosos. Puedes reintentar con la versión vigente antes de validar el análisis."}</p></div><span className="reader-quality-status reader_change_needed">Requiere atención</span></div><div className="reader-failure-message"><b>Detalle técnico informado</b><span>{sourceDocument.processingError || "El lector detectó señales que requieren una segunda lectura."}</span></div><div className="reader-quality-actions"><button className="portal-button portal-button-primary" onClick={onRetry} disabled={busy || Boolean(sourceDocument.sourceDeletedAt)}>{busy ? "Reintentando lectura…" : "Releer el original"}</button><a className="portal-button portal-button-secondary" href={`/api/documents?caseId=${encodeURIComponent(sourceDocument.caseId)}&documentId=${encodeURIComponent(sourceDocument.id)}&download=source`}>Descargar original temporal</a><small>La relectura usa el mismo original temporal y no duplica la cuenta. El análisis preliminar sigue disponible mientras contrastas las alertas.</small></div></section>;
+  return <section className="reader-quality-panel reader_change_needed"><div className="reader-quality-head"><div><span className="card-kicker">LECTURA TÉCNICA</span><h3>{failed ? "La cuenta requiere una relectura" : "La cuenta quedó marcada para revisión"}</h3><p>{failed ? "El archivo original sigue vinculado al expediente. La extracción falló antes de producir una matriz confiable, por lo que no se mostrarán montos ni hipótesis inventadas." : "La extracción está disponible, pero el lector detectó un formato complejo o renglones dudosos. Puedes reintentar con la versión vigente antes de validar el análisis."}</p></div><span className="reader-quality-status reader_change_needed">Requiere atención</span></div><div className="reader-failure-message"><b>Detalle técnico informado</b><span>{sourceDocument.processingError || "El lector detectó señales que requieren una segunda lectura."}</span></div><div className="reader-quality-actions"><button className="portal-button portal-button-primary" onClick={onRetry} disabled={busy || Boolean(sourceDocument.sourceDeletedAt)}>{busy ? "Reintentando lectura…" : "Releer el original"}</button><a className="portal-button portal-button-secondary" href={`/api/documents?caseId=${encodeURIComponent(sourceDocument.caseId)}&documentId=${encodeURIComponent(sourceDocument.id)}&download=source`}>Descargar original</a><small>La relectura usa el original almacenado y no duplica el archivo. El análisis preliminar sigue disponible mientras contrastas las alertas.</small></div></section>;
 }
 
 function DeveloperDocuments({ snapshot, busy, pendingUpload, uploadProgress, uploadStage, onFile, onAnalyze, onRetryReader, readerAssistBusy, readerAssistResponse, onReaderAssist, visionAssistBusy, visionAssistResponse, onVisionAssist }: { snapshot: Snapshot; busy: boolean; pendingUpload?: PendingUpload; uploadProgress: number; uploadStage: string; onFile: (file: File, classification: string) => void; onAnalyze: () => void; onRetryReader: () => void; readerAssistBusy: boolean; readerAssistResponse?: ReaderAssistResponse; onReaderAssist: () => void; visionAssistBusy: boolean; visionAssistResponse?: VisionAssistResponse; onVisionAssist: () => void }) { const account = accountDoc(snapshot); const assessment = account?.extraction?.readerAssessment; const needsReaderAssist = Boolean(account && (account.processingStatus === "failed" || !assessment || assessment.status !== "ready" || visionAssistBusy || visionAssistResponse)); return <div className="developer-documents"><DeveloperCaseIdentity snapshot={snapshot}/><div className="traceability-toolbar"><div><span className="card-kicker">DOCUMENTOS DEL CASO</span><h3>Fuentes cargadas</h3></div><span className="document-replacement-note">Los archivos nuevos quedan vinculados al caso</span></div>{account && <ReaderFailurePanel document={account} busy={busy} onRetry={onRetryReader}/>} {account && <ReaderQualityPanel document={account}/>} {needsReaderAssist && account && <ReaderAssistPanel document={account} busy={readerAssistBusy} response={readerAssistResponse} onAssist={onReaderAssist}/>} {needsReaderAssist && account && <VisionAssistPanel document={account} busy={visionAssistBusy} response={visionAssistResponse} onAssist={onVisionAssist}/>}<div className="dev-document-grid"><OperationalDoc type="Cuenta clínica" document={account} classification="Cuenta clínica" busy={busy} pendingFile={pendingUpload?.classification === "Cuenta clínica" ? pendingUpload : undefined} uploadProgress={uploadProgress} uploadStage={uploadStage} onFile={onFile} analysisAvailable={Boolean(snapshot.analysis)} onAnalyze={onAnalyze}/><OperationalDoc type="PAM / liquidación" document={pamDoc(snapshot)} classification="PAM / liquidación" busy={busy} pendingFile={pendingUpload?.classification === "PAM / liquidación" ? pendingUpload : undefined} uploadProgress={uploadProgress} uploadStage={uploadStage} onFile={onFile}/><OperationalDoc type="Contrato / plan" document={snapshot.documents.find((doc) => /contrato|plan/i.test(doc.classification))} classification="Contrato" busy={busy} pendingFile={pendingUpload?.classification === "Contrato" ? pendingUpload : undefined} uploadProgress={uploadProgress} uploadStage={uploadStage} onFile={onFile}/></div></div>; }
@@ -2225,5 +2217,5 @@ function OperationalDoc({ type, document, classification, busy, pendingFile, upl
     : document
       ? `${document.internalOnly ? "Detectado automáticamente · " : ""}${document.extraction?.pageCount || "-"} páginas · ${processingLabel(document)}`
       : "Pendiente";
-  return <article className={`dev-doc ${document || processingFile ? "" : "pending"}`}><span className="file-mark">{document || processingFile ? "PDF" : "+"}</span><div><span>{type}</span><b>{displayName}</b><small>{displayStatus}</small></div><div className="dev-doc-actions"><button onClick={() => input.current?.click()} disabled={busy}>{document ? "Reemplazar" : "Cargar"}</button>{document && ["failed", "review_required"].includes(document.processingStatus || "") && !document.sourceDeletedAt && <a href={`/api/documents?caseId=${encodeURIComponent(document.caseId)}&documentId=${encodeURIComponent(document.id)}&download=source`}>Descargar original temporal</a>}{onAnalyze && <button className="dev-doc-analyze" onClick={onAnalyze} disabled={busy || cannotAnalyze} title={cannotAnalyze ? "La cuenta necesita una lectura completa o un cambio de lector antes del análisis." : "La revisión técnica no impide generar un análisis preliminar."}>{busy ? "Procesando…" : analysisAvailable ? "Actualizar análisis" : "Analizar cuenta"} →</button>}</div><input ref={input} hidden type="file" accept="application/pdf,image/jpeg,image/png" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) onFile(file, classification); }} /></article>;
+  return <article className={`dev-doc ${document || processingFile ? "" : "pending"}`}><span className="file-mark">{document || processingFile ? "PDF" : "+"}</span><div><span>{type}</span><b>{displayName}</b><small>{displayStatus}</small></div><div className="dev-doc-actions"><button onClick={() => input.current?.click()} disabled={busy}>{document ? "Reemplazar" : "Cargar"}</button>{document && !document.sourceDeletedAt && <a href={`/api/documents?caseId=${encodeURIComponent(document.caseId)}&documentId=${encodeURIComponent(document.id)}&download=source`}>Descargar original</a>}{onAnalyze && <button className="dev-doc-analyze" onClick={onAnalyze} disabled={busy || cannotAnalyze} title={cannotAnalyze ? "La cuenta necesita una lectura completa o un cambio de lector antes del análisis." : "La revisión técnica no impide generar un análisis preliminar."}>{busy ? "Procesando…" : analysisAvailable ? "Actualizar análisis" : "Analizar cuenta"} →</button>}</div><input ref={input} hidden type="file" accept="application/pdf,image/jpeg,image/png" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) onFile(file, classification); }} /></article>;
 }

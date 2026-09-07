@@ -1,10 +1,11 @@
 import { ensureCaseSchema } from "../../../lib/server/case-schema.ts";
 import { getCloudflareEnv, localDeleteDocument, localGetDocuments, localSaveDocument, localUpdateDocumentProcessing } from "../../../lib/server/runtime-store.ts";
 import { removePendingCorpusContribution } from "../../../lib/server/observed-corpus-store.ts";
-import { requireApiUser } from "../../../lib/server/auth.ts";
+import { isDeveloperUser, requireApiUser } from "../../../lib/server/auth.ts";
 import { caseAccessResponse, developerAccessResponse } from "../../../lib/server/case-access.ts";
-import { purgeExpiredDocumentSources } from "../../../lib/server/source-retention.ts";
+import { preserveDocumentSources } from "../../../lib/server/source-retention.ts";
 import { recoverStaleDatabaseExtractions } from "../../../lib/server/extraction-watchdog.ts";
+import { forwardUploadedDocument } from "../../../lib/server/email.ts";
 
 function sourceKindForClassification(classification: string): "account" | "pam" | undefined {
   if (/pam|liquid/i.test(classification)) return "pam";
@@ -19,7 +20,7 @@ export async function GET(request: Request) {
   const caseId = url.searchParams.get("caseId");
   if (!caseId) return Response.json({ error: "Caso ausente" }, { status: 400 });
   const env = await getCloudflareEnv();
-  await purgeExpiredDocumentSources(env);
+  await preserveDocumentSources(env);
   const denied = await caseAccessResponse(env, caseId, auth.user);
   if (denied) return denied;
   if (url.searchParams.get("download") === "source") {
@@ -50,6 +51,8 @@ export async function POST(request: Request) {
   const file = form.get("file");
   const caseId = String(form.get("caseId") || "");
   const documentId = String(form.get("documentId") || crypto.randomUUID());
+  const classification = String(form.get("classification") || "Por confirmar");
+  const patientUpload = !isDeveloperUser(auth.user);
   if (!(file instanceof File) || !caseId) return Response.json({ error: "Archivo o caso ausente" }, { status: 400 });
   if (file.size > 25 * 1024 * 1024) return Response.json({ error: "El archivo supera el límite de 25 MB" }, { status: 413 });
   const key = `cases/${caseId}/${documentId}/${file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
@@ -57,15 +60,30 @@ export async function POST(request: Request) {
   const denied = await caseAccessResponse(env, caseId, auth.user);
   if (denied) return denied;
   if (!env?.DB || !env?.DOCUMENTS) {
-    localSaveDocument({ id: documentId, caseId, name: file.name, mimeType: file.type || "application/octet-stream", byteSize: file.size, classification: String(form.get("classification") || "Por confirmar"), confidence: Number(form.get("confidence") || 0) });
-    return Response.json({ documentId, storageKey: key, local: true }, { status: 201 });
+    if (patientUpload) {
+      try {
+        await forwardUploadedDocument({ caseId, documentId, uploaderEmail: auth.user.email, classification, file });
+      } catch {
+        return Response.json({ error: "No pudimos entregar el documento al equipo revisor. Intenta subirlo nuevamente." }, { status: 502 });
+      }
+    }
+    localSaveDocument({ id: documentId, caseId, name: file.name, mimeType: file.type || "application/octet-stream", byteSize: file.size, classification, confidence: Number(form.get("confidence") || 0) });
+    return Response.json({ documentId, storageKey: key, local: true, forwarded: patientUpload }, { status: 201 });
   }
   await ensureCaseSchema(env.DB);
-  const expiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString();
   await env.DOCUMENTS.put(key, file.stream(), { httpMetadata: { contentType: file.type || "application/octet-stream" }, customMetadata: { caseId, documentId, originalName: file.name } });
   await env.DB.prepare(`INSERT OR REPLACE INTO documents (id, case_id, original_name, storage_key, mime_type, byte_size, classification, classification_confidence, processing_status, source_expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'extracting', ?)`)
-    .bind(documentId, caseId, file.name, key, file.type || "application/octet-stream", file.size, String(form.get("classification") || "Por confirmar"), Number(form.get("confidence") || 0), expiresAt).run();
-  if (/cuenta|mixto/i.test(String(form.get("classification") || ""))) {
+    .bind(documentId, caseId, file.name, key, file.type || "application/octet-stream", file.size, classification, Number(form.get("confidence") || 0), null).run();
+  if (patientUpload) {
+    try {
+      await forwardUploadedDocument({ caseId, documentId, uploaderEmail: auth.user.email, classification, file });
+    } catch {
+      await env.DB.prepare(`DELETE FROM documents WHERE id = ? AND case_id = ?`).bind(documentId, caseId).run().catch(() => undefined);
+      await env.DOCUMENTS.delete(key).catch(() => undefined);
+      return Response.json({ error: "No pudimos entregar el documento al equipo revisor. Intenta subirlo nuevamente." }, { status: 502 });
+    }
+  }
+  if (/cuenta|mixto/i.test(classification)) {
     await env.DB.prepare(`DELETE FROM case_analyses WHERE case_id = ?`).bind(caseId).run();
   }
   await env.DB.prepare(`INSERT INTO case_activities (id, case_id, title, detail) VALUES (?, ?, ?, ?)`)
@@ -76,7 +94,7 @@ export async function POST(request: Request) {
     await env.DB.prepare(`INSERT INTO case_activities (id, case_id, title, detail) VALUES (?, ?, ?, ?)`)
       .bind(crypto.randomUUID(), caseId, "Revisión iniciada", "El expediente quedó en cola para revisión interna.").run();
   }
-  return Response.json({ documentId, storageKey: key }, { status: 201 });
+  return Response.json({ documentId, storageKey: key, forwarded: patientUpload, retained: true }, { status: 201 });
 }
 
 export async function PATCH(request: Request) {

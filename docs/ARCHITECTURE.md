@@ -85,7 +85,7 @@ Esta capa separa siempre tres niveles: hecho documental, inferencia conductual e
 ## Límites deliberados del MVP
 
 - La clasificación inicial de archivos nuevos usa señales del nombre, pero la lectura también revisa el contenido y puede detectar un PDF mixto cuenta/PAM.
-- Un fallo de lectura deja el original cifrado temporalmente, muestra el error en desarrollo y permite reemplazar o descargar el original para una revisión humana/LLM externa.
+- Todos los originales aportados por pacientes quedan cifrados en el almacenamiento del expediente y se envían al buzón operativo del equipo revisor. Pueden releerse o descargarse para revisión humana.
 - El OCR clínico y la reconstrucción financiera básica están conectados al cargador. El motor contractual y los reclamos enviados siguen siendo capas posteriores.
 - El paquete de revisión humana/LLM se genera localmente desde la evidencia extraída. No envía datos a terceros ni modifica código automáticamente.
 - El resultado se presenta como preliminar y no afirma por sí solo un cobro indebido.
