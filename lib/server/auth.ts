@@ -148,7 +148,7 @@ export function developerUserFromKey(key: string): AuthenticatedUser | undefined
     id: `developer:${normalized}`,
     email: `${normalized}@revisatucuenta.local`,
     displayName: normalized,
-    source: "email",
+    source: "development",
   };
 }
 

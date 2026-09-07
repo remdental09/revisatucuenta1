@@ -21,10 +21,11 @@ export async function GET(request: Request) {
     if (authSessionSecret()) headers.set("set-cookie", sessionCookie(await createSessionToken(user)));
   }
 
-  // Keep the surfaces mutually exclusive. An administrator opening the
-  // patient URL must authenticate as a patient, while a verified patient
-  // opening the developer URL must not inherit a developer console session.
-  if (view === "patient" && user && isDeveloperUser(user)) user = undefined;
+  // Keep a session created by the developer-key gate out of the patient
+  // surface. A real email session remains valid even when that email also
+  // belongs to an administrator; otherwise administrators cannot test or use
+  // the patient flow with their verified address.
+  if (view === "patient" && user?.source === "development") user = undefined;
   if (view === "developer" && user && !isDeveloperUser(user)) user = undefined;
 
   if (!user) return Response.json({ authenticated: false, developerOpen: view === "developer" && developerOpenAccessEnabled() }, { status: 401 });

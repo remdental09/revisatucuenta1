@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { developerUserFromKey, isDeveloperUser, signAuthToken, verifyAuthToken } from "../lib/server/auth.ts";
+import { createSessionToken, developerUserFromKey, isDeveloperUser, sessionCookie, signAuthToken, verifyAuthToken } from "../lib/server/auth.ts";
+import { GET as getAuthSession } from "../app/api/auth/session/route.ts";
 import {
   localCreateCase,
   localDeleteDocument,
@@ -49,6 +50,7 @@ test("reconoce las dos claves cortas de desarrollador y rechaza otras", () => {
   process.env.REVISATUCUENTA_DEVELOPER_KEYS = "lpaulr,aleretamal";
   try {
     assert.equal(developerUserFromKey("lpaulr")?.id, "developer:lpaulr");
+    assert.equal(developerUserFromKey("lpaulr")?.source, "development");
     assert.equal(developerUserFromKey("ALERETAMAL")?.email, "aleretamal@revisatucuenta.local");
     assert.equal(developerUserFromKey("otra-clave"), undefined);
     assert.equal(isDeveloperUser({ id: "chatgpt:opaque-1", email: "lpaulr@gmail.com", displayName: "Luis", source: "chatgpt" }), true);
@@ -59,6 +61,46 @@ test("reconoce las dos claves cortas de desarrollador y rechaza otras", () => {
     else process.env.REVISATUCUENTA_ADMIN_USER_IDS = previous;
     if (previousKeys === undefined) delete process.env.REVISATUCUENTA_DEVELOPER_KEYS;
     else process.env.REVISATUCUENTA_DEVELOPER_KEYS = previousKeys;
+  }
+});
+
+test("permite la sesión de paciente aunque su correo también sea administrador", async () => {
+  const previousSecret = process.env.AUTH_SESSION_SECRET;
+  const previousAdminIds = process.env.REVISATUCUENTA_ADMIN_USER_IDS;
+  const previousDeveloperKeys = process.env.REVISATUCUENTA_DEVELOPER_KEYS;
+  try {
+    process.env.AUTH_SESSION_SECRET = "test-secret-with-more-than-thirty-two-characters";
+    process.env.REVISATUCUENTA_ADMIN_USER_IDS = "lpaulr";
+    process.env.REVISATUCUENTA_DEVELOPER_KEYS = "lpaulr";
+
+    const patientToken = await createSessionToken({
+      id: "email:patient-admin",
+      email: "lpaulr@gmail.com",
+      displayName: "Luis",
+      source: "email",
+    });
+    const patientCookie = sessionCookie(patientToken, true).split(";", 1)[0];
+    const patientResponse = await getAuthSession(new Request("https://revisatucuenta.cl/api/auth/session?view=patient", {
+      headers: { cookie: patientCookie },
+    }));
+    assert.equal(patientResponse.status, 200);
+    assert.equal((await patientResponse.json()).authenticated, true);
+
+    const developer = developerUserFromKey("lpaulr");
+    assert.ok(developer);
+    const developerToken = await createSessionToken(developer);
+    const developerCookie = sessionCookie(developerToken, true).split(";", 1)[0];
+    const developerResponse = await getAuthSession(new Request("https://revisatucuenta.cl/api/auth/session?view=patient", {
+      headers: { cookie: developerCookie },
+    }));
+    assert.equal(developerResponse.status, 401);
+  } finally {
+    if (previousSecret === undefined) delete process.env.AUTH_SESSION_SECRET;
+    else process.env.AUTH_SESSION_SECRET = previousSecret;
+    if (previousAdminIds === undefined) delete process.env.REVISATUCUENTA_ADMIN_USER_IDS;
+    else process.env.REVISATUCUENTA_ADMIN_USER_IDS = previousAdminIds;
+    if (previousDeveloperKeys === undefined) delete process.env.REVISATUCUENTA_DEVELOPER_KEYS;
+    else process.env.REVISATUCUENTA_DEVELOPER_KEYS = previousDeveloperKeys;
   }
 });
 
