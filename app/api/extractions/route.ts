@@ -122,7 +122,11 @@ export async function POST(request: Request) {
     await env.DB.prepare(`INSERT INTO case_activities (id, case_id, title, detail) VALUES (?, ?, ?, ?)`)
       .bind(crypto.randomUUID(), String(document.case_id), "Extracción completada", "Los campos y líneas quedaron vinculados a su documento de origen.").run();
   }
-  const reviewRequired = body.extraction.readerAssessment?.status !== "ready";
+  // Contracts, plans, and other supporting files are stored as source
+  // documents but are not sent through the clinical reader. They should be
+  // marked ready for the patient without creating a false human-review alert.
+  const nonClinicalDocument = !/cuenta|mixto|pam|liquid/i.test(String(document.classification || ""));
+  const reviewRequired = !nonClinicalDocument && body.extraction.readerAssessment?.status !== "ready";
   await env.DB.prepare(`UPDATE documents SET processing_status = ?, processing_error = NULL WHERE id = ?`)
     .bind(reviewRequired ? "review_required" : "ready", body.documentId).run();
   if (reviewRequired && document?.case_id) {

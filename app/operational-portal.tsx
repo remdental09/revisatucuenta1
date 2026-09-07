@@ -435,26 +435,33 @@ async function uploadDocument(caseId: string, file: File, classification: string
   // first page-level progress event.
   onProgress?.(2);
   try {
-    const extracted = await extractHealthcareDocument(file, expectedKind(classification), onProgress);
-    const extraction: DocumentExtraction = {
-      ...extracted,
-      readerAssessment: assessExtractionQuality(extracted, expectedKind(classification)),
-    };
+    const expected = expectedKind(classification);
+    let resolvedExtraction: DocumentExtraction;
+    if (expected === "unknown") {
+      resolvedExtraction = { readerVersion: CURRENT_READER_VERSION, pageCount: 0, usedOcr: false, pageKinds: [] };
+      onProgress?.(100);
+    } else {
+      const extracted = await extractHealthcareDocument(file, expected, onProgress);
+      resolvedExtraction = {
+        ...extracted,
+        readerAssessment: assessExtractionQuality(extracted, expected),
+      };
+    }
     const saved = await fetch("/api/extractions", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ documentId, extraction }),
+      body: JSON.stringify({ documentId, extraction: resolvedExtraction }),
     });
     const savedPayload = await saved.json().catch(() => ({})) as { error?: string; derivedPamDocumentId?: string };
     if (!saved.ok) throw new Error(savedPayload.error || "El documento se guardó, pero la extracción no pudo persistirse");
     let corpusRegistered = false;
     if (options.registerCorpus !== false) {
-      corpusRegistered = await registerCorpusObservation(caseId, documentId, extraction, classification);
-      if (savedPayload.derivedPamDocumentId && extraction.pam) {
-        await registerCorpusObservation(caseId, savedPayload.derivedPamDocumentId, { ...extraction, account: undefined }, "PAM / liquidación");
+      corpusRegistered = await registerCorpusObservation(caseId, documentId, resolvedExtraction, classification);
+      if (savedPayload.derivedPamDocumentId && resolvedExtraction.pam) {
+        await registerCorpusObservation(caseId, savedPayload.derivedPamDocumentId, { ...resolvedExtraction, account: undefined }, "PAM / liquidación");
       }
     }
-    return { documentId, extraction, corpusRegistered, pamDocumentId: savedPayload.derivedPamDocumentId };
+    return { documentId, extraction: resolvedExtraction, corpusRegistered, pamDocumentId: savedPayload.derivedPamDocumentId };
   } catch (reason) {
     await fetch("/api/documents", {
       method: "PATCH",
@@ -1412,7 +1419,7 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
     <header className="patient-topbar patient-space-topbar"><PortalBrand href="/"/><div className="patient-topbar-right"><span className="surface-pill patient-pill">Vista paciente</span><span className="avatar">{snapshot.case.patientName.slice(0, 2).toUpperCase()}</span><span className="patient-email">{user.email}</span><a className="patient-signout-button" href={signOutHref(user)} aria-label="Cerrar sesión">Cerrar sesión</a></div></header>
     <div className="patient-layout"><aside className="patient-sidebar"><div className="case-mini"><span className="case-icon">⌁</span><div><small>CASO ACTIVO</small><b>{snapshot.case.patientName}</b><span>RUN {snapshot.case.patientRun || "No informado"}</span><span>Caso {caseId.slice(0, 8)}</span></div></div><nav className="patient-nav">{(["Resumen", "Documentos", "Actividad"] as const).map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item}</button>)}</nav><div className="patient-sidebar-help"><span>?</span><div><b>¿Necesitas ayuda?</b><small>Escríbenos sobre tu caso.</small></div></div></aside>
       <section className="patient-main patient-space-main"><div className="patient-heading patient-space-heading"><div><p className="portal-kicker">Mi revisión</p><h1>Hola, {firstName}.</h1><p>{snapshot.case.episodeLabel}</p><div className="patient-identity-summary"><span>Paciente</span><strong>{snapshot.case.patientName}</strong><small>RUN {snapshot.case.patientRun || "No informado"}</small></div></div><span className="case-status"><i /> {patientStatus}</span></div>
-         {tab === "Resumen" && <PatientSummary account={account} pam={pam} pamTraceability={patientAnalysis?.pamTraceability ? { ...patientAnalysis.pamTraceability, findings: [] } : undefined} reviewAmount={patientReviewAmount} analysisAvailable={patientResult.available} analysisRunning={status === "running"} progress={progress} stage={stage} contract={snapshot.contract} busy={busy} runVerification={runVerification} readerReviewRequired={Boolean(runVerification !== "matched" || readerNeedsRefresh || account?.processingStatus === "failed" || account?.processingStatus === "review_required" || (readerAssessment && readerAssessment.status !== "ready"))} readerChangeNeeded={!patientCanAnalyze} onAccount={() => accountInputRef.current?.click()} onPam={() => inputRef.current?.click()} onAnalyze={() => void runAnalysis()} onOpenContract={() => void openContract()} contractBusy={contractBusy} />}
+         {tab === "Resumen" && <PatientSummary account={account} pam={pam} pamTraceability={patientAnalysis?.pamTraceability ? { ...patientAnalysis.pamTraceability, findings: [] } : undefined} reviewAmount={patientReviewAmount} analysisAvailable={patientResult.available} analysisRunning={status === "running"} progress={progress} stage={stage} contract={snapshot.contract} busy={busy} runVerification={runVerification} readerReviewRequired={Boolean(runVerification !== "matched" || readerNeedsRefresh || account?.processingStatus === "failed" || account?.processingStatus === "review_required" || (readerAssessment && readerAssessment.status !== "ready"))} readerChangeNeeded={!patientCanAnalyze} onAccount={() => accountInputRef.current?.click()} onPam={() => inputRef.current?.click()} onContractDocument={() => contractInputRef.current?.click()} onAnalyze={() => void runAnalysis()} onOpenContract={() => void openContract()} contractBusy={contractBusy} />}
         {tab === "Documentos" && <PatientDocuments snapshot={snapshot} deletingDocumentId={deletingDocumentId} onAccount={() => accountInputRef.current?.click()} onPam={() => inputRef.current?.click()} onContract={() => contractInputRef.current?.click()} onDelete={(document) => void removeDocument(document)} />}
         {tab === "Actividad" && <PatientActivity activities={snapshot.activities} />}
       </section></div>
@@ -1445,7 +1452,7 @@ function PatientDocumentOrbit({ amount, label }: { amount: number; label: string
   </div>;
 }
 
-function PatientSummary({ account, pam, pamTraceability, reviewAmount, analysisAvailable, analysisRunning, progress, stage, contract, busy, runVerification, readerReviewRequired, readerChangeNeeded, onAccount, onPam, onAnalyze, onOpenContract, contractBusy }: { account?: CaseDocument; pam?: CaseDocument; pamTraceability?: PamTraceability; reviewAmount: number; analysisAvailable: boolean; analysisRunning: boolean; progress: number; stage: string; contract?: ServiceContract; busy: boolean; runVerification: "matched" | "mismatch" | "unavailable"; readerReviewRequired: boolean; readerChangeNeeded: boolean; onAccount: () => void; onPam: () => void; onAnalyze: () => void; onOpenContract: () => void; contractBusy: boolean }) {
+function PatientSummary({ account, pam, pamTraceability, reviewAmount, analysisAvailable, analysisRunning, progress, stage, contract, busy, runVerification, readerReviewRequired, readerChangeNeeded, onAccount, onPam, onContractDocument, onAnalyze, onOpenContract, contractBusy }: { account?: CaseDocument; pam?: CaseDocument; pamTraceability?: PamTraceability; reviewAmount: number; analysisAvailable: boolean; analysisRunning: boolean; progress: number; stage: string; contract?: ServiceContract; busy: boolean; runVerification: "matched" | "mismatch" | "unavailable"; readerReviewRequired: boolean; readerChangeNeeded: boolean; onAccount: () => void; onPam: () => void; onContractDocument: () => void; onAnalyze: () => void; onOpenContract: () => void; contractBusy: boolean }) {
   const accountReceived = Boolean(account);
   const pamReceived = Boolean(pam);
   const documentsReceived = accountReceived || pamReceived;
@@ -1509,19 +1516,19 @@ function PatientSummary({ account, pam, pamTraceability, reviewAmount, analysisA
           <div><span className="card-kicker">{hasIrregularities ? "MONTO APROXIMADO A REVISAR" : "MONTO APROXIMADO IDENTIFICADO"}</span><strong>{money(reviewAmount)}</strong></div>
           <p>{hasIrregularities ? "Este total es preliminar y no garantiza una devolución. Los antecedentes y los ítems revisados quedan reservados para el equipo revisor." : "No identificamos un monto asociado a cargos que requieran revisión con la información disponible."}</p>
         </div>
-        {pamTraceability && <PatientPamTraceability trace={pamTraceability} accountReceived={accountReceived} pamReceived={pamReceived} />}
+        {pamTraceability && <PatientPamTraceability trace={pamTraceability} accountReceived={accountReceived} pamReceived={pamReceived} busy={busy} onPam={onPam} onContractDocument={onContractDocument} />}
         {hasIrregularities && reviewAmount > 0 && <section className="patient-advisory-card">
           <div><span className="card-kicker">ASESORÍA ESPECIALIZADA</span><h3>Revisa tu cuenta con Rakun</h3><p>Lee el contrato completo, autoriza de forma separada el tratamiento de tus datos de salud y el mandato limitado, y luego continúa al pago de demostración. El preinforme es preliminar y no garantiza una devolución.</p></div>
           {contract?.status === "accepted" || contract?.status === "paid_demo" ? <div className="patient-advisory-confirmed"><b>{contract.status === "paid_demo" ? "Pago de prueba registrado" : "Contrato aceptado"}</b><small>{contract.status === "paid_demo" ? "No se realizó ningún cobro real." : "Tu contrato quedó guardado para esta revisión."}</small>{contract.paymentUrl && <a href={contract.paymentUrl} target="_blank" rel="noreferrer">{contract.status === "paid_demo" ? "Abrir comprobante de prueba →" : "Continuar al pago de prueba →"}</a>}</div> : <button className="portal-button portal-button-primary" onClick={onOpenContract} disabled={busy || contractBusy}>{contractBusy ? "Cargando contrato…" : "Leer contrato y continuar"} →</button>}
         </section>}
       </>}
-      <div className="patient-review-actions"><button className="portal-button portal-button-secondary" onClick={onAccount} disabled={busy}>{account ? "Reemplazar cuenta clínica" : "Agregar cuenta clínica"}</button><button className="portal-button portal-button-primary" onClick={onPam} disabled={busy}>{pam ? "Reemplazar documento de cobertura" : "Agregar documento de cobertura"}</button></div>
+      <div className="patient-review-actions"><button className="portal-button portal-button-secondary" onClick={onAccount} disabled={busy}>{account ? "Reemplazar cuenta clínica" : "Agregar cuenta clínica"}</button><button className="portal-button portal-button-primary" onClick={onPam} disabled={busy}>{pam ? "Reemplazar PAM" : "Agregar PAM"}</button><button className="portal-button portal-button-secondary" onClick={onContractDocument} disabled={busy}>Agregar contrato / plan</button></div>
     </section>
     <section className="patient-card next-card"><span className="card-kicker">SIGUIENTE PASO</span><h2>{runVerification !== "matched" ? "Verifica el RUN de la cuenta" : analysisAvailable ? hasIrregularities ? "Revisa el total en disputa" : "Resultado de la revisión" : accountReceived ? "Obtén el resultado de tu cuenta" : pamReceived ? "Falta la cuenta clínica" : "Completa tus documentos"}</h2><p>{runVerification !== "matched" ? "Carga la cuenta correcta o solicita una revisión para comprobar que el documento corresponde a tus datos." : analysisAvailable ? hasIrregularities ? "Te mostramos el total preliminar que conviene revisar. El detalle técnico queda reservado para el equipo revisor." : "Con la información disponible no encontramos un monto que requiera revisión." : documentsReceived ? "Carga la cuenta clínica para obtener el resultado y el total preliminar de la revisión." : "Carga la cuenta clínica para obtener el resultado de la revisión."}</p></section>
   </>;
 }
 
-function PatientPamTraceability({ trace, accountReceived, pamReceived }: { trace: PamTraceability; accountReceived: boolean; pamReceived: boolean }) {
+function PatientPamTraceability({ trace, accountReceived, pamReceived, busy, onPam, onContractDocument }: { trace: PamTraceability; accountReceived: boolean; pamReceived: boolean; busy: boolean; onPam: () => void; onContractDocument: () => void }) {
   const pamLabel = !pamReceived || trace.status === "not_available" ? "Pendiente" : trace.status === "consistent" ? "Conciliado" : trace.status === "review_required" ? "Requiere revisión" : "Información insuficiente";
   return <section className="patient-pam-traceability">
     <div className="patient-pam-trace-head"><div><span className="card-kicker">CÓMO LLEGAMOS AL RESULTADO</span><h3>Cuenta clínica y PAM</h3></div><span className={`patient-pam-trace-status ${trace.status}`}>{pamLabel}</span></div>
@@ -1531,6 +1538,7 @@ function PatientPamTraceability({ trace, accountReceived, pamReceived }: { trace
       <div className={trace.status === "review_required" || trace.status === "consistent" ? "complete" : "current"}><i>3</i><span>Comparación</span><small>{pamLabel}</small></div>
     </div>
     <p>La información de cobertura fue considerada en la revisión. El detalle de los ítems y fundamentos queda reservado para el equipo revisor.</p>
+    <div className="patient-pam-trace-actions"><button className="portal-button portal-button-primary" onClick={onPam} disabled={busy}>{pamReceived ? "Reemplazar PAM" : "Agregar PAM +"}</button><button className="portal-button portal-button-secondary" onClick={onContractDocument} disabled={busy}>Agregar contrato / plan +</button></div>
   </section>;
 }
 
