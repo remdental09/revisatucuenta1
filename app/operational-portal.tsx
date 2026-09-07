@@ -1556,6 +1556,7 @@ function DeveloperEmpty({ error, onCreated }: { error?: string; onCreated: (case
   const [busy, setBusy] = useState(false);
   const [syntheticBusy, setSyntheticBusy] = useState(false);
   const [pilotResetBusy, setPilotResetBusy] = useState(false);
+  const [pilotResetConfirm, setPilotResetConfirm] = useState(false);
   const [notice, setNotice] = useState("");
 
   async function submit(event: React.FormEvent) {
@@ -1599,13 +1600,13 @@ function DeveloperEmpty({ error, onCreated }: { error?: string; onCreated: (case
   }
 
   async function clearPilotConsole() {
-    if (!window.confirm("Se eliminarán los expedientes, documentos y análisis almacenados. ¿Continuar?")) return;
     setPilotResetBusy(true);
     setNotice("");
     try {
       const response = await fetch("/api/admin/pilot-reset", { method: "POST" });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error || "No se pudo vaciar la consola");
+      setPilotResetConfirm(false);
       setNotice(payload.message || "La consola quedó vacía; las próximas cuentas se analizarán de forma aislada.");
     } catch (reason) {
       setNotice(errorMessage(reason, "No se pudo vaciar la consola"));
@@ -1637,7 +1638,7 @@ function DeveloperEmpty({ error, onCreated }: { error?: string; onCreated: (case
           <div className="developer-empty-card-top"><span className="card-kicker">NUEVO EXPEDIENTE</span><span className="developer-empty-step">PASO 01</span></div>
           <h2>Crear expediente operativo</h2>
           <p>Identifica el caso y luego podrás cargar la cuenta clínica, el PAM y el contrato.</p>
-          <button type="button" className="portal-button portal-button-secondary" onClick={() => void clearPilotConsole()} disabled={busy || syntheticBusy || pilotResetBusy}>{pilotResetBusy ? "Vaciando consola…" : "Vaciar consola piloto"}</button>
+          {pilotResetConfirm ? <div><p className="developer-empty-error">Se eliminarán permanentemente los expedientes, documentos, análisis y observaciones almacenados.</p><button type="button" className="portal-button portal-button-primary" onClick={() => void clearPilotConsole()} disabled={busy || syntheticBusy || pilotResetBusy}>{pilotResetBusy ? "Vaciando consola…" : "Confirmar vaciado permanente"}</button><button type="button" className="portal-button portal-button-secondary" onClick={() => setPilotResetConfirm(false)} disabled={pilotResetBusy}>Cancelar</button></div> : <button type="button" className="portal-button portal-button-secondary" onClick={() => setPilotResetConfirm(true)} disabled={busy || syntheticBusy || pilotResetBusy}>Vaciar consola piloto</button>}
           <label>Nombre del paciente<input aria-label="Nombre del paciente" placeholder="Ej. Rafaella Rodríguez" value={patientName} onChange={(event) => setPatientName(event.target.value)} /></label>
           <label>RUN del paciente<input aria-label="RUN del paciente" inputMode="numeric" placeholder="12.345.678-9" value={patientRun} onChange={(event) => setPatientRun(event.target.value)} onBlur={() => setPatientRun(normalizeChileanRun(patientRun))} /></label>
           <label>Episodio o atención<input aria-label="Episodio" placeholder="Ej. Hospitalización pediátrica" value={episodeLabel} onChange={(event) => setEpisodeLabel(event.target.value)} /></label>
