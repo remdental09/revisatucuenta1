@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   analyzeClinicalAccount,
+  analyzePamStandalone,
   knowledgeFromAdjudication,
   type ChileanBillingLine,
 } from "../lib/rules/chilean-account.ts";
@@ -134,6 +135,26 @@ test("concilia cuenta y PAM para detectar componentes posiblemente agrupados", (
   assert.ok(result.pamTraceability?.findings.some((finding) => finding.id === "PAM-BUNDLED-COMPONENT-001"));
   assert.equal(result.pamTraceability?.totalDifference, 5100);
   assert.match(result.pamTraceability?.patientMessage ?? "", /no confirma por sí solo/i);
+});
+
+test("analiza el PAM de forma independiente y no lo convierte en desfragmentación", () => {
+  const result = analyzePamStandalone([
+    { ...base, id: "pam-surgery", description: "APENDICECTOMIA", code: "1802053", amount: 1914834, billedAmount: 1914834, bonusAmount: 1500000, copayAmount: 414834, coverageStatus: "partial" },
+    { ...base, id: "pam-materials", description: "Materiales clínicos", amount: 45000, billedAmount: 45000 },
+  ], [
+    { key: "payer", value: "ISAPRE PREVISA" },
+    { key: "billed_total", value: "1.959.834" },
+    { key: "bonus", value: "1.500.000" },
+    { key: "copay", value: "459.834" },
+  ]);
+  assert.equal(result.status, "review_required");
+  assert.equal(result.coverageStatus, "partial");
+  assert.equal(result.bonusTotal, 1500000);
+  assert.equal(result.copayTotal, 459834);
+  assert.equal(result.genericLineCount, 1);
+  assert.ok(result.findings.some((finding) => finding.id === "PAM-STANDALONE-GENERIC-MATERIALS-001"));
+  assert.ok(result.findings.some((finding) => finding.id === "PAM-STANDALONE-NO-UNBUNDLING-001"));
+  assert.ok(result.limitations.some((limitation) => /no concilia/i.test(limitation)));
 });
 
 test("asocia el circuito de enfermería a día cama cuando no hay pabellón", () => {

@@ -302,12 +302,26 @@ function pamTableLine(line: string, page: number, neighborDescription = "", prov
   const quantity = Number(selected[3].replace(",", "."));
   const value = parseNumber(selected[4]);
   if (!Number.isFinite(quantity) || !Number.isFinite(value)) return;
+  const bonusAmount = selected[5] ? parseNumber(selected[5]) : undefined;
+  const copayAmount = selected[6] ? parseNumber(selected[6]) : undefined;
+  const hasCoverageColumns = Number.isFinite(bonusAmount) || Number.isFinite(copayAmount);
+  const coverageStatus = !hasCoverageColumns
+    ? "unknown" as const
+    : (Number.isFinite(copayAmount) && copayAmount === 0 && Number.isFinite(bonusAmount) && (bonusAmount as number) >= value)
+      ? "covered" as const
+      : (Number.isFinite(bonusAmount) && (bonusAmount as number) > 0) || (Number.isFinite(copayAmount) && (copayAmount as number) < value)
+        ? "partial" as const
+        : "not_covered" as const;
   return {
     code: selected[1],
     description: normalize(selected[2] || neighborDescription || `Prestación ${selected[1]}`),
     quantity,
     unitAmount: quantity ? value / quantity : value,
     amount: value,
+    billedAmount: value,
+    bonusAmount: Number.isFinite(bonusAmount) ? bonusAmount : undefined,
+    copayAmount: Number.isFinite(copayAmount) ? copayAmount : undefined,
+    coverageStatus,
     providerId,
     page,
     confidence: match ? 90 : 82,

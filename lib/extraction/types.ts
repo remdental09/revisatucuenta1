@@ -33,6 +33,11 @@ export type ExtractedLine = {
   originalDescription?: string;
   originalCode?: string;
   originalAmount?: number;
+  /** PAM-specific columns preserved when the document exposes them. */
+  billedAmount?: number;
+  bonusAmount?: number;
+  copayAmount?: number;
+  coverageStatus?: "covered" | "partial" | "not_covered" | "unknown";
 };
 
 export type StructuredExtraction = {

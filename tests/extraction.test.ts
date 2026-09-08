@@ -60,6 +60,18 @@ test("extrae filas PAM escaneadas aunque el OCR pierda los símbolos de moneda",
   ]);
 });
 
+test("conserva bonificación y copago por línea del PAM", () => {
+  const result = structureDocument([
+    { page: 1, text: "PROGRAMA DE ATENCION MEDICA\nCódigo Prestación Cantidad Valor Bonificación Copago\n1802053 APENDICECTOMIA 1 $ 1.914.834 $ 1.500.000 $ 414.834" },
+  ], "pam", false);
+  assert.deepEqual(result.pam?.lines[0] && {
+    billedAmount: result.pam.lines[0].billedAmount,
+    bonusAmount: result.pam.lines[0].bonusAmount,
+    copayAmount: result.pam.lines[0].copayAmount,
+    coverageStatus: result.pam.lines[0].coverageStatus,
+  }, { billedAmount: 1914834, bonusAmount: 1500000, copayAmount: 414834, coverageStatus: "partial" });
+});
+
 test("no clasifica como PAM una página de cuenta que repite Isapre y farmacia", () => {
   const result = structureDocument([
     { page: 1, text: "Informe de Cuentas al Paciente\nEmpresa Rut 96770100-9 Clínica Alemana\nPrevisión ISAPRE BANMEDICA\nId. Ingreso: 1305597\nCódigo Descripción Fecha Cant. Precio Valor\n500508140 FISIOLOGICO 0.9% 100 ML 17/06/2023 1 1.134 1.134 0 1.134" },

@@ -61,6 +61,10 @@ export type ChileanBillingLine = {
   originalDescription?: string;
   originalCode?: string;
   originalAmount?: number;
+  billedAmount?: number;
+  bonusAmount?: number;
+  copayAmount?: number;
+  coverageStatus?: PamCoverageStatus;
 };
 
 export type InclusionKnowledge = {
@@ -164,6 +168,48 @@ export type PamTraceability = {
   bundledComponentCount: number;
   unexplainedExclusionCount: number;
   findings: PamTraceabilityFinding[];
+  limitations: string[];
+};
+
+export type PamCoverageStatus = "covered" | "partial" | "not_covered" | "unknown";
+
+export type PamStandaloneLine = {
+  line: ChileanBillingLine;
+  billedAmount: number;
+  bonusAmount: number | null;
+  copayAmount: number | null;
+  coverageStatus: PamCoverageStatus;
+  category: "pavilion" | "hospitalization" | "medication" | "materials" | "diagnostic" | "professional" | "other";
+  detailStatus: "identified" | "generic";
+};
+
+export type PamStandaloneFinding = {
+  id: string;
+  severity: "informational" | "review" | "high";
+  title: string;
+  explanation: string;
+  lineIds: string[];
+  amount: number | null;
+  missingEvidence: string[];
+};
+
+export type PamStandaloneAnalysis = {
+  version: "pam-v1";
+  status: "ready" | "review_required" | "insufficient_evidence";
+  summary: string;
+  payer: string | null;
+  folio: string | null;
+  beneficiary: string | null;
+  billedTotal: number | null;
+  bonusTotal: number | null;
+  copayTotal: number | null;
+  lineSum: number;
+  coverageStatus: PamCoverageStatus;
+  identifiedLineCount: number;
+  genericLineCount: number;
+  lines: PamStandaloneLine[];
+  findings: PamStandaloneFinding[];
+  missingEvidence: string[];
   limitations: string[];
 };
 
@@ -1271,6 +1317,149 @@ function sharedDescriptionScore(accountLine: ChileanBillingLine, pamLine: Chilea
   const union = new Set([...left, ...right]).size;
   const score = union ? intersection / union : 0;
   return score >= 0.55 || (intersection >= 2 && score >= 0.35) ? score : 0;
+}
+
+type PamFieldLike = { key: string; value: string };
+
+function pamFieldValue(fields: PamFieldLike[], key: string) {
+  return fields.find((field) => field.key === key)?.value?.trim() || null;
+}
+
+function pamMoneyField(fields: PamFieldLike[], key: string) {
+  const raw = pamFieldValue(fields, key);
+  if (!raw) return null;
+  const value = Number(raw.replace(/[^0-9-]/g, ""));
+  return Number.isFinite(value) ? Math.round(value) : null;
+}
+
+function pamCategory(line: ChileanBillingLine): PamStandaloneLine["category"] {
+  const text = pamLineText(line);
+  if (/pabellon|quirurg|cirug|anestesi/.test(text)) return "pavilion";
+  if (/dia cama|hospitaliz|estancia/.test(text)) return "hospitalization";
+  if (/medic|farmac|droga|inyect/.test(text)) return "medication";
+  if (/material|insumo|gasa|cateter|sonda|sutura|guante|kit/.test(text)) return "materials";
+  if (/scanner|radiograf|resonancia|ecograf|laboratorio|hemograma|biopsia|imagen/.test(text)) return "diagnostic";
+  if (/honorario|medico|cirujano|visita/.test(text)) return "professional";
+  return "other";
+}
+
+function pamGenericLine(line: ChileanBillingLine) {
+  return /^(?:material(?:es)?\s+clinicos?|insumos?|materiales?|prestacion\s+integral|paquete|otros?|sin\s+detalle)$/i.test(normalize(line.description))
+    || normalize(line.description).length < 5;
+}
+
+function pamLineCoverage(line: ChileanBillingLine): PamCoverageStatus {
+  if (line.coverageStatus) return line.coverageStatus;
+  const billed = Number.isFinite(line.billedAmount) ? Number(line.billedAmount) : line.amount;
+  const bonus = Number.isFinite(line.bonusAmount) ? Number(line.bonusAmount) : null;
+  const copay = Number.isFinite(line.copayAmount) ? Number(line.copayAmount) : null;
+  if (bonus === null && copay === null) return "unknown";
+  if (copay === 0 && bonus !== null && bonus >= billed) return "covered";
+  if ((bonus !== null && bonus > 0) || (copay !== null && copay < billed)) return "partial";
+  return "not_covered";
+}
+
+/**
+ * Reads the PAM as its own source. This intentionally does not compare it
+ * with a clinical account: a PAM may be summarized, omit block detail, or
+ * use generic labels such as “materiales clínicos”.
+ */
+export function analyzePamStandalone(
+  lines: ChileanBillingLine[] = [],
+  fields: PamFieldLike[] = [],
+): PamStandaloneAnalysis {
+  const mapped = lines.map((line) => ({
+    line,
+    billedAmount: Number.isFinite(line.billedAmount) ? Number(line.billedAmount) : line.amount,
+    bonusAmount: Number.isFinite(line.bonusAmount) ? Number(line.bonusAmount) : null,
+    copayAmount: Number.isFinite(line.copayAmount) ? Number(line.copayAmount) : null,
+    coverageStatus: pamLineCoverage(line),
+    category: pamCategory(line),
+    detailStatus: pamGenericLine(line) ? "generic" as const : "identified" as const,
+  } satisfies PamStandaloneLine));
+  const billedTotal = pamMoneyField(fields, "billed_total");
+  const bonusField = pamMoneyField(fields, "bonus");
+  const copayField = pamMoneyField(fields, "copay");
+  const lineSum = Math.round(mapped.reduce((sum, item) => sum + item.billedAmount, 0));
+  const bonusTotal = bonusField ?? (mapped.some((item) => item.bonusAmount !== null)
+    ? Math.round(mapped.reduce((sum, item) => sum + (item.bonusAmount ?? 0), 0))
+    : null);
+  const copayTotal = copayField ?? (mapped.some((item) => item.copayAmount !== null)
+    ? Math.round(mapped.reduce((sum, item) => sum + (item.copayAmount ?? 0), 0))
+    : null);
+  const coveredCount = mapped.filter((item) => item.coverageStatus === "covered").length;
+  const partialCount = mapped.filter((item) => item.coverageStatus === "partial").length;
+  const notCoveredCount = mapped.filter((item) => item.coverageStatus === "not_covered").length;
+  const unknownCount = mapped.filter((item) => item.coverageStatus === "unknown").length;
+  const genericLines = mapped.filter((item) => item.detailStatus === "generic");
+  const hasCoverageAmounts = bonusTotal !== null || copayTotal !== null;
+  const coverageStatus: PamCoverageStatus = !mapped.length && billedTotal === null
+    ? "unknown"
+    : hasCoverageAmounts
+      ? (notCoveredCount > 0 && coveredCount === 0 && partialCount === 0 ? "not_covered" : partialCount > 0 || notCoveredCount > 0 ? "partial" : "covered")
+      : unknownCount === 0 && mapped.length > 0 ? "covered" : "unknown";
+  const findings: PamStandaloneFinding[] = [];
+  if (!mapped.length && billedTotal === null) {
+    findings.push({
+      id: "PAM-STANDALONE-NOT-READ-001",
+      severity: "high",
+      title: "El PAM no tiene líneas legibles",
+      explanation: "El documento fue recibido, pero no contiene renglones o un total identificable para explicar qué informa la Isapre.",
+      lineIds: [], amount: null,
+      missingEvidence: ["PAM o liquidación legible", "Página con total, bonificación y copago"],
+    });
+  }
+  if (!hasCoverageAmounts || unknownCount > 0) {
+    findings.push({
+      id: "PAM-STANDALONE-COVERAGE-OPAQUE-001",
+      severity: "high",
+      title: "La cobertura no está desglosada por línea",
+      explanation: `El PAM informa ${mapped.length} prestación(es), pero ${unknownCount || mapped.length} no muestran de forma suficiente bonificación y copago. No es posible afirmar desde este documento qué quedó cubierto, qué quedó a cargo del afiliado o qué fue rechazado.`,
+      lineIds: mapped.filter((item) => item.coverageStatus === "unknown").map((item) => item.line.id), amount: null,
+      missingEvidence: ["Detalle de bonificación y copago por prestación", "Respuesta fundada de la Isapre", "Plan y arancel aplicables"],
+    });
+  }
+  if (genericLines.length > 0) {
+    findings.push({
+      id: "PAM-STANDALONE-GENERIC-MATERIALS-001",
+      severity: "review",
+      title: "El PAM usa glosas generales para materiales o insumos",
+      explanation: `Se detectaron ${genericLines.length} línea(s) genérica(s), como “materiales clínicos” o “insumos”, sin indicar qué artículo integra el bloque ni su cobertura individual.`,
+      lineIds: genericLines.map((item) => item.line.id), amount: genericLines.reduce((sum, item) => sum + item.billedAmount, 0),
+      missingEvidence: ["Desglose del bloque de materiales clínicos", "Código y composición de la prestación", "Regla del plan o convenio que define la cobertura"],
+    });
+  }
+  if (mapped.length > 0) {
+    findings.push({
+      id: "PAM-STANDALONE-NO-UNBUNDLING-001",
+      severity: "informational",
+      title: "Las desfragmentaciones no se determinan desde el PAM",
+      explanation: "El PAM puede resumir prestaciones y cobertura, pero no identifica por sí solo si la cuenta clínica separó indebidamente materiales, medicamentos o componentes de una prestación principal.",
+      lineIds: mapped.map((item) => item.line.id), amount: null,
+      missingEvidence: ["Cuenta clínica detallada", "Registro de uso", "Contrato, plan y arancel"],
+    });
+  }
+  const summary = coverageStatus === "covered"
+    ? `El PAM informa cobertura completa para ${coveredCount || mapped.length} prestación(es), pero debe conservarse el desglose contractual.`
+    : coverageStatus === "partial"
+      ? `El PAM muestra cobertura parcial o copago en ${partialCount + notCoveredCount} prestación(es); el documento no basta para explicar todos los cargos.`
+      : coverageStatus === "not_covered"
+        ? "El PAM informa prestaciones sin bonificación suficiente; falta conocer la razón contractual y la respuesta fundada."
+        : "El PAM fue recibido, pero no permite identificar con claridad qué cubrió, qué quedó pendiente ni cómo se aplicó la cobertura.";
+  const status = !mapped.length && billedTotal === null ? "insufficient_evidence" as const : findings.some((finding) => finding.severity === "high" || finding.severity === "review") ? "review_required" as const : "ready" as const;
+  return {
+    version: "pam-v1", status, summary,
+    payer: pamFieldValue(fields, "payer"), folio: pamFieldValue(fields, "folio"), beneficiary: pamFieldValue(fields, "beneficiary"),
+    billedTotal, bonusTotal, copayTotal, lineSum, coverageStatus,
+    identifiedLineCount: mapped.filter((item) => item.detailStatus === "identified").length,
+    genericLineCount: genericLines.length, lines: mapped, findings,
+    missingEvidence: Array.from(new Set(findings.flatMap((finding) => finding.missingEvidence))),
+    limitations: [
+      "El PAM se analiza como fuente propia; esta lectura no concilia sus líneas con la cuenta clínica.",
+      "Una glosa general de materiales clínicos no revela qué artículos fueron cubiertos ni permite evaluar desfragmentaciones.",
+      "La cobertura final depende del plan, contrato, arancel, topes, exclusiones y respuesta fundada de la Isapre.",
+    ],
+  };
 }
 
 function reconcileAccountWithPam(
