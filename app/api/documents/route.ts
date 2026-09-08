@@ -70,15 +70,17 @@ export async function POST(request: Request) {
     localSaveDocument({ id: documentId, caseId, name: file.name, mimeType: file.type || "application/octet-stream", byteSize: file.size, classification, confidence: Number(form.get("confidence") || 0) });
     return Response.json({ documentId, storageKey: key, local: true, forwarded: patientUpload }, { status: 201 });
   }
-  await ensureCaseSchema(env.DB);
-  // Pass the File itself instead of its stream. Node's multipart File stream
-  // can be consumed/closed by the runtime before the storage adapter reads it,
-  // which surfaced in production as a generic browser "Failed to fetch" and
-  // dropped the document back to the pending state. File is a supported body
-  // for both the Node encrypted bucket and the Cloudflare R2 adapter.
-  await env.DOCUMENTS.put(key, file, { httpMetadata: { contentType: file.type || "application/octet-stream" }, customMetadata: { caseId, documentId, originalName: file.name } });
-  await env.DB.prepare(`INSERT OR REPLACE INTO documents (id, case_id, original_name, storage_key, mime_type, byte_size, classification, classification_confidence, processing_status, source_expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'extracting', ?)`)
-    .bind(documentId, caseId, file.name, key, file.type || "application/octet-stream", file.size, classification, Number(form.get("confidence") || 0), null).run();
+  try {
+    await ensureCaseSchema(env.DB);
+    // Pass the File itself instead of its stream. Node's multipart File stream
+    // can be consumed/closed by the runtime before the storage adapter reads it.
+    await env.DOCUMENTS.put(key, file, { httpMetadata: { contentType: file.type || "application/octet-stream" }, customMetadata: { caseId, documentId, originalName: file.name } });
+    await env.DB.prepare(`INSERT OR REPLACE INTO documents (id, case_id, original_name, storage_key, mime_type, byte_size, classification, classification_confidence, processing_status, source_expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'extracting', ?)`)
+      .bind(documentId, caseId, file.name, key, file.type || "application/octet-stream", file.size, classification, Number(form.get("confidence") || 0), null).run();
+  } catch (error) {
+    console.error("[documents] persistent upload failed", error);
+    return Response.json({ error: `No se pudo guardar el documento: ${error instanceof Error ? error.message : "error de almacenamiento"}` }, { status: 500 });
+  }
   if (patientUpload) {
     try {
       await forwardUploadedDocument({ caseId, documentId, uploaderEmail: auth.user.email, classification, file });
