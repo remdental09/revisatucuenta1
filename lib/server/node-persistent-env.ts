@@ -1,3 +1,7 @@
+import { DatabaseSync } from "node:sqlite";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+
 type NodeSqliteModule = {
   DatabaseSync: new (path: string) => {
     exec(sql: string): void;
@@ -9,20 +13,6 @@ type NodeSqliteModule = {
   };
 };
 
-type FileSystemModule = {
-  mkdir(path: string, options: { recursive: boolean }): Promise<void>;
-  writeFile(path: string, data: Uint8Array): Promise<void>;
-  readFile(path: string): Promise<Uint8Array>;
-  unlink(path: string): Promise<void>;
-};
-
-type PathModule = {
-  resolve(...paths: string[]): string;
-  join(...paths: string[]): string;
-  dirname(path: string): string;
-  sep: string;
-};
-
 type PersistentHost = {
   __revisaPersistentEnvironments?: Map<string, Promise<any>>;
 };
@@ -32,10 +22,6 @@ const runtimeHost = (typeof process !== "undefined" ? process : globalThis) as u
 function runtimeEnv(name: string) {
   if (typeof process === "undefined") return undefined;
   return process.env[name]?.trim() || undefined;
-}
-
-async function dynamicNodeImport<T>(specifier: string): Promise<T> {
-  return import(/* @vite-ignore */ specifier) as Promise<T>;
 }
 
 class NodePreparedStatement {
@@ -101,10 +87,10 @@ async function encryptionKey() {
 
 class EncryptedFileBucket {
   private root: string;
-  private fs: FileSystemModule;
-  private path: PathModule;
+  private fs: typeof fs;
+  private path: typeof path;
 
-  constructor(root: string, fs: FileSystemModule, path: PathModule) {
+  constructor(root: string, fs: typeof import("node:fs/promises"), path: typeof import("node:path")) {
     this.root = root;
     this.fs = fs;
     this.path = path;
@@ -147,14 +133,6 @@ class EncryptedFileBucket {
 }
 
 async function createEnvironment(dataDirectory: string) {
-  const sqliteSpecifier = "node:sqlite";
-  const fsSpecifier = "node:fs/promises";
-  const pathSpecifier = "node:path";
-  const [{ DatabaseSync }, fs, path] = await Promise.all([
-    dynamicNodeImport<NodeSqliteModule>(sqliteSpecifier),
-    dynamicNodeImport<FileSystemModule>(fsSpecifier),
-    dynamicNodeImport<PathModule>(pathSpecifier),
-  ]);
   const root = path.resolve(dataDirectory);
   await fs.mkdir(root, { recursive: true });
   const database = new DatabaseSync(path.join(root, "revisatucuenta.sqlite"));
