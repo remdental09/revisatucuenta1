@@ -41,6 +41,7 @@ type LocalRuntimeState = {
 
 const STALE_EXTRACTION_MS = 2 * 60 * 60 * 1000;
 const STALE_EXTRACTION_MESSAGE = "La lectura no informó avances dentro del tiempo esperado. Reemplaza el documento para reintentar o prepara una revisión humana/LLM.";
+const CLOUDFLARE_WORKERS_MODULE = "cloudflare:" + "workers";
 
 // Render's volatile demo can evaluate route bundles in more than one global
 // realm. Keep the temporary state on the Node process when available so the
@@ -89,7 +90,7 @@ export async function getCloudflareEnv(): Promise<any | null> {
   // discover a durable Cloudflare database/bucket while running the analyzer.
   if (typeof process !== "undefined" && process.env.REVISA_VOLATILE_MODE === "true") return null;
   try {
-    const module = await import("cloudflare:workers");
+    const module = await import(/* @vite-ignore */ CLOUDFLARE_WORKERS_MODULE);
     // Vinext's local worker can expose .env.local only through the worker
     // bindings, so honor the same explicit volatile switch there as well.
     const bindings = module.env as { REVISA_VOLATILE_MODE?: string } | undefined;
@@ -103,7 +104,7 @@ export async function getCloudflareEnv(): Promise<any | null> {
 export async function volatileRuntimeMode() {
   if (typeof process !== "undefined" && process.env.REVISA_VOLATILE_MODE === "true") return true;
   try {
-    const module = await import("cloudflare:workers");
+    const module = await import(/* @vite-ignore */ CLOUDFLARE_WORKERS_MODULE);
     const bindings = module.env as { REVISA_VOLATILE_MODE?: string } | undefined;
     return bindings?.REVISA_VOLATILE_MODE === "true";
   } catch {
