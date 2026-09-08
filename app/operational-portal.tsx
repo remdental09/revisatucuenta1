@@ -2201,6 +2201,7 @@ function DeveloperPamStandalonePanel({ analysis }: { analysis: PamStandaloneAnal
 }
 
 function DeveloperPamTraceabilityPanel({ trace }: { trace?: PamTraceability }) {
+  return null;
   if (!trace) return null;
   const reviewFindings = trace.findings.filter((finding) => finding.status === "review");
   const statusLabel = trace.status === "not_available" ? "PAM pendiente" : trace.status === "consistent" ? "Coincidencias encontradas" : trace.status === "review_required" ? "Requiere conciliación" : "Evidencia insuficiente";
