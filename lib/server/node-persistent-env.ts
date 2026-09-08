@@ -19,6 +19,17 @@ type PersistentHost = {
 
 const runtimeHost = (typeof process !== "undefined" ? process : globalThis) as unknown as PersistentHost;
 
+// Emit only non-secret presence flags so a Railway deploy can be diagnosed
+// without ever copying the credential into logs or responses.
+if (typeof process !== "undefined") {
+  console.info("[runtime] configuration", {
+    nodeRuntime: true,
+    dataDirectoryPresent: Boolean(process.env.REVISA_DATA_DIR?.trim()),
+    openaiApiKeyPresent: Boolean(process.env.OPENAI_API_KEY?.trim()),
+    modelRoutingPresent: Boolean(process.env.OPENAI_MODEL_ROUTING?.trim()),
+  });
+}
+
 function runtimeEnv(name: string) {
   if (typeof process === "undefined") return undefined;
   return process.env[name]?.trim() || undefined;
