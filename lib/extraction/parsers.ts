@@ -520,12 +520,18 @@ function accountTotalField(pages: TextPage[]) {
   // Valor Isa and Bonif. Sum only that first column and preserve the source
   // rows so the chosen basis is auditable.
   const entityTotals: Array<{ value: number; page: number; sourceText: string }> = [];
+  // Keep this recognition independent from the account-row parser. A direct
+  // PDF export can contain all line items but still omit a single grand total;
+  // the authoritative basis is then the first monetary column of each
+  // "Total Empresa" row (one row per issuer). The label may be separated from
+  // its numbers by a line break after PDF.js lays out the text layer.
+  const entityTotalLabel = /^total\s+empresa\b/i;
   for (const page of pages) {
     const rawLines = page.text.split(/\r?\n/);
     for (let index = 0; index < rawLines.length; index += 1) {
       const rawLine = rawLines[index] ?? "";
       const line = normalize(rawLine);
-      if (!/^total\s+empresa\b/i.test(line)) continue;
+      if (!entityTotalLabel.test(line)) continue;
       const nextLine = normalize(rawLines[index + 1] ?? "");
       const totalText = /\d/.test(line) ? line : `${line} ${nextLine}`;
       const values = (totalText.match(/-?\d[\d.,]*/g) ?? [])
