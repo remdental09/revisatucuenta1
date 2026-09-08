@@ -16,6 +16,7 @@ const { d1, r2 } = hostingConfig;
 // the persistent Node data directory) is present so server secrets such as
 // OPENAI_API_KEY remain available to API routes.
 const isRailwayNodeRuntime = Boolean(
+  process.env.RAILWAY_NODE_RUNTIME === "true" ||
   process.env.RAILWAY_ENVIRONMENT ||
   process.env.RAILWAY_PROJECT_ID ||
   process.env.REVISA_DATA_DIR,
