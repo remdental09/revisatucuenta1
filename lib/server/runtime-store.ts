@@ -64,7 +64,27 @@ const { cases, documents, extractions, analyses, authorizations, serviceContract
 
 export async function getCloudflareEnv(): Promise<any | null> {
   const nodeEnvironment = await getNodePersistentEnvironment();
-  if (nodeEnvironment) return nodeEnvironment;
+  // The Node-backed store intentionally returns only DB and DOCUMENTS
+  // bindings.  Keep the process configuration alongside those bindings so
+  // worker-style route bundles (where process.env may be unavailable) can
+  // still resolve private server settings such as OPENAI_API_KEY.  These
+  // values remain server-side; this object is never serialized to the client.
+  const processBindings = typeof process !== "undefined"
+    ? Object.fromEntries([
+      "OPENAI_API_KEY",
+      "OPENAI_READER_MODEL",
+      "OPENAI_VISION_MODEL",
+      "OPENAI_ANALYSIS_MODEL",
+      "OPENAI_CHAT_MODEL",
+      "OPENAI_MODEL_ROUTING",
+      "OPENAI_REVIEW_MODEL",
+      "OPENAI_EXCEPTION_MODEL",
+    ].flatMap((name) => {
+      const value = process.env[name]?.trim();
+      return value ? [[name, value]] : [];
+    }))
+    : {};
+  if (nodeEnvironment) return { ...nodeEnvironment, ...processBindings };
   // Render demo mode is intentionally volatile: it must never attach or
   // discover a durable Cloudflare database/bucket while running the analyzer.
   if (typeof process !== "undefined" && process.env.REVISA_VOLATILE_MODE === "true") return null;
@@ -74,7 +94,7 @@ export async function getCloudflareEnv(): Promise<any | null> {
     // bindings, so honor the same explicit volatile switch there as well.
     const bindings = module.env as { REVISA_VOLATILE_MODE?: string } | undefined;
     if (bindings?.REVISA_VOLATILE_MODE === "true") return null;
-    return module.env ?? null;
+    return module.env ? { ...module.env, ...processBindings } : (Object.keys(processBindings).length ? processBindings : null);
   } catch {
     return null;
   }
