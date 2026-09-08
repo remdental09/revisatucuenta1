@@ -95,6 +95,17 @@ export async function POST(request: Request) {
   }
 
   const env = await getCloudflareEnv();
+  // Keep the provider configuration observable without ever logging the
+  // secret itself.  This distinguishes a missing runtime variable from a
+  // provider rejection (401/403) and avoids the misleading "not configured"
+  // state when a deployment was built before its environment was refreshed.
+  const runtimeApiKey = typeof process !== "undefined" ? process.env.OPENAI_API_KEY?.trim() : undefined;
+  console.info("[analysis] LLM configuration", {
+    runtimeApiKeyPresent: Boolean(runtimeApiKey),
+    environmentApiKeyPresent: Boolean(env && typeof env.OPENAI_API_KEY === "string" && env.OPENAI_API_KEY.trim()),
+    runtimeModel: typeof process !== "undefined" ? process.env.OPENAI_ANALYSIS_MODEL || process.env.OPENAI_READER_MODEL || null : null,
+    routingEnabled: Boolean((env && typeof env.OPENAI_MODEL_ROUTING === "string" && env.OPENAI_MODEL_ROUTING.trim()) || (typeof process !== "undefined" && process.env.OPENAI_MODEL_ROUTING?.trim())),
+  });
   if (body.caseId) {
     const denied = await caseAccessResponse(env, body.caseId, auth.user);
     if (denied) return denied;
@@ -115,6 +126,7 @@ export async function POST(request: Request) {
       body.readerAssessment,
       body.printedTotal,
       env,
+      { apiKey: runtimeApiKey },
     );
   } catch (error) {
     const message = error instanceof ReaderAssistError
