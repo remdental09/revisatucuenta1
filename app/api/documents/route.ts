@@ -71,7 +71,12 @@ export async function POST(request: Request) {
     return Response.json({ documentId, storageKey: key, local: true, forwarded: patientUpload }, { status: 201 });
   }
   await ensureCaseSchema(env.DB);
-  await env.DOCUMENTS.put(key, file.stream(), { httpMetadata: { contentType: file.type || "application/octet-stream" }, customMetadata: { caseId, documentId, originalName: file.name } });
+  // Pass the File itself instead of its stream. Node's multipart File stream
+  // can be consumed/closed by the runtime before the storage adapter reads it,
+  // which surfaced in production as a generic browser "Failed to fetch" and
+  // dropped the document back to the pending state. File is a supported body
+  // for both the Node encrypted bucket and the Cloudflare R2 adapter.
+  await env.DOCUMENTS.put(key, file, { httpMetadata: { contentType: file.type || "application/octet-stream" }, customMetadata: { caseId, documentId, originalName: file.name } });
   await env.DB.prepare(`INSERT OR REPLACE INTO documents (id, case_id, original_name, storage_key, mime_type, byte_size, classification, classification_confidence, processing_status, source_expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'extracting', ?)`)
     .bind(documentId, caseId, file.name, key, file.type || "application/octet-stream", file.size, classification, Number(form.get("confidence") || 0), null).run();
   if (patientUpload) {
