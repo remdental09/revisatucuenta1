@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "vinext dev",
     "dev:all": "vinext dev",
-    "build": "vinext build",
+    "build": "node scripts/clean-vinext-build.mjs && vinext build",
     "start": "vinext start",
     "test": "npm run build && node --test tests/rendered-html.test.mjs tests/chilean-account.test.ts tests/extraction.test.ts tests/auth.test.ts tests/email.test.ts tests/reader-assist.test.ts tests/synthetic-accounts.test.ts",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
