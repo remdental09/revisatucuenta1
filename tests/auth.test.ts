@@ -10,6 +10,7 @@ import {
   localRequestAdvisory,
   localSaveAnalysis,
   localSaveDocument,
+  localSaveExtraction,
   localSaveMixedExtraction,
 } from "../lib/server/runtime-store.ts";
 import { analyzeClinicalAccount } from "../lib/rules/chilean-account.ts";
@@ -142,6 +143,29 @@ test("reemplazar una cuenta elimina la anterior y conserva los demás documentos
   localSaveAnalysis(caseId, analyzeClinicalAccount([]));
   localDeleteDocument(pamId, caseId);
   assert.ok(localGetCase(caseId, owner, true)?.analysis);
+});
+
+test("invalida la matriz cuando se relee una cuenta o se actualiza el PAM", () => {
+  const suffix = crypto.randomUUID();
+  const owner = `reread-owner-${suffix}`;
+  const caseId = `reread-case-${suffix}`;
+  const accountId = `reread-account-${suffix}`;
+  const pamId = `reread-pam-${suffix}`;
+  const readyAssessment = { status: "ready", confidence: 1, parserMode: "direct_pdf", signals: [], lowConfidencePages: [], unknownItems: [], numericIssues: [], codeChangeNeeded: false } as const;
+  const extraction = { pageCount: 1, usedOcr: false, readerVersion: "test", readerAssessment: readyAssessment, account: { type: "account" as const, label: "Cuenta", pages: [1], fields: [], lines: [{ description: "Cuenta", amount: 100, page: 1 }] } };
+  const pamExtraction = { pageCount: 1, usedOcr: false, readerVersion: "test", readerAssessment: readyAssessment, pam: { type: "pam" as const, label: "PAM", pages: [1], fields: [], lines: [{ description: "PAM", amount: 90, page: 1 }] } };
+
+  assert.equal(localCreateCase({ id: caseId, ownerUserId: owner, ownerEmail: "reread@example.com", patientName: "Paciente releído", episodeLabel: "Cuenta clínica" }), true);
+  localSaveDocument({ id: accountId, caseId, name: "cuenta.pdf", mimeType: "application/pdf", byteSize: 100, classification: "Cuenta clínica", confidence: 95 });
+  localSaveExtraction(accountId, extraction, 0);
+  localSaveAnalysis(caseId, analyzeClinicalAccount([]));
+  localSaveExtraction(accountId, extraction, 0);
+  assert.equal(localGetCase(caseId, owner, true)?.analysis, undefined);
+
+  localSaveDocument({ id: pamId, caseId, name: "pam.pdf", mimeType: "application/pdf", byteSize: 100, classification: "PAM / liquidación", confidence: 95 });
+  localSaveAnalysis(caseId, analyzeClinicalAccount([]));
+  localSaveExtraction(pamId, pamExtraction, 0);
+  assert.equal(localGetCase(caseId, owner, true)?.analysis, undefined);
 });
 
 test("separa un PDF mixto en cuenta y PAM interno sin duplicar la fuente", () => {

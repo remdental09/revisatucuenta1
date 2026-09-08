@@ -241,6 +241,10 @@ export function localSaveExtraction(documentId: string, extraction: DocumentExtr
   extractions.set(documentId, extraction);
   const document = documents.get(documentId);
   if (!document) return;
+  // Any new clinical extraction invalidates the previous matrix. This covers
+  // re-reads of the same document and PAM updates, not only a replacement
+  // upload, so the developer console cannot display hypotheses for stale rows.
+  if (/cuenta|mixto|pam|liquid/i.test(document.classification)) analyses.delete(document.case_id);
   const reviewRequired = extraction.readerAssessment?.status !== "ready";
   documents.set(documentId, {
     ...document,

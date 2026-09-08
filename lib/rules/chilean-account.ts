@@ -428,6 +428,10 @@ export const DEFAULT_CHILEAN_INCLUSION_KNOWLEDGE: InclusionKnowledge[] = [
       "pds polidio",
       "surgitie",
       "vicryl",
+      "fresa",
+      "fresa quirurgica",
+      "fresa bell",
+      "broca quirurgica",
     ],
     bundle: "operating_room",
     probability: 0.46,
@@ -437,6 +441,19 @@ export const DEFAULT_CHILEAN_INCLUSION_KNOWLEDGE: InclusionKnowledge[] = [
     sourceReference: "Cuentas clínicas aportadas al proyecto",
     rationale:
       "Está asociado al acto quirúrgico, pero puede ser un insumo especial legítimamente separable; requiere convenio y respaldo de uso.",
+  },
+  {
+    id: "CL-PAB-BURR-001",
+    label: "Fresas y brocas quirúrgicas asociadas al procedimiento",
+    terms: ["fresa", "fresa quirurgica", "fresa bell", "broca quirurgica"],
+    bundle: "operating_room",
+    probability: 0.7,
+    authority: "clinical_review",
+    status: "provisional",
+    scope: "contract_specific",
+    sourceReference: "Circular N.º 43 y revisión funcional de materiales quirúrgicos de la cuenta",
+    rationale:
+      "Una fresa o broca puede ser equipo, accesorio no fungible o consumible especial del procedimiento. Con un ancla quirúrgica se conserva como hipótesis de revisión, pero su inclusión o cobro separado exige protocolo, registro de uso y convenio/arancel aplicable.",
   },
   {
     id: "CL-STAY-NURSING-001",

@@ -355,6 +355,27 @@ test("incorpora sistemas perioperatorios observados en la cuenta de turbinectom�
   assert.ok(result.lineAssessments.find((item) => item.line.id === "sedline")?.candidates.some((candidate) => candidate.knowledgeIds.includes("CL-PAB-MONITOR-001")));
 });
 
+test("mantiene fresas quirúrgicas como revisión provisional y no como línea descartada", () => {
+  const result = analyzeClinicalAccount([
+    { ...base, id: "anchor-pab", description: "Pabellón transitorio", section: "Pabellón", amount: 1522346 },
+    { ...base, id: "fresa-a", description: "MR8-F1/7TA15 FRESA A.", section: "Materiales clínicos", amount: 329525 },
+    { ...base, id: "fresa-b", description: "MR8-9AC75 FRESA BELL.", section: "Materiales clínicos", amount: 329525 },
+  ]);
+
+  for (const id of ["fresa-a", "fresa-b"]) {
+    const assessment = result.lineAssessments.find((item) => item.line.id === id);
+    assert.ok(assessment?.candidates.some((candidate) => candidate.bundle === "operating_room" && candidate.knowledgeIds.includes("CL-PAB-BURR-001")), id);
+    assert.ok(assessment?.functionalEquivalenceAlerts.some((alert) => alert.familyId === "surgical_special_materials"), id);
+    assert.ok(assessment?.candidates.find((candidate) => candidate.bundle === "operating_room")?.missingEvidence.some((item) => /Contrato|convenio|resolución/i.test(item)), id);
+  }
+  const noPavilion = analyzeClinicalAccount([
+    { ...base, id: "room", description: "Hospitalización pediátrica", section: "Hospitalización", amount: 120000 },
+    { ...base, id: "fresa", description: "FRESA DENTAL", section: "Materiales clínicos", amount: 3000 },
+  ]);
+  assert.equal(noPavilion.lineAssessments.find((item) => item.line.id === "fresa")?.candidates.some((candidate) => candidate.bundle === "operating_room"), false);
+  assert.equal(noPavilion.functionalEquivalenceAlerts.some((alert) => alert.lineId === "fresa" && alert.familyId === "surgical_special_materials"), false);
+});
+
 test("aprende patrones observados en la cuenta de apendicitis sin volverlos certeza", () => {
   const result = analyzeClinicalAccount([
     { ...base, id: "pab-ap", description: "Derecho de pabellón", section: "Pabellón", amount: 955000 },

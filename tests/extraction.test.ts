@@ -449,6 +449,51 @@ test("conserva montos chilenos de miles y toma el último total oficial", () => 
   assert.equal(result.account?.fields.find((field) => field.key === "total")?.value, "6.362.915");
 });
 
+test("elige la columna Valor y reconcilia cuentas multientidad con Total Empresa", () => {
+  const result = structureDocument(
+    [{
+      page: 1,
+      text: [
+        "Informe de Cuentas al Paciente",
+        "Código Descripción Fecha Cant. Precio Valor Descto. Recargo Valor Exento Afecto Iva Valor Isa Bonif.",
+        "202913 DIA CAMA PIEZA 21/06/2023 1,000 648.515 648.515 0 0 648.515 8.610 639.905 121.582 770.097 180.447",
+        "89643 ALMUERZO 17/06/2023 1,000 10.789 10.789 0 0 10.789 0 10.789 2.050 12.839 0",
+        "1103024 Tumores y/o quistes y/o 17/06/2023 1,000 4.232.656 4.232.656 0 0 4.232.656 4.232.656 0 4.232.656 356.030",
+        "567038 SCANNER CEREBRO DOBLE 17/06/2023 1,000 353.808 353.808 0 176.904 530.712 530.712 0 530.712 73.808",
+        "Total Empresa 5.245.768 0 176.904 5.422.672 5.422.672 0 5.422.672 5.422.672 430.000",
+      ].join("\n"),
+    }],
+    "account",
+    false,
+  );
+
+  assert.deepEqual(result.account?.lines.map((line) => line.amount), [648515, 10789, 4232656, 353808]);
+  assert.equal(result.account?.lines.find((line) => line.description === "Tumores y/o quistes y/o")?.unitAmount, 4232656);
+  assert.equal(result.account?.fields.find((field) => field.key === "total")?.value, "5.245.768");
+  assert.equal(result.account?.lines.reduce((sum, line) => sum + line.amount, 0), 5245768);
+});
+
+test("recupera los totales multientidad cuando OCR separa la etiqueta de los números", () => {
+  const result = structureDocument(
+    [{
+      page: 15,
+      text: [
+        "Informe de Cuentas al Paciente",
+        "Total Empresa",
+        "14.107.721 0 56.234 14.163.955 376.180 13.787.775 2.619.674 16.783.629 4.929.919",
+        "Total Empresa",
+        "9.014.134 0 0 9.014.134 9.014.134 0 9.014.134 944.110",
+        "Total Empresa",
+        "479.910 0 176.904 656.814 656.814 0 656.814 85.435",
+      ].join("\n"),
+    }],
+    "account",
+    false,
+  );
+
+  assert.equal(result.account?.fields.find((field) => field.key === "total")?.value, "23.601.765");
+});
+
 test("diagnostica una inconsistencia numérica en vez de ocultarla", () => {
   const extraction = structureDocument(
     [{

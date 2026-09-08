@@ -48,6 +48,12 @@ export async function POST(request: Request) {
   await ensureCaseSchema(env.DB);
   const document = await env.DB.prepare(`SELECT d.case_id, d.original_name, d.storage_key, d.mime_type, d.byte_size, d.classification, d.classification_confidence, d.source_expires_at, d.source_deleted_at, c.patient_name FROM documents d JOIN cases c ON c.id = d.case_id WHERE d.id = ?`).bind(body.documentId).first() as Record<string, unknown> | null;
   if (!document?.case_id) return Response.json({ error: "Documento no encontrado" }, { status: 404 });
+  // A re-read or a newly extracted PAM changes the evidence set. Invalidate
+  // the previous account matrix before the developer console can auto-run a
+  // fresh, traceable analysis from the current extraction.
+  if (/cuenta|mixto|pam|liquid/i.test(String(document.classification || ""))) {
+    await env.DB.prepare(`DELETE FROM case_analyses WHERE case_id = ?`).bind(String(document.case_id)).run();
+  }
   const mixed = isMixedAccountDocument(String(document.classification || ""), body.extraction);
   const pamOnly = !mixed && /pam|liquid/i.test(String(document.classification || "")) && Boolean(body.extraction.pam);
   const accountExtraction = mixed

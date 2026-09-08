@@ -112,6 +112,7 @@ export type FunctionalEquivalenceFamilyId =
   | "full_operating_room_scope"
   | "surgical_field_and_dressing"
   | "surgical_access_and_consumables"
+  | "surgical_special_materials"
   | "surgical_anesthesia_and_monitoring"
   | "thromboembolic_prevention"
   | "personal_hygiene";
@@ -491,6 +492,21 @@ const FUNCTIONAL_RULES: FunctionalRule[] = [
     ],
     rationale: "La marca, calibre o código puede variar sin cambiar la función quirúrgica; requiere protocolo y regla contractual para distinguir inclusión de cobro separado.",
     evidenceToRequest: ["Protocolo operatorio y hoja de anestesia", "Código y arancel del procedimiento principal", "Detalle de consumos y autorización de cargos especiales"],
+    requiresOperatingRoom: true,
+  },
+  {
+    id: "surgical_special_materials",
+    label: "Fresas, brocas y material quirúrgico especial",
+    terms: ["fresa", "fresa quirurgica", "fresa bell", "broca quirurgica", "neurosorb", "surgiflo"],
+    targetBundles: ["operating_room"],
+    precedentIds: ["SUP-ARB-4063244-2025-PAB-001"],
+    sourceBasis: [
+      "Circular N.º 43 y Apéndice del Anexo N.º 4: equipos, elementos no fungibles e insumos usados en pabellón",
+      "Compendio de Procedimientos, pp. 113-116: la inclusión material depende de la categoría y del instrumento aplicable",
+      "Limitación del marco: prótesis, implantes y materiales especiales requieren arancel, convenio y registro de uso",
+    ],
+    rationale: "La glosa identifica un material quirúrgico especial o un accesorio del procedimiento. Se mantiene como alerta de revisión y no como cobertura automática.",
+    evidenceToRequest: ["Protocolo operatorio y procedimiento que utilizó la fresa o broca", "Registro de consumo, reutilización o descarte", "Contrato, convenio, arancel y autorización de cargo especial"],
     requiresOperatingRoom: true,
   },
   {

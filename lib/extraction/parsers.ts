@@ -67,11 +67,11 @@ function splitAccountPrefix(value: string) {
       description: normalize(`${catalogWithReference[2]} ${catalogWithReference[3]}`),
     };
   }
-  const separated = normalized.match(/^([0-9][0-9.-]{5,20})\s+(.+)$/i);
+  const separated = normalized.match(/^([0-9][0-9.-]{4,20})\s+(.+)$/i);
   if (separated) {
     return { code: separated[1], description: normalize(separated[2]) };
   }
-  const compact = normalized.match(/^((?:[56]\d{8}|\d{6,8}))(.*)$/i);
+  const compact = normalized.match(/^((?:[56]\d{8}|\d{5,8}))(.*)$/i);
   if (!compact) return;
   const code = compact[1];
   const description = normalize(compact[2]);
@@ -108,6 +108,16 @@ function separateReceiptMarker(tokens: string[]) {
   // amounts such as 4.022, 5.512 or 1.432.
   if (!/^\d{3,}$/.test(amountPart) && !/^\d{1,3}(?:[.,]\d{3})+$/.test(amountPart)) return tokens;
   return [...tokens.slice(0, -1), amountPart, match[2]];
+}
+
+function accountQuantityToken(value: string) {
+  const normalized = value.replace(/[()]/g, "");
+  // In this provider's direct PDF export, quantity is rendered with a
+  // decimal comma (1,000; 0,250; -1,000). A dotted token at this position is
+  // normally a FONASA/document/price value, not a quantity.
+  if (!/^-?\d{1,3},\d{3}$/.test(normalized)) return;
+  const parsed = Number(normalized.replace(",", "."));
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function reconciledOcrTotal(quantity: number, unitAmount: number, parsedTotal: number, allowReconciliation: boolean) {
@@ -157,6 +167,46 @@ function accountTableLine(
   // inflated the line amount. The total is the last numeric value before the
   // receipt marker; the first positive value is the safest unit fallback.
   const rowValues = hasReceiptMarker ? numericValues.slice(0, -1) : numericValues;
+
+  // The Clínica Alemana detail format places the quantity before the monetary
+  // columns, even when the row also contains a FONASA code, document number
+  // or professional data. The first two numeric columns after Cant. are
+  // Precio and Valor. The final columns are Exento, Afecto, IVA, Valor Isa
+  // and Bonif.; using the last number would therefore read a bonus as the
+  // billed amount. Prefer the explicit table position whenever it is present.
+  const quantityIndex = tokens.findIndex((token, index) => {
+    if (accountQuantityToken(token) === undefined) return false;
+    const following = tokens.slice(index + 1)
+      .map(numericToken)
+      .filter((value): value is number => value !== undefined);
+    return following.length >= 2;
+  });
+  if (quantityIndex >= 0) {
+    const quantity = accountQuantityToken(tokens[quantityIndex]);
+    const following = tokens.slice(quantityIndex + 1)
+      .map(numericToken)
+      .filter((value): value is number => value !== undefined);
+    const unitAmount = following[0];
+    const parsedTotal = following[1];
+    if (quantity !== undefined && unitAmount !== undefined && parsedTotal !== undefined) {
+      return {
+        code,
+        description,
+        amount: parsedTotal,
+        unitAmount,
+        quantity,
+        date: dateMatch[0],
+        section,
+        subgroup,
+        providerId,
+        page,
+        confidence: 96,
+        numericReconciled: false,
+        sourceText: normalize(line),
+      };
+    }
+  }
+
   if (!values && !hasLeadingFonasaCode && rowValues.length >= 5) {
     const first = rowValues[0];
     const second = rowValues[1];
@@ -434,10 +484,18 @@ function providerField(pages: TextPage[]) {
 
 function accountTotalField(pages: TextPage[]) {
   for (const page of pages) {
-    for (const rawLine of page.text.split(/\r?\n/)) {
+    const rawLines = page.text.split(/\r?\n/);
+    for (let index = 0; index < rawLines.length; index += 1) {
+      const rawLine = rawLines[index] ?? "";
       const line = normalize(rawLine);
       if (!/^total\s+genera(?:l)?\b/i.test(line)) continue;
-      const values = line.match(/\$?\s*-?\d[\d.,]*/g) ?? [];
+      // OCR/PDF text layers sometimes put the label and its numeric cells on
+      // separate lines. Only join a following non-empty line when the label
+      // itself has no number, so an unrelated next row cannot alter a valid
+      // inline total.
+      const nextLine = normalize(rawLines[index + 1] ?? "");
+      const totalText = /\d/.test(line) ? line : `${line} ${nextLine}`;
+      const values = totalText.match(/\$?\s*-?\d[\d.,]*/g) ?? [];
       const value = values.length ? values[values.length - 1]?.trim().replace(/^\$\s*/, "") : undefined;
       if (!value || !Number.isFinite(parseNumber(value))) continue;
       return {
@@ -446,13 +504,48 @@ function accountTotalField(pages: TextPage[]) {
         value,
         page: page.page,
         confidence: 96,
-        sourceText: line,
+        sourceText: totalText,
       } satisfies ExtractionField;
     }
   }
-  return findField(pages, "total", "Total cuenta clínica", [
+  const explicit = findField(pages, "total", "Total cuenta clínica", [
     /(?:total\s+(?:cuenta|general)|total\s+a\s+pagar)\s*[:-]?\s*\$?\s*([0-9.]+(?:,\d{1,2})?)/i,
   ], 94);
+  if (explicit) return explicit;
+
+  // Multi-entity account reports may omit a single “Total General” and print
+  // one “Total Empresa” row per issuer. In this report the first monetary
+  // column is the billed Valor; the following columns are recargo, exento,
+  // Valor Isa and Bonif. Sum only that first column and preserve the source
+  // rows so the chosen basis is auditable.
+  const entityTotals: Array<{ value: number; page: number; sourceText: string }> = [];
+  for (const page of pages) {
+    const rawLines = page.text.split(/\r?\n/);
+    for (let index = 0; index < rawLines.length; index += 1) {
+      const rawLine = rawLines[index] ?? "";
+      const line = normalize(rawLine);
+      if (!/^total\s+empresa\b/i.test(line)) continue;
+      const nextLine = normalize(rawLines[index + 1] ?? "");
+      const totalText = /\d/.test(line) ? line : `${line} ${nextLine}`;
+      const values = (totalText.match(/-?\d[\d.,]*/g) ?? [])
+        .map((value) => parseNumber(value))
+        .filter((value) => Number.isFinite(value));
+      const firstValue = values[0];
+      if (firstValue === undefined) continue;
+      entityTotals.push({ value: firstValue, page: page.page, sourceText: totalText });
+    }
+  }
+  if (entityTotals.length) {
+    const total = entityTotals.reduce((sum, item) => sum + item.value, 0);
+    return {
+      key: "total",
+      label: "Total cuenta clínica (suma columna Valor)",
+      value: Math.round(total).toLocaleString("es-CL"),
+      page: entityTotals[0]!.page,
+      confidence: 96,
+      sourceText: entityTotals.map((item) => item.sourceText).join(" | "),
+    } satisfies ExtractionField;
+  }
 }
 
 function looksLikePatientName(value: string) {

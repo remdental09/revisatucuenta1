@@ -120,6 +120,12 @@ el código y no se expone en la vista paciente. Configura
 `OPENAI_READER_MODEL` y finalmente `gpt-5.4-mini`. En Railway debe existir
 `OPENAI_API_KEY` como variable secreta.
 
+Cuando una cuenta clínica o un PAM termina una lectura conciliada, la consola
+desarrollador ejecuta automáticamente el motor determinista y la segunda lectura
+semántica configurada. El botón de análisis queda como reintento o actualización
+manual. Si se relee el documento, se invalida la matriz anterior antes de volver
+a analizar; así no se muestran hipótesis calculadas sobre renglones obsoletos.
+
 ## Useful Commands
 
 - `npm run dev`: start local development

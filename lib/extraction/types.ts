@@ -1,6 +1,6 @@
 // Increment this whenever the extraction rules change in a way that makes a
 // previously persisted extraction unsafe to present as current.
-export const CURRENT_READER_VERSION = "2026-08-30.1";
+export const CURRENT_READER_VERSION = "2026-09-08.1";
 
 export type ExtractionField = {
   key: string;
