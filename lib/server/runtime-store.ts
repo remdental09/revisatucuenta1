@@ -86,6 +86,19 @@ export async function getCloudflareEnv(): Promise<any | null> {
     }))
     : {};
   if (nodeEnvironment) return { ...nodeEnvironment, ...processBindings };
+  // Railway runs the bundled routes in Node.  If the persistent bindings are
+  // unavailable, do not fall through to the worker-only `cloudflare:workers`
+  // import: that module can remain pending forever in a Node deployment and
+  // makes requests such as case creation appear to hang.  Return the process
+  // bindings (or null) so callers use their explicit volatile fallback and
+  // fail fast when a required binding is missing.
+  const nodeRuntimeRequested = typeof process !== "undefined" && (
+    process.env.REVISA_NODE_RUNTIME === "true"
+    || Boolean(process.env.REVISA_DATA_DIR)
+    || Boolean(process.env.RAILWAY_ENVIRONMENT)
+    || Boolean(process.env.RAILWAY_ENVIRONMENT_NAME)
+  );
+  if (nodeRuntimeRequested) return Object.keys(processBindings).length ? processBindings : null;
   // Render demo mode is intentionally volatile: it must never attach or
   // discover a durable Cloudflare database/bucket while running the analyzer.
   if (typeof process !== "undefined" && process.env.REVISA_VOLATILE_MODE === "true") return null;

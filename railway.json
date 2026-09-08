@@ -5,7 +5,7 @@
     "buildCommand": "pnpm run build:railway"
   },
   "deploy": {
-    "startCommand": "npm run start",
+    "startCommand": "REVISA_NODE_RUNTIME=true npm run start",
     "healthcheckPath": "/",
     "healthcheckTimeout": 300,
     "restartPolicyType": "ON_FAILURE",
