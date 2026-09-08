@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { extractHealthcareDocument, extractionErrorMessage, prepareVisionPageImages } from "../lib/extraction/client";
 import { CURRENT_READER_VERSION, type DocumentExtraction, type ReaderAssistResponse, type VisionAssistResponse } from "../lib/extraction/types";
+import { reconcileAccountTotal } from "../lib/extraction/total-reconciliation";
 import { assessExtractionQuality, buildReaderChangeProposal, buildReaderReviewPackage, readerChangeProposalToMarkdown, readerReviewPackageToMarkdown } from "../lib/extraction/reader-quality";
 import type { ClinicalAccountAnalysis, ChileanBillingLine, PamTraceability } from "../lib/rules/chilean-account";
 import type { FunctionalEquivalenceAlert } from "../lib/rules/observed-corpus";
@@ -191,6 +192,7 @@ function patientNameForDeveloper(snapshot: Snapshot) {
 
 function totalFrom(doc: CaseDocument | undefined, kind: "account" | "pam") {
   const group = doc?.extraction?.[kind];
+  if (kind === "account" && group?.totalReconciliation?.status !== "verified") return undefined;
   const fieldKey = kind === "account" ? "total" : "billed_total";
   const field = group?.fields.find((item) => item.key === fieldKey);
   const fieldValue = field ? Number(field.value.replace(/[^0-9-]/g, "")) : Number.NaN;
@@ -205,7 +207,10 @@ function totalFrom(doc: CaseDocument | undefined, kind: "account" | "pam") {
 }
 
 function extractionNeedsRefresh(document?: CaseDocument) {
-  return Boolean(document?.extraction && document.extraction.readerVersion !== CURRENT_READER_VERSION);
+  return Boolean(document?.extraction && (
+    document.extraction.readerVersion !== CURRENT_READER_VERSION ||
+    (document.extraction.account && !document.extraction.account.totalReconciliation)
+  ));
 }
 
 function analysisBlocked(document?: CaseDocument) {
@@ -213,6 +218,7 @@ function analysisBlocked(document?: CaseDocument) {
   if (["failed", "pending", "extracting"].includes(document.processingStatus || "")) return true;
   if (!document.extraction?.account?.lines.length) return true;
   if (document.extraction.readerAssessment && document.extraction.readerAssessment.status !== "ready") return true;
+  if (document.extraction.account?.totalReconciliation?.status !== "verified") return true;
   return extractionNeedsRefresh(document);
 }
 
@@ -483,7 +489,7 @@ function mergeVisionCorrections(extraction: DocumentExtraction, response: Vision
   if (!appliedCount) return { extraction, appliedCount: 0 };
   const base: DocumentExtraction = {
     ...extraction,
-    account: { ...source, lines },
+    account: { ...source, lines, totalReconciliation: reconcileAccountTotal(source.fields, lines) },
     readerAssessment: undefined,
   };
   const assessment = assessExtractionQuality(base, "account");
@@ -584,6 +590,7 @@ async function analyzeCase(caseId: string, document?: CaseDocument, episodeLabel
       lines,
       pamLines,
       readerAssessment: document?.extraction?.readerAssessment,
+      totalReconciliation: document?.extraction?.account?.totalReconciliation,
       printedTotal: Number.isFinite(printedTotal) ? printedTotal : undefined,
       pamPrintedTotal: Number.isFinite(pamPrintedTotal) ? pamPrintedTotal : undefined,
     }),
@@ -2198,9 +2205,11 @@ function ReaderQualityPanel({ document: sourceDocument }: { document: CaseDocume
   if (!assessment) return null;
   const proposal = buildReaderChangeProposal(assessment, sourceDocument.name);
   const technicalAlert = assessment.status === "reader_change_needed";
+  const totalCheck = sourceDocument.extraction?.account?.totalReconciliation;
+  const totalAlert = totalCheck?.status !== "verified";
   const numericIssues = assessment.numericIssues ?? [];
   const issueCount = assessment.unknownItems.length + numericIssues.length;
-  return <section className={`reader-quality-panel ${assessment.status}`}><div className="reader-quality-head"><div><span className="card-kicker">CONTROL DE LECTURA</span><h3>{technicalAlert ? "Este formato requiere revisión del lector" : "Calidad de lectura del documento"}</h3><p>{technicalAlert ? "La cuenta fue recibida, pero el motor no debe tratarla como completamente leída hasta revisar el formato o los renglones no reconocidos." : "La extracción está disponible para revisión; las alertas de lectura no son conclusiones sobre coberturas ni devoluciones."}</p></div><span className={`reader-quality-status ${assessment.status}`}>{readerStatusLabel(assessment.status)}</span></div><div className="reader-quality-metrics"><article><b>{Math.round(assessment.confidence * 100)}%</b><small>Confianza de lectura</small></article><article><b>{assessment.parserMode === "direct_pdf" ? "PDF" : assessment.parserMode === "mixed" ? "Mixto" : "OCR"}</b><small>Ruta utilizada</small></article><article><b>{issueCount}</b><small>Alertas de lectura</small></article><article><b>{assessment.lowConfidencePages.length || "—"}</b><small>Páginas a revisar</small></article></div><div className="reader-quality-signals"><b>Señales del lector</b>{assessment.signals.map((signal) => <span key={signal}>{signal}</span>)}</div>{assessment.unknownItems.length > 0 && <div className="reader-quality-unknown"><b>Elementos que no deben ocultarse</b>{assessment.unknownItems.slice(0, 8).map((item, index) => <div key={`${item.page}-${index}`}><span>Pág. {item.page}</span><strong>{item.value}</strong><small>{item.reason}</small></div>)}</div>}{numericIssues.length > 0 && <div className="reader-quality-unknown"><b>Inconsistencias numéricas detectadas</b>{numericIssues.slice(0, 8).map((item, index) => <div key={`numeric-${item.page}-${index}`}><span>Pág. {item.page}</span><strong>{item.value}</strong><small>{item.reason}</small></div>)}</div>}<div className="reader-quality-actions"><button className="portal-button portal-button-secondary" onClick={() => downloadJson(`${sourceDocument.id}-propuesta-lector.json`, proposal)}>Descargar propuesta JSON</button><button className="portal-button portal-button-primary" onClick={() => downloadReaderProposal(`${sourceDocument.id}-propuesta-lector.md`, sourceDocument)}>Descargar propuesta MD</button><button className="portal-button portal-button-secondary" onClick={() => downloadReaderReviewPackage(`${sourceDocument.id}-paquete-revision-llm.md`, sourceDocument)}>Preparar revisión humana / LLM</button><small>El paquete de revisión se descarga localmente y no envía la cuenta a terceros. La asistencia externa sólo propone correcciones; no cambia código ni despliega automáticamente.</small></div><p className="reader-quality-next"><b>Siguiente acción:</b> {assessment.nextAction}</p></section>;
+  return <section className={`reader-quality-panel ${assessment.status}`}><div className="reader-quality-head"><div><span className="card-kicker">CONTROL DE LECTURA</span><h3>{technicalAlert ? "Este formato requiere revisión del lector" : totalAlert ? "El total requiere conciliación" : "Calidad de lectura del documento"}</h3><p>{technicalAlert ? "La cuenta fue recibida, pero el motor no debe tratarla como completamente leída hasta revisar el formato o los renglones no reconocidos." : totalAlert ? "El monto no se mostrará como definitivo hasta comparar el total impreso con todas las líneas extraídas." : "La extracción está disponible para revisión; las alertas de lectura no son conclusiones sobre coberturas ni devoluciones."}</p></div><span className={`reader-quality-status ${assessment.status}`}>{readerStatusLabel(assessment.status)}</span></div><div className="reader-quality-metrics"><article><b>{Math.round(assessment.confidence * 100)}%</b><small>Confianza de lectura</small></article><article><b>{assessment.parserMode === "direct_pdf" ? "PDF" : assessment.parserMode === "mixed" ? "Mixto" : "OCR"}</b><small>Ruta utilizada</small></article><article><b>{issueCount}</b><small>Alertas de lectura</small></article><article><b>{totalCheck?.status === "verified" ? "Conciliado" : "Pendiente"}</b><small>Total impreso vs. líneas</small></article></div><div className="reader-quality-signals"><b>Señales del lector</b>{assessment.signals.map((signal) => <span key={signal}>{signal}</span>)}{totalCheck && totalCheck.status !== "verified" && <span>El total quedó bloqueado hasta completar la conciliación numérica.</span>}</div>{assessment.unknownItems.length > 0 && <div className="reader-quality-unknown"><b>Elementos que no deben ocultarse</b>{assessment.unknownItems.slice(0, 8).map((item, index) => <div key={`${item.page}-${index}`}><span>Pág. {item.page}</span><strong>{item.value}</strong><small>{item.reason}</small></div>)}</div>}{numericIssues.length > 0 && <div className="reader-quality-unknown"><b>Inconsistencias numéricas detectadas</b>{numericIssues.slice(0, 8).map((item, index) => <div key={`numeric-${item.page}-${index}`}><span>Pág. {item.page}</span><strong>{item.value}</strong><small>{item.reason}</small></div>)}</div>}<div className="reader-quality-actions"><button className="portal-button portal-button-secondary" onClick={() => downloadJson(`${sourceDocument.id}-propuesta-lector.json`, proposal)}>Descargar propuesta JSON</button><button className="portal-button portal-button-primary" onClick={() => downloadReaderProposal(`${sourceDocument.id}-propuesta-lector.md`, sourceDocument)}>Descargar propuesta MD</button><button className="portal-button portal-button-secondary" onClick={() => downloadReaderReviewPackage(`${sourceDocument.id}-paquete-revision-llm.md`, sourceDocument)}>Preparar revisión humana / LLM</button><small>El paquete de revisión se descarga localmente y no envía la cuenta a terceros. La asistencia externa sólo propone correcciones; no cambia código ni despliega automáticamente.</small></div><p className="reader-quality-next"><b>Siguiente acción:</b> {assessment.nextAction}</p></section>;
 }
 
 function ReaderAssistPanel({ document: sourceDocument, busy, response, onAssist }: { document: CaseDocument; busy: boolean; response?: ReaderAssistResponse; onAssist: () => void }) {

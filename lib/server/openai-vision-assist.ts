@@ -11,6 +11,7 @@ import {
   readerAssistSchema,
   resolveReaderAssistApiKey,
 } from "./openai-reader-assist.ts";
+import { isModelAccessError, selectLlmRoute } from "./model-routing.ts";
 
 type RuntimeEnvironment = Record<string, unknown> | null | undefined;
 
@@ -91,7 +92,7 @@ export async function requestVisionAssist(
   env?: RuntimeEnvironment,
   options: { fetchImpl?: typeof fetch; apiKey?: string; model?: string } = {},
 ): Promise<VisionAssistResponse> {
-  const model = options.model?.trim() || visionAssistModel(env);
+  const baseModel = visionAssistModel(env);
   const pages = images
     .filter(isVisionPageImage)
     .filter((image, index, all) => all.findIndex((candidate) => candidate.page === image.page && candidate.region === image.region && JSON.stringify(candidate.zone || null) === JSON.stringify(image.zone || null)) === index)
@@ -102,6 +103,8 @@ export async function requestVisionAssist(
   if (!pages.length) {
     return { ...insufficientResult("No existen imágenes suficientes para una lectura visual auxiliar.", "La visión LLM necesita páginas legibles; el documento original debe conservarse para revisión humana."), model, reviewedPages, reviewedImageCount: 0 };
   }
+  const route = selectLlmRoute({ baseModel, env, assessment: context.readerAssessment, lineCount: context.lines.length, hasVision: true, modelOverride: options.model });
+  const model = route.model;
   if (pages.reduce((total, image) => total + image.dataUrl.length, 0) > MAX_VISION_PAYLOAD_LENGTH) {
     throw new ReaderAssistError("LLM_PROVIDER_ERROR", "Las zonas preparadas superan el tamaño máximo de revisión visual; reduce la cantidad de páginas o zonas.", 413);
   }
@@ -127,20 +130,30 @@ export async function requestVisionAssist(
     ]),
   ];
   try {
-    const response = await fetchImpl("https://api.openai.com/v1/responses", {
+    const requestBody = {
+      model,
+      store: false,
+      input: [
+        { role: "system", content: [{ type: "input_text", text: VISION_INSTRUCTIONS }] },
+        { role: "user", content },
+      ],
+      ...(route.reasoningEffort ? { reasoning: { effort: route.reasoningEffort } } : {}),
+      text: { format: { type: "json_schema", name: "reader_assist_result", strict: true, schema: readerAssistSchema } },
+    };
+    let response = await fetchImpl("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
       signal: controller.signal,
-      body: JSON.stringify({
-        model,
-        store: false,
-        input: [
-          { role: "system", content: [{ type: "input_text", text: VISION_INSTRUCTIONS }] },
-          { role: "user", content },
-        ],
-        text: { format: { type: "json_schema", name: "reader_assist_result", strict: true, schema: readerAssistSchema } },
-      }),
+      body: JSON.stringify(requestBody),
     });
+    if (!response.ok && model !== baseModel && isModelAccessError(response.status)) {
+      response = await fetchImpl("https://api.openai.com/v1/responses", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
+        signal: controller.signal,
+        body: JSON.stringify({ ...requestBody, model: baseModel, reasoning: { effort: "low" } }),
+      });
+    }
     if (!response.ok) {
       if (response.status === 401 || response.status === 403) throw new ReaderAssistError("LLM_AUTHENTICATION_FAILED", "La clave de visión LLM no fue aceptada por el proveedor.", 502);
       if (response.status === 429) throw new ReaderAssistError("LLM_RATE_LIMITED", "La visión LLM alcanzó temporalmente el límite del proveedor.", 429);

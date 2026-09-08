@@ -5,6 +5,7 @@ import type {
   ReaderAssessment,
 } from "../extraction/types.ts";
 import { assessExtractionQuality } from "../extraction/reader-quality.ts";
+import { isModelAccessError, selectLlmRoute } from "./model-routing.ts";
 
 type ReaderKind = "account" | "pam";
 type ExtractedLines = NonNullable<DocumentExtraction[ReaderKind]>["lines"];
@@ -329,7 +330,9 @@ export async function requestReaderAssist(
   env?: RuntimeEnvironment,
   options: { fetchImpl?: typeof fetch; apiKey?: string; model?: string } = {},
 ): Promise<ReaderAssistResponse> {
-  const model = options.model?.trim() || readerAssistModel(env);
+  const baseModel = readerAssistModel(env);
+  const route = selectLlmRoute({ baseModel, env, assessment: context.readerAssessment, lineCount: context.lines.length, modelOverride: options.model });
+  const model = route.model;
   if (!context.lines.length) {
     return {
       status: "insufficient_evidence",
@@ -351,20 +354,30 @@ export async function requestReaderAssist(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    const response = await fetchImpl("https://api.openai.com/v1/responses", {
+    const requestBody = {
+      model,
+      store: false,
+      input: [
+        { role: "system", content: [{ type: "input_text", text: SYSTEM_INSTRUCTIONS }] },
+        { role: "user", content: [{ type: "input_text", text: JSON.stringify(context) }] },
+      ],
+      ...(route.reasoningEffort ? { reasoning: { effort: route.reasoningEffort } } : {}),
+      text: { format: { type: "json_schema", name: "reader_assist_result", strict: true, schema: readerAssistSchema } },
+    };
+    let response = await fetchImpl("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
       signal: controller.signal,
-      body: JSON.stringify({
-        model,
-        store: false,
-        input: [
-          { role: "system", content: [{ type: "input_text", text: SYSTEM_INSTRUCTIONS }] },
-          { role: "user", content: [{ type: "input_text", text: JSON.stringify(context) }] },
-        ],
-        text: { format: { type: "json_schema", name: "reader_assist_result", strict: true, schema: readerAssistSchema } },
-      }),
+      body: JSON.stringify(requestBody),
     });
+    if (!response.ok && model !== baseModel && isModelAccessError(response.status)) {
+      response = await fetchImpl("https://api.openai.com/v1/responses", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
+        signal: controller.signal,
+        body: JSON.stringify({ ...requestBody, model: baseModel, reasoning: { effort: "low" } }),
+      });
+    }
     if (!response.ok) {
       if (response.status === 401 || response.status === 403) throw new ReaderAssistError("LLM_AUTHENTICATION_FAILED", "La clave de asistencia LLM no fue aceptada por el proveedor.", 502);
       if (response.status === 429) throw new ReaderAssistError("LLM_RATE_LIMITED", "La asistencia LLM alcanzó temporalmente el límite del proveedor.", 429);

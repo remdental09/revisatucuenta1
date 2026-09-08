@@ -11,6 +11,7 @@ import {
   readerAssistModel,
   resolveReaderAssistApiKey,
 } from "./openai-reader-assist.ts";
+import { isModelAccessError, selectLlmRoute } from "./model-routing.ts";
 
 type RuntimeEnvironment = Record<string, unknown> | null | undefined;
 
@@ -299,7 +300,9 @@ export async function requestAnalysisAssist(
   env?: RuntimeEnvironment,
   options: { fetchImpl?: typeof fetch; apiKey?: string; model?: string } = {},
 ): Promise<LlmClinicalAnalysisAssist> {
-  const model = options.model?.trim() || analysisAssistModel(env);
+  const baseModel = analysisAssistModel(env);
+  const route = selectLlmRoute({ baseModel, env, assessment: readerAssessment, lineCount: lines.length, modelOverride: options.model });
+  const model = route.model;
   const apiKey = resolveReaderAssistApiKey(env, options.apiKey);
   if (!apiKey) {
     return {
@@ -314,20 +317,31 @@ export async function requestAnalysisAssist(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    const response = await (options.fetchImpl ?? globalThis.fetch.bind(globalThis))("https://api.openai.com/v1/responses", {
+    const fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
+    const requestBody = {
+      model,
+      store: false,
+      input: [
+        { role: "system", content: [{ type: "input_text", text: SYSTEM_INSTRUCTIONS }] },
+        { role: "user", content: [{ type: "input_text", text: JSON.stringify(buildContext(lines, analysis, readerAssessment, printedTotal)) }] },
+      ],
+      ...(route.reasoningEffort ? { reasoning: { effort: route.reasoningEffort } } : {}),
+      text: { format: { type: "json_schema", name: "clinical_account_analysis_assist", strict: true, schema: analysisAssistSchema } },
+    };
+    let response = await fetchImpl("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
       signal: controller.signal,
-      body: JSON.stringify({
-        model,
-        store: false,
-        input: [
-          { role: "system", content: [{ type: "input_text", text: SYSTEM_INSTRUCTIONS }] },
-          { role: "user", content: [{ type: "input_text", text: JSON.stringify(buildContext(lines, analysis, readerAssessment, printedTotal)) }] },
-        ],
-        text: { format: { type: "json_schema", name: "clinical_account_analysis_assist", strict: true, schema: analysisAssistSchema } },
-      }),
+      body: JSON.stringify(requestBody),
     });
+    if (!response.ok && model !== baseModel && isModelAccessError(response.status)) {
+      response = await fetchImpl("https://api.openai.com/v1/responses", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
+        signal: controller.signal,
+        body: JSON.stringify({ ...requestBody, model: baseModel, reasoning: { effort: "low" } }),
+      });
+    }
     if (!response.ok) {
       if (response.status === 401 || response.status === 403) throw new ReaderAssistError("LLM_AUTHENTICATION_FAILED", "La clave del análisis LLM no fue aceptada.", 502);
       if (response.status === 429) throw new ReaderAssistError("LLM_RATE_LIMITED", "El análisis LLM alcanzó temporalmente el límite del proveedor.", 429);

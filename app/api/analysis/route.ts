@@ -8,7 +8,7 @@ import { getObservedCorpusSnapshot } from "../../../lib/server/observed-corpus-s
 import { isDeveloperUser, requireApiUser } from "../../../lib/server/auth.ts";
 import { caseAccessResponse } from "../../../lib/server/case-access.ts";
 import { buildPatientResult } from "../../../lib/rules/patient-result.ts";
-import type { ReaderAssessment } from "../../../lib/extraction/types.ts";
+import type { AccountTotalReconciliation, ReaderAssessment } from "../../../lib/extraction/types.ts";
 import { ReaderAssistError } from "../../../lib/server/openai-reader-assist.ts";
 import { requestAnalysisAssist } from "../../../lib/server/openai-analysis-assist.ts";
 
@@ -20,6 +20,7 @@ type AnalysisRequest = {
   readerAssessment?: ReaderAssessment;
   printedTotal?: number;
   pamPrintedTotal?: number;
+  totalReconciliation?: AccountTotalReconciliation;
 };
 
 function isBillingLine(value: unknown): value is ChileanBillingLine {
@@ -73,6 +74,24 @@ export async function POST(request: Request) {
   }
   if (Array.isArray(body.pamLines) && body.pamLines.length > 10_000) {
     return Response.json({ error: "El PAM excede el máximo de 10.000 líneas" }, { status: 413 });
+  }
+
+  // Persisted account results require an explicit printed total and an
+  // independent reconciliation against every extracted row. Direct rule
+  // probes without a caseId remain available for development.
+  if (body.caseId && body.readerAssessment) {
+    const printedTotal = Number.isFinite(body.printedTotal) ? Math.round(body.printedTotal as number) : 0;
+    const lineSum = Math.round((body.lines as ChileanBillingLine[]).reduce((sum, line) => sum + line.amount, 0));
+    const tolerance = Math.max(1_000, Math.round(printedTotal * 0.01));
+    if (!printedTotal || !body.totalReconciliation || body.totalReconciliation.status !== "verified" || Math.abs(printedTotal - lineSum) > tolerance) {
+      return Response.json({
+        code: "ACCOUNT_TOTAL_NOT_RECONCILED",
+        error: "La cuenta no puede analizarse todavía: el total impreso y la suma de todas las líneas no concilian. Revisa el OCR o solicita GPT Vision.",
+        printedTotal: printedTotal || null,
+        lineSum,
+        tolerance,
+      }, { status: 409, headers: { "cache-control": "no-store" } });
+    }
   }
 
   const env = await getCloudflareEnv();

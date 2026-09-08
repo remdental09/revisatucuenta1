@@ -6,6 +6,7 @@ import type {
   OcrEnhancementDiagnostic,
   StructuredExtraction,
 } from "./types";
+import { reconcileAccountTotal } from "./total-reconciliation.ts";
 
 export type TextPage = { page: number; text: string };
 
@@ -629,12 +630,14 @@ export function parseClinicalAccount(pages: TextPage[], allowOcrReconciliation =
     findField(pages, "discharge_date", "Fecha de alta", [/(?:fecha\s+(?:de\s+)?(?:alta|egreso))\s*[:-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})/i]),
     accountTotalField(pages),
   ]);
+  const lines = monetaryLines(pages, "account", allowOcrReconciliation);
   return {
     type: "account",
     label: "Cuenta clínica",
     pages: pages.map((page) => page.page),
     fields,
-    lines: monetaryLines(pages, "account", allowOcrReconciliation),
+    lines,
+    totalReconciliation: reconcileAccountTotal(fields, lines),
   };
 }
 

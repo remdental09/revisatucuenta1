@@ -41,6 +41,17 @@ export type StructuredExtraction = {
   pages: number[];
   fields: ExtractionField[];
   lines: ExtractedLine[];
+  totalReconciliation?: AccountTotalReconciliation;
+};
+
+export type AccountTotalReconciliation = {
+  status: "verified" | "mismatch" | "missing";
+  basis: "printed_total" | "entity_totals" | "none";
+  printedTotal?: number;
+  lineSum: number;
+  difference?: number;
+  tolerance?: number;
+  entityCount?: number;
 };
 
 export type ReaderAssessmentStatus = "ready" | "review_required" | "reader_change_needed";
