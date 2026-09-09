@@ -740,6 +740,7 @@ function analysisToMarkdown(analysis: ClinicalAccountAnalysis) {
   const equality = analysis.equalityProjection ?? EQUALITY_PROJECTION_FRAMEWORK;
   const operatingRoom = analysis.operatingRoomFramework ?? FULL_OPERATING_ROOM_FRAMEWORK;
   const candidateCount = analysis.lineAssessments.filter((item) => Boolean(bestCombinedCandidate(analysis, item))).length;
+  const developerBreakdown = buildDeveloperBreakdown(analysis);
   const precedentCount = analysis.lineAssessments.reduce((sum, item) => sum + (item.precedentComparisons?.length ?? 0), 0);
   const functionalAlerts = analysis.functionalEquivalenceAlerts ?? [];
   const accountSignals = analysis.accountSignals ?? [];
@@ -870,6 +871,52 @@ function analysisToMarkdown(analysis: ClinicalAccountAnalysis) {
     ...(functionalAlerts.length
       ? functionalFoundations
       : ["- No hay fundamentos funcionales activados."]),
+    "",
+    "## Montos a analizar y posibles desagregaciones",
+    "",
+    "> Esta sección separa el total de la cuenta de los montos que el motor marca para revisión. Son hipótesis técnicas: no equivalen por sí solas a cobro improcedente, devolución o cobertura reconocida.",
+    "",
+    `- Monto único en revisión (sin doble conteo): ${money(developerBreakdown.uniqueCandidateAmount)}`,
+    `- Posibles componentes de Derecho de Pabellón: ${money(developerBreakdown.pavilionAmount)} (${developerBreakdown.pavilionRows.length} líneas; ${developerBreakdown.zeroCount} con valor cero)`,
+    `- Líneas candidatas totales: ${candidateCount}`,
+    "",
+    "### Subtotales por función",
+    "",
+    "| Clasificación técnica | Líneas | En cero | Subtotal candidato |",
+    "|---|---:|---:|---:|",
+    ...(developerBreakdown.categories.length
+      ? developerBreakdown.categories.map((category) => `| ${markdownCell(category.label)} | ${category.count} | ${category.zeroCount} | ${money(category.amount)} |`)
+      : ["| No se detectó un componente de pabellón con la lectura disponible. | 0 | 0 | $0 |"]),
+    "",
+    "### Líneas candidatas agrupadas",
+    "",
+    ...(developerBreakdown.categories.length
+      ? developerBreakdown.categories.flatMap((category) => [
+          `#### ${category.label}`,
+          "",
+          "| Código | Glosa | Líneas | Probabilidad máxima | Monto acumulado |",
+          "|---|---|---:|---:|---:|",
+          ...category.items.map((item) => `| ${markdownCell(item.code)} | ${markdownCell(item.description)} | ${item.count} | ${Math.round(item.probability * 100)}% | ${money(item.amount)} |`),
+          "",
+        ])
+      : ["- No hay líneas agrupables con la evidencia actualmente disponible.", ""]),
+    "### Otras rutas funcionales (se mantienen separadas)",
+    "",
+    "> Estas líneas no se suman nuevamente al subtotal de pabellón. Pueden corresponder a medicamentos hospitalizados, día cama u otra función y requieren registro de uso, contrato y arancel.",
+    "",
+    ...(developerBreakdown.alternatives.length
+      ? [
+          "| Código | Glosa | Destino posible | Probabilidad | Monto | Tratamiento |",
+          "|---|---|---|---:|---:|---|",
+          ...developerBreakdown.alternatives.map((item) => `| ${markdownCell(item.line.code)} | ${markdownCell(item.line.description)} | ${bundleLabel(item.candidate.bundle)} | ${Math.round(item.candidate.probability * 100)}% | ${money(item.line.amount)} | ${developerBreakdown.pavilionRows.some(({ assessment }) => assessment.line.id === item.line.id) ? "Ya incluido en pabellón" : "Se incorpora al monto único"} |`),
+        ]
+      : ["- No se detectaron rutas alternativas con la lectura disponible."]),
+    "",
+    "### Señales con impacto económico potencial",
+    "",
+    ...(analysis.anomalies.length
+      ? analysis.anomalies.map((anomaly) => `- **${markdownCell(anomaly.severity)} · ${markdownCell(anomaly.type)}:** ${markdownCell(anomaly.explanation)} Líneas: ${markdownCell(anomaly.lineIds.join(", "))}.`)
+      : ["- No se detectaron señales estructurales adicionales en las líneas legibles."]),
     "",
     "## Segunda lectura LLM",
     "",

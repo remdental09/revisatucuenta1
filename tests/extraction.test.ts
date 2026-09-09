@@ -50,6 +50,34 @@ test("separa automáticamente un PDF mixto aunque se cargue como cuenta clínica
   assert.match(assessment.signals.join(" "), /fuentes independientes/i);
 });
 
+test("tolera etiquetas de total pegadas por OCR y conserva la separación cuenta/PAM", () => {
+  const result = structureDocument([
+    {
+      page: 1,
+      text: [
+        "Estado Cuenta Paciente Definitiva - Detallada",
+        "Código Descripción Fecha Cant. V. Unit. Total Rec",
+        "11010001 DIA CAMA INDIVIDUAL 06-07-2025 1 452.075 452.075 1",
+        "TOTALGENERAL : 6.912.876",
+      ].join("\n"),
+    },
+    {
+      page: 2,
+      text: [
+        "Nueva Masvida",
+        "Folio P.A.M. 7000355689",
+        "Prestación Bonificación Copago",
+        "0101031 CONSULTA DE URGENCIA 1,00 $ 60.531 $ 48.425 $ 0",
+      ].join("\n"),
+    },
+  ], "account", true, [1, 2]);
+
+  assert.deepEqual(result.account?.pages, [1]);
+  assert.deepEqual(result.pam?.pages, [2]);
+  assert.equal(result.account?.fields.find((field) => field.key === "total")?.value, "6.912.876");
+  assert.equal(result.account?.totalReconciliation?.status, "mismatch");
+});
+
 test("extrae filas PAM escaneadas aunque el OCR pierda los símbolos de moneda", () => {
   const result = structureDocument([
     { page: 20, text: "PROGRAMA DE ATENCION MEDICA\n0201101 DÍA CAMA DE HOSPITALIZACIÓN INTEGRAL CUIDADOS MEDIOS 1 452075 452.075" },

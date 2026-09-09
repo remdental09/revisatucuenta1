@@ -371,7 +371,7 @@ function isAccountMetadataLine(value: string) {
 }
 
 function isAccountSummaryLine(value: string) {
-  return /^(?:total(?:\s|$)|subtotal\b|total\s+por\s+consumo\b|atenci[oó]n\s+(?:abierta|cerrada)\b|ex[aá]menes?\b|imagenolog[ií]a\b|insumos?\b|medicamentos?\b|recetario\b|servicios\s+varios\b|resonancia\s+magnetica\b|consultas?\b|honorarios?\b|procedimientos?\b|pabell[oó]n\b|d[ií]a\s+cama\b)/i.test(value.trim());
+  return /^(?:total(?:\s|$|general|empresa)|subtotal\b|total\s*por\s*consumo\b|atenci[oó]n\s*(?:abierta|cerrada)\b|ex[aá]menes?\b|imagenolog[ií]a\b|insumos?\b|medicamentos?\b|recetario\b|servicios\s*varios\b|resonancia\s*magnetica\b|consultas?\b|honorarios?\b|procedimientos?\b|pabell[oó]n\b|d[ií]a\s*cama\b)/i.test(value.trim());
 }
 
 function monetaryLines(pages: TextPage[], kind: "account" | "pam", allowOcrReconciliation = false): ExtractedLine[] {
@@ -503,7 +503,11 @@ function accountTotalField(pages: TextPage[]) {
     for (let index = 0; index < rawLines.length; index += 1) {
       const rawLine = rawLines[index] ?? "";
       const line = normalize(rawLine);
-      if (!/^total\s+genera(?:l)?\b/i.test(line)) continue;
+      // OCR frequently glues the label (`TOTALGENERAL`) or drops the space
+      // after TOTAL. Accept both forms, but still require the label to start
+      // the line so a row description cannot be mistaken for the account
+      // total.
+      if (!/^total\s*genera(?:l)?\b/i.test(line)) continue;
       // OCR/PDF text layers sometimes put the label and its numeric cells on
       // separate lines. Only join a following non-empty line when the label
       // itself has no number, so an unrelated next row cannot alter a valid
@@ -524,7 +528,7 @@ function accountTotalField(pages: TextPage[]) {
     }
   }
   const explicit = findField(pages, "total", "Total cuenta clínica", [
-    /(?:total\s+(?:cuenta|general)|total\s+a\s+pagar)\s*[:-]?\s*\$?\s*([0-9.]+(?:,\d{1,2})?)/i,
+    /(?:total\s*(?:cuenta|general)|total\s*a\s*pagar)\s*[:-]?\s*\$?\s*([0-9.]+(?:,\d{1,2})?)/i,
   ], 94);
   if (explicit) return explicit;
 
@@ -539,7 +543,7 @@ function accountTotalField(pages: TextPage[]) {
   // the authoritative basis is then the first monetary column of each
   // "Total Empresa" row (one row per issuer). The label may be separated from
   // its numbers by a line break after PDF.js lays out the text layer.
-  const entityTotalLabel = /^total\s+empresa\b/i;
+  const entityTotalLabel = /^total\s*empresa\b/i;
   for (const page of pages) {
     const rawLines = page.text.split(/\r?\n/);
     for (let index = 0; index < rawLines.length; index += 1) {
@@ -681,12 +685,12 @@ export function parsePam(pages: TextPage[]): StructuredExtraction {
 
 function pageKind(text: string): "account" | "pam" | "unknown" {
   const normalized = text.toLowerCase();
-  const pamStrong = /programa\s+de\s+atenci[oó]n\s+m[eé]dica|documentos\s+valorizados|folio\s+p\.?\s*a\.?\s*m\.?|bono\s+debe\s+ser\s+cobrado|prestaci[oó]n\s+clasif|copago\s+en\s+cl[ií]nica|detalle\s+de\s+cobros\s+duplicados|norma\s+t[eé]cnica\s+convenida/i.test(normalized);
-  const accountStrong = /estado\s+cuenta\s+paciente|informe\s+de\s+cuentas?\s+al\s+paciente|c[oó]digo\s+descripci[oó]n\s+fecha|cod\.?\s+fonasa|n[°ºo]\s+docto|cant\.?\s+precio\s+valor|total\s+criterio|total\s+por\s+consumo|cuenta\s+[a-z0-9.-]+\s+cerrada|id\.?\s+ingreso|tipo\s+de\s+cobro/i.test(normalized);
+  const pamStrong = /programa\s*de\s*atenci[oó]n\s*m[eé]dica|documentos\s*valorizados|folio\s*p\.?\s*a\.?\s*m\.?|bono\s*debe\s*ser\s*cobrado|prestaci[oó]n\s*clasif|copago\s*en\s*cl[ií]nica|detalle\s*de\s*cobros\s*duplicados|norma\s*t[eé]cnica\s*convenida/i.test(normalized);
+  const accountStrong = /estado\s*cuenta\s*paciente|informe\s+de\s+cuentas?\s+al\s+paciente|c[oó]digo\s*descripci[oó]n\s*fecha|cod\.?\s*fonasa|n[°ºo]\s*docto|cant\.?\s*precio\s*valor|total\s*criterio|total\s*por\s*consumo|cuenta\s+[a-z0-9.-]+\s+cerrada|id\.?\s*ingreso|tipo\s*de\s*cobro/i.test(normalized);
   // PAM duplicate-detail pages also print a “Código / Descripción” header and
   // mention Día Cama. The structural account anchors below are therefore
   // deliberately limited to the provider's own account sections.
-  const accountStructural = /estado\s+cuenta\s+paciente|informe\s+de\s+cuentas?\s+al\s+paciente|cod\.?\s+fonasa|n[°ºo]\s+docto|cant\.?\s+precio\s+valor|total\s+criterio|total\s+por\s+consumo|cuenta\s+[a-z0-9.-]+\s+cerrada|id\.?\s+ingreso|tipo\s+de\s+cobro/i.test(normalized);
+  const accountStructural = /estado\s*cuenta\s*paciente|informe\s+de\s+cuentas?\s+al\s+paciente|cod\.?\s*fonasa|n[°ºo]\s*docto|cant\.?\s*precio\s*valor|total\s*criterio|total\s*por\s*consumo|cuenta\s+[a-z0-9.-]+\s+cerrada|id\.?\s*ingreso|tipo\s*de\s*cobro/i.test(normalized);
   const pamScore = ["pam", "programa de atención médica", "programa de atencion medica", "bono hospitalario", "bonificación", "bonificacion", "copago", "liquidación", "liquidacion"].filter((term) => normalized.includes(term)).length;
   const accountScore = ["cuenta clínica", "cuenta clinica", "informe de cuentas al paciente", "estado cuenta paciente", "cod. fonasa", "día cama", "dia cama", "pabellón", "pabellon", "insumos", "farmacia"].filter((term) => normalized.includes(term)).length;
   if (pamStrong && !accountStructural) return "pam";

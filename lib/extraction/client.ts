@@ -12,6 +12,13 @@ const ocrCorePath = "/tesseract-core-lstm.wasm.js";
 const PDF_LOAD_TIMEOUT_MS = 45_000;
 const OCR_INITIALIZATION_TIMEOUT_MS = 120_000;
 const OCR_PAGE_TIMEOUT_MS = 300_000;
+// Scanned clinical accounts are commonly rendered at 150–160 DPI. The old
+// 1.7x pass produced roughly 120 DPI and routinely lost the right-most amount
+// or the printed total. Keep the primary pass at the same resolution that was
+// previously reserved for the retry, then use the enhanced pass only where
+// the quality gate finds a reason to compare candidates.
+const OCR_PRIMARY_RENDER_SCALE = 2.2;
+const OCR_MAX_ENHANCED_PAGES = 16;
 
 type ExpectedKind = "account" | "pam" | "mixed" | "unknown";
 
@@ -75,21 +82,25 @@ export function textItemsToLines(items: PositionedTextItem[]) {
 export function scoreOcrText(text: string) {
   const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   const numericTokens = text.match(/\b\d[\d.,-]{1,}\b/g)?.length ?? 0;
-  const clinicalAnchors = text.match(/cuenta|paciente|cl[ií]nica|hospital|d[ií]a cama|pabell[oó]n|insumo|medicamento|total|cantidad|c[oó]digo|fecha/gi)?.length ?? 0;
+  const clinicalAnchors = text.match(/cuenta|paciente|cl[ií]nica|hospital|d[ií]a cama|pabell[oó]n|insumo|medicamento|total|cantidad|unitario|valor|c[oó]digo|fecha/gi)?.length ?? 0;
+  const accountRows = text.match(/\b\d{6,9}\b[^\n]{0,180}\b\d{2}\s*[-/]\s*\d{2}\s*[-/]\s*\d{4}\b/g)?.length ?? 0;
+  const explicitTotal = /\btotal\s*(?:general|cuenta|a\s*pagar)\b\s*[:\-]?\s*\$?\s*[0-9][\d.,]*/i.test(text);
   const suspiciousTokens = text.match(/[�]|\b(?:[A-Z]\s){3,}[A-Z]\b/g)?.length ?? 0;
   return Math.round(
     Math.min(text.replace(/\s/g, "").length / 180, 12) +
     Math.min(lines.length, 24) * 0.6 +
     Math.min(numericTokens, 30) * 1.8 +
-    Math.min(clinicalAnchors, 12) * 1.4 -
+    Math.min(accountRows, 24) * 1.2 +
+    Math.min(clinicalAnchors, 12) * 1.4 +
+    (explicitTotal ? 10 : 0) -
     Math.min(suspiciousTokens, 10) * 2.5,
   );
 }
 
 function needsEnhancedOcr(text: string) {
-  const normalized = text.replace(/\s/g, "");
+  const normalized = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s/g, "");
   const numericTokens = text.match(/\b\d[\d.,-]{1,}\b/g)?.length ?? 0;
-  return normalized.length < 180 || numericTokens < 4 || /�|\[\)|\[\]|\b(?:total|cantidad|unitario)\b/i.test(text);
+  return normalized.length < 180 || numericTokens < 4 || /�|\[\)|\[\]|total(?:general|cuenta)?|cantidad|unitario/i.test(normalized);
 }
 
 export function chooseOcrText(primary: string, enhanced: string, lineCrop: string) {
@@ -446,10 +457,10 @@ async function extractPdf(file: File, expected: ExpectedKind, onProgress?: (prog
       // thousands separator. A larger render materially improves OCR of the
       // unit, tax and total columns without changing the extracted layout.
       const canvas = await withTimeout(
-        // Keep the first OCR pass light enough for long scanned accounts on
-        // mobile/embedded browsers. Low-confidence pages still receive the
-        // larger second pass below before any result is presented.
-        renderPageCanvas(page, 1.7),
+        // Use a readable 150–160 DPI primary pass. This is still bounded by
+        // the page timeout, while preventing the first parse from losing
+        // thousands separators, totals, and the final account column.
+        renderPageCanvas(page, OCR_PRIMARY_RENDER_SCALE),
         PDF_LOAD_TIMEOUT_MS,
         `El lector PDF no pudo renderizar la página ${pageNumber} para OCR. Conserva el original para revisión humana/LLM.`,
       );
@@ -474,7 +485,7 @@ async function extractPdf(file: File, expected: ExpectedKind, onProgress?: (prog
   const pageText = new Map(pages.map((page) => [page.page, page.text]));
   const enhancementPages = ocrPages
     .filter((page) => lowConfidencePages.has(page) || needsEnhancedOcr(pageText.get(page) || ""))
-    .slice(0, 8);
+    .slice(0, OCR_MAX_ENHANCED_PAGES);
   const ocrEnhancements: OcrEnhancementDiagnostic[] = [];
   for (let index = 0; index < enhancementPages.length; index += 1) {
     const pageNumber = enhancementPages[index];
