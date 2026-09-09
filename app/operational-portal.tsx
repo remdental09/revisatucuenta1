@@ -370,7 +370,7 @@ function processingLabel(document?: CaseDocument) {
   return "Pendiente";
 }
 
-type UploadDocumentOptions = { registerCorpus?: boolean };
+type UploadDocumentOptions = { registerCorpus?: boolean; retention?: "ephemeral" | "persistent" };
 type PendingUpload = { name: string; classification: string };
 
 async function registerCorpusObservation(caseId: string, documentId: string, extraction: DocumentExtraction, classification: string) {
@@ -397,6 +397,7 @@ async function uploadDocument(caseId: string, file: File, classification: string
   body.append("documentId", documentId);
   body.append("classification", classification);
   body.append("confidence", "95");
+  if (options.retention) body.append("retentionMode", options.retention);
   body.append("file", file);
   const upload = await fetch("/api/documents", { method: "POST", body });
   if (!upload.ok) throw new Error((await upload.json().catch(() => ({}))).error || "No se pudo guardar el documento");
@@ -567,8 +568,8 @@ async function deleteDocumentRequest(caseId: string, documentId: string) {
   return payload as { documentId: string; deleted: boolean; name?: string };
 }
 
-async function replaceAccountDocument(caseId: string, file: File, previousDocumentId: string, onProgress?: (value: number) => void) {
-  const replacement = await uploadDocument(caseId, file, "Cuenta clínica", onProgress, { registerCorpus: false });
+async function replaceAccountDocument(caseId: string, file: File, previousDocumentId: string, onProgress?: (value: number) => void, options: UploadDocumentOptions = {}) {
+  const replacement = await uploadDocument(caseId, file, "Cuenta clínica", onProgress, { registerCorpus: false, ...options });
   await deleteDocumentRequest(caseId, previousDocumentId);
   return { ...replacement, corpusRegistered: false };
 }
@@ -1198,7 +1199,7 @@ function PatientStart({ userEmail, onCreated }: { userEmail: string; onCreated: 
         const result = await uploadDocument(id, file, "Cuenta clínica", (value) => {
           setUploadProgress(value);
           setUploadStage(value < 6 ? "Preparando el lector" : value < 80 ? "Leyendo tu cuenta clínica" : "Verificando la lectura");
-        });
+        }, { registerCorpus: false, retention: "ephemeral" });
         const extractedRun = result.extraction.account?.fields.find((field) => /patient_rut|rut del paciente|\brut\b/i.test(`${field.key} ${field.label}`))?.value || "";
         if (compareChileanRun(run, extractedRun) !== "matched") {
           // Send the patient to the case view so the warning is visible and
@@ -1220,7 +1221,7 @@ function PatientStart({ userEmail, onCreated }: { userEmail: string; onCreated: 
     }
   }
 
-  return <main className="patient-login patient-start-shell"><form className="patient-login-card patient-start-card" onSubmit={submit}><PortalBrand/><div className="login-seal">⌁</div><p className="portal-kicker">Comienza tu revisión</p><h1>Comienza tu revisión.</h1><p>Tu revisión quedará asociada al correo verificado.</p><div className="patient-verified-email"><span>Correo verificado</span><strong>{userEmail}</strong></div><label className="patient-field">Nombre completo<input aria-label="Nombre completo" required autoComplete="name" placeholder="Ej. María Rodríguez" value={name} onChange={(event) => setName(event.target.value)} /></label><label className="patient-field">RUN<input aria-label="RUN" required inputMode="numeric" autoComplete="off" placeholder="12.345.678-9" value={run} onChange={(event) => setRun(event.target.value)} onBlur={() => setRun(normalizeChileanRun(run))} /></label><label className="patient-field">Episodio o atención<input aria-label="Episodio" placeholder="Ej. Revisión de cuenta clínica" value={episode} onChange={(event) => setEpisode(event.target.value)} /></label><label className="portal-button portal-button-secondary"><input type="file" accept="application/pdf,image/jpeg,image/png" hidden onChange={(event) => setFile(event.target.files?.[0])} />{file ? file.name : "Cargar cuenta clínica"}</label>{error && <p className="patient-analysis-notice">{error}</p>}{busy && <div className="patient-scan-panel"><PatientAccountScanScene progress={uploadProgress} /><UploadProgress progress={uploadProgress} stage={uploadStage || "Preparando tu revisión"} /></div>}<button className="portal-button portal-button-primary" disabled={busy}>{busy ? "Preparando revisión…" : "Iniciar revisión"}</button><p className="patient-contact-note">Todo documento que subas se almacenará cifrado y se enviará al buzón operativo del equipo revisor. El RUN y los datos de salud se tratan según la política de privacidad.</p><a className="back-link" href="/">← Volver</a></form></main>;
+  return <main className="patient-login patient-start-shell"><form className="patient-login-card patient-start-card" onSubmit={submit}><PortalBrand/><div className="login-seal">⌁</div><p className="portal-kicker">Comienza tu revisión</p><h1>Comienza tu revisión.</h1><p>Se abrirá una revisión nueva y aislada para esta cuenta.</p><div className="patient-verified-email"><span>Correo verificado</span><strong>{userEmail}</strong></div><label className="patient-field">Nombre completo<input aria-label="Nombre completo" required autoComplete="name" placeholder="Ej. María Rodríguez" value={name} onChange={(event) => setName(event.target.value)} /></label><label className="patient-field">RUN<input aria-label="RUN" required inputMode="numeric" autoComplete="off" placeholder="12.345.678-9" value={run} onChange={(event) => setRun(event.target.value)} onBlur={() => setRun(normalizeChileanRun(run))} /></label><label className="patient-field">Episodio o atención<input aria-label="Episodio" placeholder="Ej. Revisión de cuenta clínica" value={episode} onChange={(event) => setEpisode(event.target.value)} /></label><label className="portal-button portal-button-secondary"><input type="file" accept="application/pdf,image/jpeg,image/png" hidden onChange={(event) => setFile(event.target.files?.[0])} />{file ? file.name : "Cargar cuenta clínica"}</label>{error && <p className="patient-analysis-notice">{error}</p>}{busy && <div className="patient-scan-panel"><PatientAccountScanScene progress={uploadProgress} /><UploadProgress progress={uploadProgress} stage={uploadStage || "Preparando tu revisión"} /></div>}<button className="portal-button portal-button-primary" disabled={busy}>{busy ? "Preparando revisión…" : "Iniciar revisión"}</button><p className="patient-contact-note">La cuenta se procesa sólo durante esta sesión. Al terminar la lectura y el análisis, los documentos y datos del caso se eliminan y nunca se reutilizan en otra cuenta.</p><a className="back-link" href="/">← Volver</a></form></main>;
 }
 
 export function PatientPortal({ initialCaseId = "" }: { initialCaseId?: string }) {
@@ -1230,8 +1231,10 @@ export function PatientPortal({ initialCaseId = "" }: { initialCaseId?: string }
   return <AuthenticatedPatientPortal initialCaseId={initialCaseId} user={auth.user} />;
 }
 
-function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseId?: string; user: SessionUser }) {
-  const [caseId, setCaseId] = useState(initialCaseId);
+function AuthenticatedPatientPortal({ initialCaseId: _initialCaseId = "", user }: { initialCaseId?: string; user: SessionUser }) {
+  // A commercial visit always starts clean. Existing case links are ignored so
+  // a patient cannot accidentally reopen another account's data.
+  const [caseId, setCaseId] = useState("");
   const [snapshot, setSnapshot] = useState<Snapshot>();
   const [tab, setTab] = useState<"Resumen" | "Documentos" | "Actividad">("Resumen");
   const [status, setStatus] = useState<"idle" | "running" | "complete" | "error">("idle");
@@ -1250,9 +1253,10 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
   const contractInputRef = useRef<HTMLInputElement>(null);
   const autoAnalysisKeyRef = useRef("");
   const patientExtractionsRef = useRef<Record<string, DocumentExtraction>>({});
+  const ephemeralPurgedRef = useRef(false);
 
   async function refresh() {
-    if (!caseId) return;
+    if (!caseId || ephemeralPurgedRef.current) return;
     try {
       setError("");
       const raw = hideStaleAnalysis(await getSnapshot(caseId));
@@ -1268,6 +1272,14 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
     }
       catch (reason) { setError(errorMessage(reason, "No se pudo cargar la revisión")); }
   }
+
+  async function purgePatientSession() {
+    if (!caseId || ephemeralPurgedRef.current) return;
+    const response = await fetch(`/api/cases/${encodeURIComponent(caseId)}/purge`, { method: "POST", headers: { "cache-control": "no-store" } });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "No se pudo cerrar la sesión segura");
+    ephemeralPurgedRef.current = true;
+  }
   useEffect(() => { void refresh(); }, [caseId]);
 
   function notify(message: string) { setToast(message); window.setTimeout(() => setToast(""), 3000); }
@@ -1276,10 +1288,10 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
     const file = event.target.files?.[0]; event.target.value = ""; if (!file || !caseId) return;
     setBusy(true); setProgress(0); setStage("Guardando PAM / liquidación");
     try {
-      const result = await uploadDocument(caseId, file, "PAM / liquidación", (value) => { setProgress(value); setStage(value < 100 ? `Leyendo PAM / liquidación · ${value}%` : "Lectura del PAM completada"); });
+      const result = await uploadDocument(caseId, file, "PAM / liquidación", (value) => { setProgress(value); setStage(value < 100 ? `Leyendo PAM / liquidación · ${value}%` : "Lectura del PAM completada"); }, { registerCorpus: false, retention: "ephemeral" });
       patientExtractionsRef.current[result.documentId] = result.extraction;
       await refresh();
-      notify("PAM cargado y vinculado a la revisión");
+      notify("PAM procesado sólo durante esta sesión");
     }
     catch (reason) {
       notify(errorMessage(reason, "No se pudo cargar el PAM"));
@@ -1292,10 +1304,10 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
     const file = event.target.files?.[0]; event.target.value = ""; if (!file || !caseId) return;
     setBusy(true); setProgress(0); setStage("Guardando contrato / plan");
     try {
-      const result = await uploadDocument(caseId, file, "Contrato / plan", (value) => { setProgress(value); setStage(value < 100 ? `Leyendo contrato / plan · ${value}%` : "Lectura del contrato completada"); });
+      const result = await uploadDocument(caseId, file, "Contrato / plan", (value) => { setProgress(value); setStage(value < 100 ? `Leyendo contrato / plan · ${value}%` : "Lectura del contrato completada"); }, { registerCorpus: false, retention: "ephemeral" });
       patientExtractionsRef.current[result.documentId] = result.extraction;
       await refresh();
-      notify("Contrato / plan almacenado y vinculado a la revisión");
+      notify("Contrato / plan recibido sólo durante esta sesión");
     } catch (reason) {
       notify(errorMessage(reason, "No se pudo cargar el contrato / plan"));
       await refresh();
@@ -1309,12 +1321,12 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
     try {
       const updateProgress = (value: number) => { setProgress(value); setStage(value < 100 ? `Leyendo cuenta clínica · ${value}%` : "Lectura de la cuenta completada"); };
       const result = previousAccount
-        ? await replaceAccountDocument(caseId, file, previousAccount.id, updateProgress)
-        : await uploadDocument(caseId, file, "Cuenta clinica", updateProgress);
+        ? await replaceAccountDocument(caseId, file, previousAccount.id, updateProgress, { retention: "ephemeral" })
+        : await uploadDocument(caseId, file, "Cuenta clinica", updateProgress, { registerCorpus: false, retention: "ephemeral" });
       patientExtractionsRef.current[result.documentId] = result.extraction;
       await refresh();
       notify(previousAccount
-        ? "Nueva cuenta clínica almacenada; la versión anterior fue eliminada"
+        ? "Nueva cuenta clínica procesada; la versión anterior fue eliminada"
         : result.corpusRegistered
           ? "Cuenta clínica cargada y vinculada a la revisión"
           : "Cuenta clínica cargada; esta prueba no se conserva como memoria de otra cuenta");
@@ -1344,8 +1356,9 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
         ...( "patientResult" in analysis ? { analysis: undefined, patientResult: analysis.patientResult } : { analysis, patientResult: buildPatientResult(analysis) }),
         case: { ...current.case, status: "analysis_ready", updatedAt: new Date().toISOString() },
       } : current);
+      await purgePatientSession();
       setProgress(100); setStage("Resultado disponible para revisión"); setStatus("complete");
-      await refresh(); notify("Análisis guardado en la revisión");
+      notify("Análisis completado; los documentos se eliminaron al cerrar la sesión");
     }
     catch (reason) { setStatus("error"); setError(errorMessage(reason, "No se pudo analizar la cuenta")); }
     finally { window.clearInterval(timer); setBusy(false); }
@@ -1361,7 +1374,7 @@ function AuthenticatedPatientPortal({ initialCaseId = "", user }: { initialCaseI
   }, [caseId, snapshot, status, busy]);
 
   async function openContract() {
-    if (!caseId) return;
+    if (!caseId || ephemeralPurgedRef.current) return;
     setContractOpen(true);
     setContractBusy(true);
     setContractError("");
@@ -1438,7 +1451,7 @@ function AnalysisProgress({ progress, stage }: { progress: number; stage: string
 }
 
 function UploadProgress({ progress, stage }: { progress: number; stage: string }) {
-  return <section className="analysis-progress-card upload-progress-card" aria-live="polite"><div className="analysis-progress-card-head"><div><span className="card-kicker">LECTURA DE DOCUMENTO</span><b>{stage}</b></div><strong>{progress}%</strong></div><div className="analysis-progress-bar" role="progressbar" aria-label="Progreso de la lectura del documento" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><i style={{ width: `${progress}%` }} /></div><small>El documento se está guardando y leyendo. En cuentas escaneadas, esta etapa puede tardar algunos minutos.</small></section>;
+  return <section className="analysis-progress-card upload-progress-card" aria-live="polite"><div className="analysis-progress-card-head"><div><span className="card-kicker">LECTURA DE DOCUMENTO</span><b>{stage}</b></div><strong>{progress}%</strong></div><div className="analysis-progress-bar" role="progressbar" aria-label="Progreso de la lectura del documento" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><i style={{ width: `${progress}%` }} /></div><small>El documento se está procesando durante esta sesión. En cuentas escaneadas, esta etapa puede tardar algunos minutos.</small></section>;
 }
 
 function PatientDocumentOrbit({ amount, label }: { amount: number; label: string }) {
@@ -1610,7 +1623,7 @@ function PatientContractModal({ contract, busy, error, onClose, onAccept }: { co
 
 function PatientDocuments({ snapshot, deletingDocumentId, onAccount, onPam, onContract, onDelete }: { snapshot: Snapshot; deletingDocumentId: string; onAccount: () => void; onPam: () => void; onContract: () => void; onDelete: (document: CaseDocument) => void }) {
   const visibleDocuments = snapshot.documents.filter((doc) => !doc.internalOnly);
-  return <section className="patient-card documents-view"><div className="card-heading"><div><span className="card-kicker">DOCUMENTOS DEL CASO</span><h2>Fuentes cargadas</h2></div><div className="document-actions"><button className="portal-button portal-button-secondary" onClick={onAccount}>Agregar cuenta +</button><button className="portal-button portal-button-primary" onClick={onPam}>Agregar PAM +</button><button className="portal-button portal-button-secondary" onClick={onContract}>Agregar contrato / plan +</button></div></div><div className="document-list">{visibleDocuments.map((doc) => <article className="patient-document clinic" key={doc.id}><span className="file-mark">PDF</span><div><span>{doc.classification}</span><b>{doc.name}</b><small>{doc.extraction?.pageCount || "-"} páginas · {processingLabel(doc)}</small></div><div className="document-status"><em>{doc.processingStatus === "failed" ? "Requiere atención" : "Protegido"}</em><button className="patient-document-delete" onClick={() => onDelete(doc)} disabled={Boolean(deletingDocumentId)}>{deletingDocumentId === doc.id ? "Borrando…" : "Borrar documento"}</button></div></article>)}</div><div className="document-tip"><span>i</span><p>La cuenta, el PAM y los demás antecedentes quedan almacenados cifrados y vinculados a su expediente para la revisión.</p></div></section>;
+  return <section className="patient-card documents-view"><div className="card-heading"><div><span className="card-kicker">DOCUMENTOS DE ESTA SESIÓN</span><h2>Fuentes cargadas</h2></div><div className="document-actions"><button className="portal-button portal-button-secondary" onClick={onAccount}>Agregar cuenta +</button><button className="portal-button portal-button-primary" onClick={onPam}>Agregar PAM +</button><button className="portal-button portal-button-secondary" onClick={onContract}>Agregar contrato / plan +</button></div></div><div className="document-list">{visibleDocuments.map((doc) => <article className="patient-document clinic" key={doc.id}><span className="file-mark">PDF</span><div><span>{doc.classification}</span><b>{doc.name}</b><small>{doc.extraction?.pageCount || "-"} páginas · {doc.processingStatus === "ready" ? "Extraído · sólo esta sesión" : processingLabel(doc)}</small></div><div className="document-status"><em>{doc.processingStatus === "failed" ? "Requiere atención" : "Sesión"}</em><button className="patient-document-delete" onClick={() => onDelete(doc)} disabled={Boolean(deletingDocumentId)}>{deletingDocumentId === doc.id ? "Borrando…" : "Borrar documento"}</button></div></article>)}</div><div className="document-tip"><span>i</span><p>La cuenta, el PAM y el contrato se usan sólo para este análisis y se eliminan al cerrar la sesión.</p></div></section>;
 }
 function PatientActivity({ activities }: { activities: Activity[] }) {
   return <section className="patient-card activity-view"><span className="card-kicker">ACTIVIDAD</span><h2>Movimientos de la revisión</h2><div className="activity-list">{activities.length ? activities.slice(0, 20).map((activity) => <div className={`activity-item ${activity.pending ? "pending" : ""}`} key={activity.id}><span className="activity-dot" /><div><small>{new Date(activity.date).toLocaleString("es-CL")}</small><b>{activity.title}</b><p>{activity.detail}</p></div></div>) : <div className="activity-item pending"><span className="activity-dot" /><div><small>Ahora</small><b>Esperando documentos</b><p>Los movimientos de carga, extracción, revisión y análisis aparecerán aquí.</p></div></div>}</div></section>;

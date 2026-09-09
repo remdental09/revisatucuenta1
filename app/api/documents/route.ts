@@ -3,7 +3,7 @@ import { getCloudflareEnv, localDeleteDocument, localGetDocuments, localSaveDocu
 import { removePendingCorpusContribution } from "../../../lib/server/observed-corpus-store.ts";
 import { isDeveloperUser, requireApiUser } from "../../../lib/server/auth.ts";
 import { caseAccessResponse, developerAccessResponse } from "../../../lib/server/case-access.ts";
-import { preserveDocumentSources } from "../../../lib/server/source-retention.ts";
+import { ephemeralDocumentExpiry, preserveDocumentSources, patientForwardingEnabled } from "../../../lib/server/source-retention.ts";
 import { recoverStaleDatabaseExtractions } from "../../../lib/server/extraction-watchdog.ts";
 import { forwardUploadedDocument } from "../../../lib/server/email.ts";
 
@@ -53,6 +53,7 @@ export async function POST(request: Request) {
   const documentId = String(form.get("documentId") || crypto.randomUUID());
   const classification = String(form.get("classification") || "Por confirmar");
   const patientUpload = !isDeveloperUser(auth.user);
+  const sourceExpiresAt = patientUpload ? ephemeralDocumentExpiry() : undefined;
   if (!(file instanceof File) || !caseId) return Response.json({ error: "Archivo o caso ausente" }, { status: 400 });
   if (file.size > 25 * 1024 * 1024) return Response.json({ error: "El archivo supera el límite de 25 MB" }, { status: 413 });
   const key = `cases/${caseId}/${documentId}/${file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
@@ -60,28 +61,27 @@ export async function POST(request: Request) {
   const denied = await caseAccessResponse(env, caseId, auth.user);
   if (denied) return denied;
   if (!env?.DB || !env?.DOCUMENTS) {
-    if (patientUpload) {
+    if (patientUpload && patientForwardingEnabled(env)) {
       try {
         await forwardUploadedDocument({ caseId, documentId, uploaderEmail: auth.user.email, classification, file });
       } catch {
         return Response.json({ error: "No pudimos entregar el documento al equipo revisor. Intenta subirlo nuevamente." }, { status: 502 });
       }
     }
-    localSaveDocument({ id: documentId, caseId, name: file.name, mimeType: file.type || "application/octet-stream", byteSize: file.size, classification, confidence: Number(form.get("confidence") || 0) });
-    return Response.json({ documentId, storageKey: key, local: true, forwarded: patientUpload }, { status: 201 });
+    localSaveDocument({ id: documentId, caseId, name: file.name, mimeType: file.type || "application/octet-stream", byteSize: file.size, classification, confidence: Number(form.get("confidence") || 0), sourceExpiresAt });
+    return Response.json({ documentId, storageKey: key, local: true, forwarded: patientUpload && patientForwardingEnabled(env), retained: false });
   }
   try {
     await ensureCaseSchema(env.DB);
     // Pass the File itself instead of its stream. Node's multipart File stream
     // can be consumed/closed by the runtime before the storage adapter reads it.
     await env.DOCUMENTS.put(key, file, { httpMetadata: { contentType: file.type || "application/octet-stream" }, customMetadata: { caseId, documentId, originalName: file.name } });
-    await env.DB.prepare(`INSERT OR REPLACE INTO documents (id, case_id, original_name, storage_key, mime_type, byte_size, classification, classification_confidence, processing_status, source_expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'extracting', ?)`)
-      .bind(documentId, caseId, file.name, key, file.type || "application/octet-stream", file.size, classification, Number(form.get("confidence") || 0), null).run();
+    await env.DB.prepare(`INSERT OR REPLACE INTO documents (id, case_id, original_name, storage_key, mime_type, byte_size, classification, classification_confidence, processing_status, source_expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'extracting', ?)`).bind(documentId, caseId, file.name, key, file.type || "application/octet-stream", file.size, classification, Number(form.get("confidence") || 0), sourceExpiresAt || null).run();
   } catch (error) {
     console.error("[documents] persistent upload failed", error);
     return Response.json({ error: `No se pudo guardar el documento: ${error instanceof Error ? error.message : "error de almacenamiento"}` }, { status: 500 });
   }
-  if (patientUpload) {
+  if (patientUpload && patientForwardingEnabled(env)) {
     try {
       await forwardUploadedDocument({ caseId, documentId, uploaderEmail: auth.user.email, classification, file });
     } catch {
@@ -101,7 +101,7 @@ export async function POST(request: Request) {
     await env.DB.prepare(`INSERT INTO case_activities (id, case_id, title, detail) VALUES (?, ?, ?, ?)`)
       .bind(crypto.randomUUID(), caseId, "Revisión iniciada", "El expediente quedó en cola para revisión interna.").run();
   }
-  return Response.json({ documentId, storageKey: key, forwarded: patientUpload, retained: true }, { status: 201 });
+  return Response.json({ documentId, storageKey: key, forwarded: patientUpload && patientForwardingEnabled(env), retained: !patientUpload, retainedUntil: sourceExpiresAt }, { status: 201 });
 }
 
 export async function PATCH(request: Request) {

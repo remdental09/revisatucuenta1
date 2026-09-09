@@ -9,6 +9,7 @@ export const cases = sqliteTable("cases", {
   patientRun: text("patient_run").notNull().default(""),
   contactEmail: text("contact_email").notNull().default(""),
   episodeLabel: text("episode_label").notNull(),
+  retentionMode: text("retention_mode").notNull().default("persistent"),
   status: text("status").notNull().default("collecting"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),

@@ -1,18 +1,18 @@
 import type { AuthenticatedUser } from "./auth.ts";
 import { isDeveloperUser } from "./auth.ts";
 import { ensureCaseSchema } from "./case-schema.ts";
-import { localCanAccessCase, localDocumentCaseId } from "./runtime-store.ts";
+import { localCanAccessCase, localCaseRetentionMode, localDocumentCaseId } from "./runtime-store.ts";
 
 export async function caseAccessResponse(env: any, caseId: string, user: AuthenticatedUser) {
   const developer = isDeveloperUser(user);
   if (!env?.DB) {
-    return localCanAccessCase(caseId, user.id, developer)
+    return localCanAccessCase(caseId, user.id, developer) && (developer || localCaseRetentionMode(caseId) === "ephemeral")
       ? undefined
       : Response.json({ error: "Caso no encontrado" }, { status: 404 });
   }
   await ensureCaseSchema(env.DB);
-  const row = await env.DB.prepare(`SELECT owner_user_id FROM cases WHERE id = ?`).bind(caseId).first();
-  if (!row || (!developer && String(row.owner_user_id || "") !== user.id)) {
+  const row = await env.DB.prepare(`SELECT owner_user_id, retention_mode FROM cases WHERE id = ?`).bind(caseId).first();
+  if (!row || (!developer && (String(row.owner_user_id || "") !== user.id || String(row.retention_mode || "persistent") !== "ephemeral"))) {
     return Response.json({ error: "Caso no encontrado" }, { status: 404 });
   }
 }

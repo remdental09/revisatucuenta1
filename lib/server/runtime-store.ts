@@ -3,7 +3,7 @@ import { isPlaceholderPatientName } from "../extraction/patient-identity.ts";
 import type { ClinicalAccountAnalysis } from "../rules/chilean-account";
 import { getNodePersistentEnvironment } from "./node-persistent-env.ts";
 
-type LocalCase = { id: string; owner_user_id: string; owner_email: string; patient_name: string; patient_run: string; contact_email?: string; episode_label: string; status: string; created_at: string; updated_at: string };
+type LocalCase = { id: string; owner_user_id: string; owner_email: string; patient_name: string; patient_run: string; contact_email?: string; episode_label: string; retention_mode: "ephemeral" | "persistent"; status: string; created_at: string; updated_at: string };
 type LocalDocument = { id: string; case_id: string; original_name: string; mime_type: string; byte_size: number; classification: string; classification_confidence: number; processing_status: string; processing_error?: string; source_expires_at?: string; source_deleted_at?: string; page_from?: number; page_to?: number; created_at: string };
 type LocalActivity = { id: string; case_id: string; title: string; detail: string; event_at: string; pending: number };
 type LocalServiceContract = {
@@ -162,10 +162,10 @@ export function localResetPilot(version: string) {
   return { reset: true, deletedCases, deletedDocuments };
 }
 
-export function localCreateCase(input: { id: string; ownerUserId: string; ownerEmail: string; patientName?: string; patientRun?: string; contactEmail?: string; episodeLabel: string }) {
+export function localCreateCase(input: { id: string; ownerUserId: string; ownerEmail: string; patientName?: string; patientRun?: string; contactEmail?: string; episodeLabel: string; retentionMode?: "ephemeral" | "persistent" }) {
   if (cases.has(input.id)) return false;
   const timestamp = now();
-  cases.set(input.id, { id: input.id, owner_user_id: input.ownerUserId, owner_email: input.ownerEmail, patient_name: input.patientName || "Paciente", patient_run: input.patientRun || "", contact_email: input.contactEmail, episode_label: input.episodeLabel, status: "collecting", created_at: timestamp, updated_at: timestamp });
+  cases.set(input.id, { id: input.id, owner_user_id: input.ownerUserId, owner_email: input.ownerEmail, patient_name: input.patientName || "Paciente", patient_run: input.patientRun || "", contact_email: input.contactEmail, episode_label: input.episodeLabel, retention_mode: input.retentionMode || "persistent", status: "collecting", created_at: timestamp, updated_at: timestamp });
   addActivity(input.id, "Caso creado", "Se abrió la revisión de la cuenta.");
   return true;
 }
@@ -226,9 +226,13 @@ export function localDocumentCaseId(documentId: string) {
   return documents.get(documentId)?.case_id;
 }
 
-export function localSaveDocument(input: { id: string; caseId: string; name: string; mimeType: string; byteSize: number; classification: string; confidence: number }) {
+export function localCaseRetentionMode(caseId: string) {
+  return cases.get(caseId)?.retention_mode;
+}
+
+export function localSaveDocument(input: { id: string; caseId: string; name: string; mimeType: string; byteSize: number; classification: string; confidence: number; sourceExpiresAt?: string }) {
   const timestamp = now();
-  documents.set(input.id, { id: input.id, case_id: input.caseId, original_name: input.name, mime_type: input.mimeType, byte_size: input.byteSize, classification: input.classification, classification_confidence: input.confidence, processing_status: "extracting", created_at: timestamp });
+  documents.set(input.id, { id: input.id, case_id: input.caseId, original_name: input.name, mime_type: input.mimeType, byte_size: input.byteSize, classification: input.classification, classification_confidence: input.confidence, processing_status: "extracting", source_expires_at: input.sourceExpiresAt, created_at: timestamp });
   if (/cuenta|mixto/i.test(input.classification)) analyses.delete(input.caseId);
   addActivity(input.caseId, "Documento incorporado", `${input.name} quedó disponible para revisión.`);
   const item = cases.get(input.caseId);
@@ -296,6 +300,40 @@ export function localSaveExtraction(documentId: string, extraction: DocumentExtr
     addActivity(document.case_id, "Paciente identificado", "El nombre informado en la cuenta clínica quedó asociado a la revisión.");
   }
   addActivity(document.case_id, "Extracción completada", `${savedFields} campos quedaron vinculados a su documento de origen.`);
+}
+
+/** Removes a commercial patient's entire ephemeral case from the volatile store. */
+export function localPurgeCase(caseId: string, ownerUserId: string, includeAll = false) {
+  const current = cases.get(caseId);
+  if (!current || (!includeAll && current.owner_user_id !== ownerUserId)) return null;
+  const documentIds = [...documents.values()].filter((document) => document.case_id === caseId).map((document) => document.id);
+  for (const documentId of documentIds) {
+    documents.delete(documentId);
+    extractions.delete(documentId);
+  }
+  analyses.delete(caseId);
+  authorizations.delete(caseId);
+  serviceContracts.delete(caseId);
+  for (let index = activities.length - 1; index >= 0; index -= 1) {
+    if (activities[index].case_id === caseId) activities.splice(index, 1);
+  }
+  cases.delete(caseId);
+  return { caseId, deletedDocuments: documentIds.length };
+}
+
+export function localCleanupEphemeralCases(maxAgeMs = 24 * 60 * 60 * 1000) {
+  const cutoff = Date.now() - maxAgeMs;
+  let deletedCases = 0;
+  let deletedDocuments = 0;
+  for (const item of [...cases.values()]) {
+    if (item.retention_mode !== "ephemeral" || Date.parse(item.updated_at) > cutoff) continue;
+    const purged = localPurgeCase(item.id, item.owner_user_id, true);
+    if (purged) {
+      deletedCases += 1;
+      deletedDocuments += purged.deletedDocuments;
+    }
+  }
+  return { deletedCases, deletedDocuments };
 }
 
 /**

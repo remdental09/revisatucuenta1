@@ -10,6 +10,9 @@ export async function GET(request: Request) {
   const developer = isDeveloperUser(auth.user);
   const env = await getCloudflareEnv();
   await preserveDocumentSources(env);
+  // The commercial surface never exposes a historical inbox. Patients get a
+  // new case from the current session and its data is purged after analysis.
+  if (!developer) return Response.json({ cases: [] }, { headers: { "cache-control": "no-store" } });
   if (!env?.DB) return Response.json({ cases: localListCases(auth.user.id, developer) });
   await ensureCaseSchema(env.DB);
   const query = developer
@@ -41,17 +44,20 @@ export async function POST(request: Request) {
   if (body.requirePatientIdentity && (patientName === "Paciente" || !patientRun)) return Response.json({ error: "Ingresa tu nombre completo y RUN para continuar" }, { status: 400 });
   if (patientRun && !isValidChileanRun(patientRun)) return Response.json({ error: "Revisa el RUN ingresado. Usa el formato 12.345.678-9." }, { status: 400 });
   const contactEmail = auth.user.email;
+  // Patient cases are session-only. Developer cases are the durable workspace
+  // where PAMs, contracts, and other source documents are intentionally kept.
+  const retentionMode = isDeveloperUser(auth.user) ? "persistent" : "ephemeral";
   const env = await getCloudflareEnv();
   if (!env?.DB) {
-    const created = localCreateCase({ id: body.id, ownerUserId: auth.user.id, ownerEmail: auth.user.email, patientName, patientRun, contactEmail, episodeLabel: body.episodeLabel });
+    const created = localCreateCase({ id: body.id, ownerUserId: auth.user.id, ownerEmail: auth.user.email, patientName, patientRun, contactEmail, episodeLabel: body.episodeLabel, retentionMode });
     if (!created) return Response.json({ error: "El identificador del expediente ya existe" }, { status: 409 });
     return Response.json({ caseId: body.id }, { status: 201 });
   }
   await ensureCaseSchema(env.DB);
   const existing = await env.DB.prepare(`SELECT id FROM cases WHERE id = ?`).bind(body.id).first();
   if (existing) return Response.json({ error: "El identificador del expediente ya existe" }, { status: 409 });
-  await env.DB.prepare(`INSERT INTO cases (id, owner_user_id, owner_email, patient_name, patient_run, contact_email, episode_label, status, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'collecting', CURRENT_TIMESTAMP)`)
-    .bind(body.id, auth.user.id, auth.user.email, patientName, patientRun, contactEmail, body.episodeLabel).run();
+  await env.DB.prepare(`INSERT INTO cases (id, owner_user_id, owner_email, patient_name, patient_run, contact_email, episode_label, retention_mode, status, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'collecting', CURRENT_TIMESTAMP)`)
+    .bind(body.id, auth.user.id, auth.user.email, patientName, patientRun, contactEmail, body.episodeLabel, retentionMode).run();
   await env.DB.prepare(`INSERT INTO case_activities (id, case_id, title, detail) VALUES (?, ?, ?, ?)`)
     .bind(crypto.randomUUID(), body.id, "Caso creado", "Se abrió el expediente para revisión.").run();
   return Response.json({ caseId: body.id }, { status: 201 });
