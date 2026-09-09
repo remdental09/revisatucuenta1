@@ -186,6 +186,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       .bind(crypto.randomUUID(), id, MANDATE_SCOPE, now),
     env.DB.prepare(`INSERT INTO case_activities (id, case_id, title, detail, event_at) VALUES (?, ?, ?, ?, ?)`)
       .bind(crypto.randomUUID(), id, "Contrato de asesoría aceptado", "La versión del contrato quedó registrada junto con la autorización de datos y mandato limitado.", now),
+    env.DB.prepare(`UPDATE cases SET updated_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(id),
   ]);
   const saved = await env.DB.prepare(`SELECT * FROM service_contracts WHERE id = ?`).bind(contractId).first();
   return Response.json({ contract: contractPayload(saved), paymentUrl: payUrl, alreadyAccepted: false });

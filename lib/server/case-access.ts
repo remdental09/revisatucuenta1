@@ -2,9 +2,13 @@ import type { AuthenticatedUser } from "./auth.ts";
 import { isDeveloperUser } from "./auth.ts";
 import { ensureCaseSchema } from "./case-schema.ts";
 import { localCanAccessCase, localCaseRetentionMode, localDocumentCaseId } from "./runtime-store.ts";
+import { cleanupExpiredEphemeralCases } from "./source-retention.ts";
 
 export async function caseAccessResponse(env: any, caseId: string, user: AuthenticatedUser) {
   const developer = isDeveloperUser(user);
+  // Enforce the commercial retention window on every case access, not only
+  // when the case list is opened. This closes stale direct-link access.
+  await cleanupExpiredEphemeralCases(env);
   if (!env?.DB) {
     return localCanAccessCase(caseId, user.id, developer) && (developer || localCaseRetentionMode(caseId) === "ephemeral")
       ? undefined

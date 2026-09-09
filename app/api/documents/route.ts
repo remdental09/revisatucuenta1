@@ -100,6 +100,8 @@ export async function POST(request: Request) {
     await env.DB.prepare(`UPDATE cases SET status = 'under_review', updated_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(caseId).run();
     await env.DB.prepare(`INSERT INTO case_activities (id, case_id, title, detail) VALUES (?, ?, ?, ?)`)
       .bind(crypto.randomUUID(), caseId, "Revisión iniciada", "El expediente quedó en cola para revisión interna.").run();
+  } else {
+    await env.DB.prepare(`UPDATE cases SET updated_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(caseId).run();
   }
   return Response.json({ documentId, storageKey: key, forwarded: patientUpload && patientForwardingEnabled(env), retained: !patientUpload, retainedUntil: sourceExpiresAt }, { status: 201 });
 }
