@@ -62,7 +62,7 @@ export function WhatsAppContact() {
             <p>{QUESTION_PROMPTS[0]}</p>
             <p>{QUESTION_PROMPTS[1]}</p>
           </div>
-          <p className="whatsapp-privacy-note">No envíes tu RUN ni documentos por WhatsApp. Súbelos sólo en el acceso seguro.</p>
+          <p className="whatsapp-privacy-note">No envíes documentos ni datos sensibles por WhatsApp. Súbelos sólo en el acceso seguro.</p>
           {error && <p className="whatsapp-error" role="alert">{error}</p>}
           <a className="whatsapp-submit" href={whatsappHref} target="_blank" rel="noreferrer" onClick={handleOpenWhatsApp}>
             Necesito hablar con un humano <span aria-hidden="true">↗</span>

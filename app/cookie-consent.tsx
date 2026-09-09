@@ -199,7 +199,7 @@ export function CookieConsent() {
             </CookieCategory>
 
             <p className="cookie-legal-note">
-              Esta decisión sólo se refiere a cookies. No reemplaza la autorización separada para tratar RUN, identidad o documentos de salud.
+              Esta decisión sólo se refiere a cookies. No reemplaza la autorización separada para tratar documentos de salud.
             </p>
             <div className="cookie-dialog-actions">
               <button className="portal-button portal-button-primary" type="button" onClick={commit}>

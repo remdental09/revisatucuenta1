@@ -5,7 +5,6 @@ import type { ClinicalAccountAnalysis } from "../../../../lib/rules/chilean-acco
 import { getCorpusContributionStatus } from "../../../../lib/server/observed-corpus-store.ts";
 import { isDeveloperUser, requireApiUser } from "../../../../lib/server/auth.ts";
 import { caseAccessResponse } from "../../../../lib/server/case-access.ts";
-import { compareChileanRun } from "../../../../lib/identity/chilean-run.ts";
 import { buildPatientResult } from "../../../../lib/rules/patient-result.ts";
 import { recoverStaleDatabaseExtractions } from "../../../../lib/server/extraction-watchdog.ts";
 
@@ -24,14 +23,16 @@ export async function GET(
     const snapshot = localGetCase(id, auth.user.id, true);
     if (!snapshot) return Response.json({ error: "Caso no encontrado" }, { status: 404 });
     if (developer) return Response.json({ ...snapshot, corpusStatus: await getCorpusContributionStatus(env, id) });
-    const account = snapshot.documents.find((document) => /cuenta|mixto/i.test(document.classification) || document.extraction?.account);
-    const extractedRun = account?.extraction?.account?.fields.find((field) => /patient_rut|rut del paciente|\brut\b/i.test(`${field.key} ${field.label}`))?.value || "";
+    const safeCase = { ...snapshot.case } as typeof snapshot.case & { patientRun?: string };
+    delete safeCase.patientRun;
+    const safeSnapshot = { ...snapshot } as typeof snapshot & { patientIdentityStatus?: string };
+    delete safeSnapshot.patientIdentityStatus;
     return Response.json({
-      ...snapshot,
+      ...safeSnapshot,
+      case: safeCase,
       documents: snapshot.documents,
       analysis: undefined,
       patientResult: buildPatientResult(snapshot.analysis),
-      patientIdentityStatus: account ? compareChileanRun(snapshot.case.patientRun || "", extractedRun) : "unavailable",
       corpusStatus: await getCorpusContributionStatus(env, id),
     });
   }
@@ -74,13 +75,10 @@ export async function GET(
   }));
 
   const analysis = jsonOrNull<ClinicalAccountAnalysis>(analysisResult?.analysis_json);
-  const account = documents.find((document) => /cuenta|mixto/i.test(document.classification) || document.extraction?.account);
-  const extractedRun = account?.extraction?.account?.fields.find((field) => /patient_rut|rut del paciente|\brut\b/i.test(`${field.key} ${field.label}`))?.value || "";
   return Response.json({
     case: {
       id: String(caseResult.id),
       patientName: String(caseResult.patient_name),
-      patientRun: caseResult.patient_run ? String(caseResult.patient_run) : undefined,
       contactEmail: caseResult.contact_email ? String(caseResult.contact_email) : undefined,
       episodeLabel: String(caseResult.episode_label),
       status: String(caseResult.status),
@@ -90,7 +88,6 @@ export async function GET(
     documents,
     analysis: developer ? analysis : undefined,
     patientResult: developer ? undefined : buildPatientResult(analysis),
-    patientIdentityStatus: developer ? undefined : account ? compareChileanRun(String(caseResult.patient_run || ""), extractedRun) : "unavailable",
     analysisUpdatedAt: analysisResult?.updated_at ? String(analysisResult.updated_at) : undefined,
     authorization: authorizationResult?.authorized ? {
       authorized: Number(authorizationResult.authorized) === 1,

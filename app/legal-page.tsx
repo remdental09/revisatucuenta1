@@ -27,7 +27,7 @@ function PrivacyContent() {
       <h2>2. Información que tratamos</h2>
       <LegalList>
         <li>Correo electrónico, para verificar el acceso y enviar enlaces de sesión.</li>
-        <li>Nombre y RUN, para asociar la revisión con la persona que la solicita.</li>
+        <li>Nombre, para identificar la revisión durante la sesión.</li>
         <li>Cuenta de hospitalización, PAM o liquidación, documentos y datos de salud contenidos en ellos.</li>
         <li>Resultado preliminar, actividad del caso, autorizaciones y comunicaciones relacionadas.</li>
         <li>Datos técnicos mínimos necesarios para seguridad, funcionamiento y prevención de abuso.</li>
@@ -55,7 +55,7 @@ function PrivacyContent() {
       <p>La persona puede solicitar información sobre sus datos, corrección y, cuando corresponda, eliminación, bloqueo u oposición; también puede revocar autorizaciones para usos futuros. La revocación no invalida tratamientos realizados lícitamente ni actuaciones ya presentadas. La sociedad debe habilitar un canal verificable y responder conforme a la ley aplicable.</p>
 
       <h2>7. Seguridad y privacidad por diseño</h2>
-      <p>El acceso se verifica por correo, las sesiones usan una cookie HttpOnly y Secure en producción, y los documentos originales se almacenan cifrados con acceso restringido al expediente y al equipo revisor. No se deben incorporar herramientas de analítica o publicidad que reciban RUN, correo, identificadores de casos, URLs con información clínica o documentos de pacientes.</p>
+      <p>El acceso se verifica por correo, las sesiones usan una cookie HttpOnly y Secure en producción, y los documentos originales se almacenan cifrados con acceso restringido al expediente y al equipo revisor. No se deben incorporar herramientas de analítica o publicidad que reciban correo, identificadores de casos, URLs con información clínica o documentos de pacientes.</p>
 
       <h2>8. Cambios</h2>
       <p>La política debe mostrar siempre su versión y fecha. Los cambios relevantes deben comunicarse antes de aplicar una nueva finalidad. Esta versión corresponde al piloto y debe ser revisada por asesoría jurídica chilena antes de operar comercialmente.</p>
@@ -89,7 +89,7 @@ function CookiesContent() {
       <p>No están activas. Si en el futuro se incorpora analítica, publicidad o personalización, se solicitará autorización previa y separada antes de cargarlas. Quedarán apagadas por defecto y “Rechazar opcionales” tendrá la misma visibilidad y facilidad que cualquier aceptación.</p>
 
       <h2>Cómo cambiar tu decisión</h2>
-      <p>La preferencia se guarda sólo en el dispositivo, sin incluir RUN, correo, documentos ni información clínica. Mientras no se haya guardado una selección, podrás revisar y configurar las opciones desde el aviso de cookies. Cambiar la decisión no autoriza ningún tratamiento de datos de salud.</p>
+      <p>La preferencia se guarda sólo en el dispositivo, sin incluir correo, documentos ni información clínica. Mientras no se haya guardado una selección, podrás revisar y configurar las opciones desde el aviso de cookies. Cambiar la decisión no autoriza ningún tratamiento de datos de salud.</p>
 
       <h2>Transferencias y terceros</h2>
       <p>Cloudflare puede procesar datos técnicos de seguridad en Estados Unidos según su configuración y política. La sociedad debe revisar y actualizar esta página si incorpora nuevos proveedores, herramientas o transferencias internacionales.</p>

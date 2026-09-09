@@ -60,7 +60,7 @@ export function SupportChatbox() {
       "Hola, necesito hablar con un humano en RevisaTuCuenta.",
       answers.detailed ? `Cuenta detallada: ${answers.detailed}.` : "",
       answers.pam ? `PAM de Isapre: ${answers.pam}.` : "",
-      "No enviaré RUN ni documentos por este medio.",
+      "No enviaré documentos ni datos sensibles por este medio.",
     ].filter(Boolean).join("\n");
     return `${WHATSAPP_BASE_URL}?text=${encodeURIComponent(context)}`;
   }, [answers]);
@@ -111,7 +111,7 @@ export function SupportChatbox() {
     setHumanRequested(true);
     appendConversation(
       patientText,
-      "De acuerdo. Puedes continuar con una persona por WhatsApp. El enlace llevará sólo tus respuestas de orientación; no envíes RUN ni documentos por ese canal.",
+      "De acuerdo. Puedes continuar con una persona por WhatsApp. El enlace llevará sólo tus respuestas de orientación; no envíes documentos ni datos sensibles por ese canal.",
       [{ label: "Volver al inicio", action: "reset" }],
     );
   }
@@ -155,7 +155,7 @@ export function SupportChatbox() {
       ]);
     }
     if (action === "upload_link") {
-      return appendConversation(label, "Te llevaré al acceso seguro para pacientes. No cargues documentos ni RUN en este chat.", [
+      return appendConversation(label, "Te llevaré al acceso seguro para pacientes. No cargues documentos ni datos sensibles en este chat.", [
         { label: "Volver al inicio", action: "reset" },
         { label: "Hablar con un humano", action: "human" },
       ]);
@@ -225,7 +225,7 @@ export function SupportChatbox() {
     if (normalized.includes("resultado") || normalized.includes("informe") || normalized.includes("monto")) return handleAction("result", text);
     if (normalized.includes("cuenta") || normalized.includes("subir") || normalized.includes("documento") || normalized.includes("detalle")) return askDetailed(text);
     if (normalized.includes("privacidad") || normalized.includes("dato") || normalized.includes("run")) {
-      return appendConversation(text, "No compartas RUN ni documentos aquí. El acceso seguro verifica el correo y permite cargar los antecedentes con autorización separada.", [
+      return appendConversation(text, "No compartas documentos ni datos sensibles aquí. El acceso seguro verifica el correo y permite cargar los antecedentes con autorización separada.", [
         { label: "Quiero subir mi cuenta", action: "upload" },
         { label: "Hablar con un humano", action: "human" },
       ]);
@@ -275,7 +275,7 @@ export function SupportChatbox() {
             <input aria-label="Escribe tu pregunta" value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Escribe tu pregunta" disabled={aiLoading} />
             <button type="submit" aria-label="Enviar pregunta" disabled={aiLoading}>{aiLoading ? "…" : "Enviar"}</button>
           </form>
-          <p className="support-chat-note">Orientación general. No compartas RUN ni documentos en este chat.</p>
+          <p className="support-chat-note">Orientación general. No compartas documentos ni datos sensibles en este chat.</p>
         </section>
       )}
       <button className="support-chat-launcher" type="button" aria-expanded={open} aria-controls="support-chat-panel" onClick={() => setOpen((value) => !value)}>
