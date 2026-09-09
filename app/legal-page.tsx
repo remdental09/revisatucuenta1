@@ -37,19 +37,19 @@ function PrivacyContent() {
       <h2>3. Para qué usamos la información</h2>
       <LegalList>
         <li>Verificar que sólo el correo autorizado acceda a la revisión.</li>
-        <li>Ordenar, almacenar y leer los documentos entregados, enviarlos al buzón operativo del equipo revisor, generar un resultado preliminar y permitir su revisión humana cuando corresponda.</li>
-        <li>Validar y mejorar las reglas internas del sistema de análisis, manteniendo trazabilidad y control humano sobre los resultados.</li>
+        <li>Procesar temporalmente la cuenta, el PAM y el contrato que la persona entrega para generar un resultado preliminar y permitir su revisión durante la sesión.</li>
+        <li>En el espacio interno de desarrollo, conservar cuentas, PAM y contratos para trazabilidad, control humano y validación de reglas; ese espacio no se muestra en la vista paciente.</li>
         <li>Preparar comunicaciones, solicitudes de aclaración o gestiones administrativas que la persona autorice.</li>
         <li>Proteger la plataforma, mantener trazabilidad, atender solicitudes de la persona y cumplir obligaciones legales.</li>
       </LegalList>
       <p>El resultado es preliminar: no constituye por sí solo una decisión médica, una declaración de cobro indebido ni una promesa de devolución.</p>
 
       <h2>4. Proveedores y comunicaciones</h2>
-      <p>Podemos utilizar proveedores tecnológicos para hosting, base de datos, almacenamiento de documentos, correo transaccional, entrega al buzón operativo del equipo revisor, lectura documental y seguridad. Cada proveedor debe operar sólo según el encargo recibido, con confidencialidad y medidas de seguridad. Los datos sólo se comunicarán al equipo revisor, al prestador involucrado, a la autoridad competente cuando corresponda o a proveedores necesarios para prestar el servicio.</p>
+      <p>Podemos utilizar proveedores tecnológicos para hosting, base de datos, almacenamiento temporal de documentos, correo transaccional, lectura documental y seguridad. Cada proveedor debe operar sólo según el encargo recibido, con confidencialidad y medidas de seguridad. El reenvío de documentos desde la vista paciente está desactivado por defecto y sólo podrá habilitarse mediante una configuración expresa del servicio. Los datos sólo se comunicarán al equipo revisor, al prestador involucrado, a la autoridad competente cuando corresponda o a proveedores necesarios para prestar el servicio.</p>
       <p>Cloudflare informa que ciertos datos técnicos de sus cookies pueden procesarse por defecto en Estados Unidos. Esta transferencia y las de cualquier otro proveedor deben mantenerse descritas y actualizadas en la versión vigente de esta política.</p>
 
       <h2>5. Conservación y eliminación</h2>
-      <p>Los originales cargados se almacenan cifrados en la plataforma y también se entregan al buzón operativo del equipo revisor. Se conservan durante la gestión, los plazos legales aplicables y el período de evidencia y validación interna que defina la sociedad. La persona puede solicitar su eliminación cuando corresponda; al ejecutarla, el archivo se retira del almacenamiento de la plataforma y debe retirarse también de las copias operativas sujetas a esa solicitud.</p>
+      <p>En la vista comercial para pacientes, la cuenta, el PAM, el contrato y sus datos derivados se conservan sólo durante el procesamiento de la sesión y se eliminan al terminar el análisis; si la sesión queda abandonada, una limpieza automática actúa como máximo dentro de dos horas. No se reutilizan en otra cuenta ni se incorporan a memoria entre cuentas. En la consola de desarrollo, las cuentas, PAM y contratos cargados por el equipo revisor se conservan de forma persistente para trazabilidad y control interno. La persona puede solicitar información sobre el tratamiento y, cuando corresponda, la eliminación de datos sujetos a su control.</p>
 
       <h2>6. Derechos y revocación</h2>
       <p>La persona puede solicitar información sobre sus datos, corrección y, cuando corresponda, eliminación, bloqueo u oposición; también puede revocar autorizaciones para usos futuros. La revocación no invalida tratamientos realizados lícitamente ni actuaciones ya presentadas. La sociedad debe habilitar un canal verificable y responder conforme a la ley aplicable.</p>
