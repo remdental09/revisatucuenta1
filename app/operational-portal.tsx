@@ -224,6 +224,46 @@ function analysisBlocked(document?: CaseDocument) {
   return extractionNeedsRefresh(document);
 }
 
+/**
+ * Patient results are explicitly preliminary. A quality warning or an
+ * unreconciled printed total must be shown, but it must not leave the patient
+ * on an indefinite "preparing" screen when the reader produced usable rows.
+ * A failed extraction, an empty account, or an obsolete reader still needs a
+ * replacement file before analysis can run.
+ */
+function patientAnalysisBlocked(document?: CaseDocument) {
+  if (!document) return true;
+  if (["failed", "pending", "extracting"].includes(document.processingStatus || "")) return true;
+  if (!document.extraction?.account?.lines.length) return true;
+  if (document.extraction.readerVersion !== CURRENT_READER_VERSION) return true;
+  return false;
+}
+
+function patientReaderNotice(document?: CaseDocument) {
+  if (!document) return "";
+  if (document.processingStatus === "failed") {
+    return "La lectura automática no terminó. Reemplaza la cuenta para volver a intentarlo.";
+  }
+  if (document.extraction?.readerVersion !== CURRENT_READER_VERSION) {
+    return "Esta cuenta fue leída con una versión anterior del lector. Reemplázala para aplicar la lectura actualizada.";
+  }
+  if (!document.extraction?.account?.lines.length) {
+    return "No se reconocieron líneas monetarias utilizables. Reemplaza la cuenta con un PDF o imagen más legible.";
+  }
+  const warnings: string[] = [];
+  const assessment = document.extraction.readerAssessment;
+  const total = document.extraction.account.totalReconciliation;
+  if (assessment && assessment.status !== "ready") {
+    warnings.push("El lector detectó glosas o cifras que requieren una revisión adicional.");
+  }
+  if (!total || total.status !== "verified") {
+    warnings.push("El total impreso todavía no concilia con todas las líneas extraídas.");
+  }
+  return warnings.length
+    ? `${warnings.join(" ")} Te mostraremos un resultado preliminar y dejaremos esta advertencia visible.`
+    : "";
+}
+
 function hideStaleAnalysis(snapshot: Snapshot) {
   const account = accountDoc(snapshot);
   if (!extractionNeedsRefresh(account)) return snapshot;
@@ -565,9 +605,13 @@ async function replaceAccountDocument(caseId: string, file: File, previousDocume
   return { ...replacement, corpusRegistered: false };
 }
 
-async function analyzeCase(caseId: string, document?: CaseDocument, episodeLabel?: string, pamDocument?: CaseDocument) {
-  if (extractionNeedsRefresh(document)) {
+async function analyzeCase(caseId: string, document?: CaseDocument, episodeLabel?: string, pamDocument?: CaseDocument, allowPreliminaryAnalysis = false) {
+  const readerVersionStale = Boolean(document?.extraction && document.extraction.readerVersion !== CURRENT_READER_VERSION);
+  if (readerVersionStale) {
     throw new Error("La cuenta fue leída con una versión anterior. Reemplaza la cuenta clínica para aplicar el lector actualizado.");
+  }
+  if (extractionNeedsRefresh(document) && !allowPreliminaryAnalysis) {
+    throw new Error("La cuenta necesita una revisión técnica del total antes de analizarse en modo desarrollador.");
   }
   const lines: ChileanBillingLine[] = document?.extraction?.account?.lines.map((line, index) => ({
     ...line,
@@ -587,6 +631,7 @@ async function analyzeCase(caseId: string, document?: CaseDocument, episodeLabel
       readerAssessment: document?.extraction?.readerAssessment,
       totalReconciliation: document?.extraction?.account?.totalReconciliation,
       printedTotal: Number.isFinite(printedTotal) ? printedTotal : undefined,
+      ...(allowPreliminaryAnalysis ? { allowPreliminaryAnalysis: true } : {}),
     }),
   });
   if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || "No se pudo analizar la cuenta");
@@ -1332,7 +1377,10 @@ function AuthenticatedPatientPortal({ initialCaseId: _initialCaseId = "", user }
       setStage(simulatedProgress < 35 ? "Ordenando los documentos" : simulatedProgress < 65 ? "Revisando los cargos" : "Preparando el resultado");
     }, 180);
     try {
-      const analysis = await analyzeCase(caseId, accountDoc(snapshot), snapshot.case.episodeLabel, pamDoc(snapshot));
+      // Patient mode receives a clearly labelled preliminary result even when
+      // the printed total still needs technical reconciliation. Developer
+      // analysis keeps the strict total gate through the default argument.
+      const analysis = await analyzeCase(caseId, accountDoc(snapshot), snapshot.case.episodeLabel, pamDoc(snapshot), true);
       setSnapshot((current) => current ? {
         ...current,
         ...( "patientResult" in analysis ? { analysis: undefined, patientResult: analysis.patientResult } : { analysis, patientResult: buildPatientResult(analysis) }),
@@ -1348,7 +1396,7 @@ function AuthenticatedPatientPortal({ initialCaseId: _initialCaseId = "", user }
 
   useEffect(() => {
     const account = accountDoc(snapshot);
-    if (!snapshot || !caseId || snapshot.analysis || snapshot.patientResult?.available || status === "running" || busy || !account || analysisBlocked(account)) return;
+    if (!snapshot || !caseId || snapshot.analysis || snapshot.patientResult?.available || status === "running" || busy || !account || patientAnalysisBlocked(account)) return;
     const key = `${caseId}:${account.id}`;
     if (autoAnalysisKeyRef.current === key) return;
     autoAnalysisKeyRef.current = key;
@@ -1402,14 +1450,14 @@ function AuthenticatedPatientPortal({ initialCaseId: _initialCaseId = "", user }
   if (!snapshot) return <main className="patient-portal"><section className="patient-card patient-main"><h2>Cargando revisión…</h2></section></main>;
 
   const account = accountDoc(snapshot); const pam = pamDoc(snapshot);
-  const readerAssessment = account?.extraction?.readerAssessment;
-  const readerNeedsRefresh = extractionNeedsRefresh(account);
+  const readerNeedsRefresh = Boolean(account?.extraction && account.extraction.readerVersion !== CURRENT_READER_VERSION);
+  const readerNotice = patientReaderNotice(account);
   const patientResult = readerNeedsRefresh
     ? { available: false, hasDispute: false, disputeAmount: 0 }
     : snapshot.patientResult || buildPatientResult(snapshot.analysis);
   const patientReviewAmount = patientResult.disputeAmount;
   const patientHasIrregularities = patientResult.hasDispute;
-  const patientCanAnalyze = !analysisBlocked(account);
+  const patientCanAnalyze = !patientAnalysisBlocked(account);
   const patientStatus = patientResult.available
     ? patientHasIrregularities ? "Irregularidades detectadas" : "Análisis completado"
     : account ? "Resultado en preparación" : "Revisión pendiente";
@@ -1418,7 +1466,7 @@ function AuthenticatedPatientPortal({ initialCaseId: _initialCaseId = "", user }
     <header className="patient-topbar patient-space-topbar"><PortalBrand href="/"/><div className="patient-topbar-right"><span className="surface-pill patient-pill">Vista paciente</span><span className="avatar">{snapshot.case.patientName.slice(0, 2).toUpperCase()}</span><span className="patient-email">{user.email}</span><a className="patient-signout-button" href={signOutHref(user)} aria-label="Cerrar sesión">Cerrar sesión</a></div></header>
     <div className="patient-layout"><aside className="patient-sidebar"><div className="case-mini"><span className="case-icon">⌁</span><div><small>CASO ACTIVO</small><b>{snapshot.case.patientName}</b><span>Caso {caseId.slice(0, 8)}</span></div></div><nav className="patient-nav">{(["Resumen", "Documentos", "Actividad"] as const).map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item}</button>)}</nav><div className="patient-sidebar-help"><span>?</span><div><b>¿Necesitas ayuda?</b><small>Escríbenos sobre tu caso.</small></div></div></aside>
       <section className="patient-main patient-space-main"><div className="patient-heading patient-space-heading"><div><p className="portal-kicker">Mi revisión</p><h1>Hola, {firstName}.</h1><p>{snapshot.case.episodeLabel}</p><div className="patient-identity-summary"><span>Paciente</span><strong>{snapshot.case.patientName}</strong></div></div><span className="case-status"><i /> {patientStatus}</span></div>
-         {tab === "Resumen" && <PatientSummary account={account} pam={pam} pamStandalone={standalonePam(pam)} reviewAmount={patientReviewAmount} analysisAvailable={patientResult.available} analysisRunning={status === "running"} progress={progress} stage={stage} contract={snapshot.contract} busy={busy} readerReviewRequired={Boolean(readerNeedsRefresh || account?.processingStatus === "failed" || account?.processingStatus === "review_required" || (readerAssessment && readerAssessment.status !== "ready"))} readerChangeNeeded={!patientCanAnalyze} onAccount={() => accountInputRef.current?.click()} onPam={() => inputRef.current?.click()} onContractDocument={() => contractInputRef.current?.click()} onAnalyze={() => void runAnalysis()} onOpenContract={() => void openContract()} contractBusy={contractBusy} />}
+         {tab === "Resumen" && <PatientSummary account={account} pam={pam} pamStandalone={standalonePam(pam)} reviewAmount={patientReviewAmount} analysisAvailable={patientResult.available} analysisRunning={status === "running"} progress={progress} stage={stage} contract={snapshot.contract} busy={busy} readerReviewRequired={Boolean(readerNotice)} readerChangeNeeded={!patientCanAnalyze} readerNotice={readerNotice} analysisError={error} onAccount={() => accountInputRef.current?.click()} onPam={() => inputRef.current?.click()} onContractDocument={() => contractInputRef.current?.click()} onAnalyze={() => void runAnalysis()} onOpenContract={() => void openContract()} contractBusy={contractBusy} />}
         {tab === "Documentos" && <PatientDocuments snapshot={snapshot} deletingDocumentId={deletingDocumentId} onAccount={() => accountInputRef.current?.click()} onPam={() => inputRef.current?.click()} onContract={() => contractInputRef.current?.click()} onDelete={(document) => void removeDocument(document)} />}
         {tab === "Actividad" && <PatientActivity activities={snapshot.activities} />}
       </section></div>
@@ -1451,26 +1499,38 @@ function PatientDocumentOrbit({ amount, label }: { amount: number; label: string
   </div>;
 }
 
-function PatientSummary({ account, pam, pamStandalone, reviewAmount, analysisAvailable, analysisRunning, progress, stage, contract, busy, readerReviewRequired, readerChangeNeeded, onAccount, onPam, onContractDocument, onAnalyze, onOpenContract, contractBusy }: { account?: CaseDocument; pam?: CaseDocument; pamStandalone?: PamStandaloneAnalysis; reviewAmount: number; analysisAvailable: boolean; analysisRunning: boolean; progress: number; stage: string; contract?: ServiceContract; busy: boolean; readerReviewRequired: boolean; readerChangeNeeded: boolean; onAccount: () => void; onPam: () => void; onContractDocument: () => void; onAnalyze: () => void; onOpenContract: () => void; contractBusy: boolean }) {
+function PatientSummary({ account, pam, pamStandalone, reviewAmount, analysisAvailable, analysisRunning, progress, stage, contract, busy, readerReviewRequired, readerChangeNeeded, readerNotice, analysisError, onAccount, onPam, onContractDocument, onAnalyze, onOpenContract, contractBusy }: { account?: CaseDocument; pam?: CaseDocument; pamStandalone?: PamStandaloneAnalysis; reviewAmount: number; analysisAvailable: boolean; analysisRunning: boolean; progress: number; stage: string; contract?: ServiceContract; busy: boolean; readerReviewRequired: boolean; readerChangeNeeded: boolean; readerNotice?: string; analysisError?: string; onAccount: () => void; onPam: () => void; onContractDocument: () => void; onAnalyze: () => void; onOpenContract: () => void; contractBusy: boolean }) {
   const accountReceived = Boolean(account);
   const pamReceived = Boolean(pam);
   const documentsReceived = accountReceived || pamReceived;
   const hasIrregularities = analysisAvailable && reviewAmount > 0;
   const summaryTitle = analysisAvailable
     ? hasIrregularities ? "Detectamos posibles irregularidades en tu cuenta" : "No detectamos irregularidades evidentes"
-    : accountReceived ? "Tu cuenta está en revisión" : pamReceived ? "Documento de cobertura recibido" : "Completa tu revisión";
+    : accountReceived
+      ? readerChangeNeeded
+        ? "La lectura necesita atención"
+        : analysisRunning
+          ? "Estamos analizando tu cuenta"
+          : "Tu cuenta está lista para analizar"
+      : pamReceived ? "Documento de cobertura recibido" : "Completa tu revisión";
   const summaryCopy = analysisAvailable
     ? hasIrregularities
       ? "Identificamos un monto que conviene revisar con más detalle. A continuación te mostramos únicamente el total en disputa."
       : "Revisamos la información disponible y no encontramos cargos que indiquen una irregularidad evidente."
     : accountReceived
-      ? "Ya recibimos tu cuenta. Te mostraremos si encontramos cargos que conviene revisar y el monto aproximado asociado."
+      ? readerChangeNeeded
+        ? "La cuenta fue recibida, pero la lectura no produjo todavía una base utilizable para el análisis."
+        : analysisRunning
+          ? "Estamos revisando los cargos y estimando el monto asociado. Verás el avance aquí."
+          : "La cuenta ya tiene líneas legibles. Puedes iniciar el análisis preliminar y revisar sus advertencias."
       : pamReceived
         ? "Recibimos tu documento de cobertura. Para revisar posibles irregularidades necesitamos la cuenta clínica."
         : "Carga la cuenta clínica para conocer el resultado de la revisión.";
   const statusLabel = analysisAvailable
     ? hasIrregularities ? "Posibles irregularidades detectadas" : "Análisis preliminar completado"
-    : accountReceived ? "Resultado en preparación" : pamReceived ? "Cobertura recibida; cuenta pendiente" : "Esperando documentos";
+    : accountReceived
+      ? readerChangeNeeded ? "Lectura necesita atención" : analysisRunning ? "Análisis en curso" : "Análisis listo para comenzar"
+      : pamReceived ? "Cobertura recibida; cuenta pendiente" : "Esperando documentos";
   return <>
     <section className="patient-card patient-review-status-card patient-space-review-card">
       <div className="patient-space-summary-head">
@@ -1480,7 +1540,8 @@ function PatientSummary({ account, pam, pamStandalone, reviewAmount, analysisAva
       <div className="patient-review-status">
         <span><i /> {statusLabel}</span>
         {analysisAvailable && <small>El resultado es preliminar y se basa en la información disponible en tu cuenta.</small>}
-        {!analysisAvailable && readerReviewRequired && <small>Estamos verificando algunos datos antes de entregarte el resultado.</small>}
+        {!analysisAvailable && readerReviewRequired && <small>{readerNotice || "La lectura necesita una revisión adicional antes de mostrar el resultado."}</small>}
+        {analysisAvailable && readerNotice && <div className="patient-analysis-warning" role="status"><span>!</span><div><b>Lectura preliminar</b><p>{readerNotice}</p></div></div>}
       </div>
       <div className="patient-review-flow" aria-label="Estado general de la revisión">
         <div className={accountReceived ? "complete" : ""}><i>1</i><span>{accountReceived ? "Cuenta recibida" : "Cuenta pendiente"}</span></div>
@@ -1488,10 +1549,11 @@ function PatientSummary({ account, pam, pamStandalone, reviewAmount, analysisAva
         <div className={pamReceived ? "complete" : ""}><i>3</i><span>{pamReceived ? "Cobertura recibida" : "Cobertura opcional"}</span></div>
       </div>
       {account && !analysisAvailable && readerChangeNeeded && <section className="patient-analysis-pending">
-        <div><span className="card-kicker">RESULTADO EN PREPARACIÓN</span><h3>Estamos preparando el resultado de tu cuenta</h3><p>Ya recibimos tu cuenta. Estamos terminando de procesar algunos datos antes de mostrarte las posibles irregularidades y el monto aproximado.</p></div>
+        <div><span className="card-kicker">LECTURA DE LA CUENTA</span><h3>{account.processingStatus === "failed" ? "No pudimos terminar la lectura" : "Necesitamos una cuenta más legible"}</h3><p>{readerNotice || "La cuenta fue recibida, pero todavía no hay líneas utilizables para analizar."} Usa el botón inferior para reemplazarla y volver a intentarlo.</p></div>
       </section>}
       {account && !analysisAvailable && !readerChangeNeeded && <section className="patient-analysis-launch">
         <div><span className="card-kicker">RESULTADO DE TU CUENTA</span><h3>{analysisRunning ? stage : "Obtén el resultado de tu cuenta"}</h3><p>{analysisRunning ? "Estamos revisando los cargos para identificar posibles irregularidades y estimar el monto asociado." : "Inicia el análisis para saber si hay cargos que conviene revisar y cuál es el monto aproximado."}</p></div>
+        {analysisError && !analysisRunning && <p className="patient-analysis-notice" role="alert">{analysisError} Puedes reintentarlo ahora o reemplazar la cuenta.</p>}
         {analysisRunning ? <div className="patient-analysis-progress-wrap"><div className="patient-analysis-progress-label"><span>{progress}%</span><b>Procesando</b></div><div className="patient-analysis-progress-bar" role="progressbar" aria-label="Progreso del análisis" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><i style={{ width: `${progress}%` }} /></div></div> : <button className="patient-analyze-button" onClick={onAnalyze} disabled={busy}>Analizar mi cuenta →</button>}
       </section>}
       {analysisAvailable && <>

@@ -21,6 +21,13 @@ type AnalysisRequest = {
   printedTotal?: number;
   pamPrintedTotal?: number;
   totalReconciliation?: AccountTotalReconciliation;
+  /**
+   * Patient mode may request a preliminary result when the reader has
+   * extracted usable lines but the printed total still needs reconciliation.
+   * The developer console deliberately omits this flag and keeps the strict
+   * integrity gate below.
+   */
+  allowPreliminaryAnalysis?: boolean;
 };
 
 function isBillingLine(value: unknown): value is ChileanBillingLine {
@@ -79,7 +86,7 @@ export async function POST(request: Request) {
   // Persisted account results require an explicit printed total and an
   // independent reconciliation against every extracted row. Direct rule
   // probes without a caseId remain available for development.
-  if (body.caseId && body.readerAssessment) {
+  if (body.caseId && body.readerAssessment && !body.allowPreliminaryAnalysis) {
     const printedTotal = Number.isFinite(body.printedTotal) ? Math.round(body.printedTotal as number) : 0;
     const lineSum = Math.round((body.lines as ChileanBillingLine[]).reduce((sum, line) => sum + line.amount, 0));
     const tolerance = Math.max(1_000, Math.round(printedTotal * 0.01));
