@@ -28,8 +28,11 @@ function runtimeEnv(name: string): string | undefined {
     const value = process.env[name]?.trim();
     if (value) return value;
   }
-  const bindings = (globalThis as typeof globalThis & { __revisaRuntimeBindings?: Record<string, unknown> }).__revisaRuntimeBindings;
-  const value = bindings?.[name];
+  const globalBindings = (globalThis as typeof globalThis & { __revisaRuntimeBindings?: Record<string, unknown> }).__revisaRuntimeBindings;
+  const processBindings = typeof process !== "undefined"
+    ? (process as typeof process & { __revisaRuntimeBindings?: Record<string, unknown> }).__revisaRuntimeBindings
+    : undefined;
+  const value = globalBindings?.[name] ?? processBindings?.[name];
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 

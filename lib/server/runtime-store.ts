@@ -54,6 +54,20 @@ type VolatileRuntimeHost = {
 const runtimeHost = (typeof process !== "undefined"
   ? process
   : globalThis) as unknown as VolatileRuntimeHost;
+const globalRuntimeHost = globalThis as unknown as VolatileRuntimeHost;
+
+/**
+ * Worker bindings must be visible from every module realm. Cloudflare's
+ * nodejs_compat can expose a process object even in a Worker; storing the
+ * snapshot only there makes synchronous helpers that read globalThis miss
+ * secrets such as RESEND_API_KEY and AUTH_SESSION_SECRET.
+ */
+function rememberRuntimeBindings(bindings: Record<string, unknown>) {
+  globalRuntimeHost.__revisaRuntimeBindings = bindings;
+  if (typeof process !== "undefined") {
+    (process as unknown as VolatileRuntimeHost).__revisaRuntimeBindings = bindings;
+  }
+}
 const localState = runtimeHost.__revisaTuCuentaLocalState ??= {
   cases: new Map<string, LocalCase>(),
   documents: new Map<string, LocalDocument>(),
@@ -105,7 +119,7 @@ export async function getCloudflareEnv(): Promise<any | null> {
     : {};
   if (nodeEnvironment) {
     const bindings = { ...nodeEnvironment, ...processBindings };
-    runtimeHost.__revisaRuntimeBindings = bindings;
+    rememberRuntimeBindings(bindings);
     return bindings;
   }
   // Railway runs the bundled routes in Node.  If the persistent bindings are
@@ -121,7 +135,7 @@ export async function getCloudflareEnv(): Promise<any | null> {
     || Boolean(process.env.RAILWAY_ENVIRONMENT_NAME)
   );
   if (nodeRuntimeRequested) {
-    if (Object.keys(processBindings).length) runtimeHost.__revisaRuntimeBindings = processBindings;
+    if (Object.keys(processBindings).length) rememberRuntimeBindings(processBindings);
     return Object.keys(processBindings).length ? processBindings : null;
   }
   // Render demo mode is intentionally volatile: it must never attach or
@@ -134,7 +148,7 @@ export async function getCloudflareEnv(): Promise<any | null> {
     const workerBindings = module.env as { REVISA_VOLATILE_MODE?: string } | undefined;
     if (workerBindings?.REVISA_VOLATILE_MODE === "true") return null;
     const mergedBindings = module.env ? { ...module.env, ...processBindings } : (Object.keys(processBindings).length ? processBindings : null);
-    if (mergedBindings) runtimeHost.__revisaRuntimeBindings = mergedBindings;
+    if (mergedBindings) rememberRuntimeBindings(mergedBindings);
     return mergedBindings;
   } catch {
     return null;

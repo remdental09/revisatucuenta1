@@ -1,5 +1,5 @@
 import { getCloudflareEnv } from "../../../lib/server/runtime-store.ts";
-import { isDeveloperUser, requireApiUser } from "../../../lib/server/auth.ts";
+import { authSessionSecret, emailAuthenticationConfigured, isDeveloperUser, requireApiUser } from "../../../lib/server/auth.ts";
 import { isReaderAssistConfigured, readerAssistModel } from "../../../lib/server/openai-reader-assist.ts";
 
 /**
@@ -39,6 +39,16 @@ export async function GET(request: Request) {
       (hasProcess && process.env.OPENAI_MODEL_ROUTING?.trim()) ||
       (env && typeof env.OPENAI_MODEL_ROUTING === "string" && env.OPENAI_MODEL_ROUTING.trim()),
     ),
+    emailSessionSecretPresent: Boolean(authSessionSecret()),
+    resendApiKeyPresent: Boolean(
+      (hasProcess && process.env.RESEND_API_KEY?.trim()) ||
+      (env && typeof env.RESEND_API_KEY === "string" && env.RESEND_API_KEY.trim()),
+    ),
+    emailSenderPresent: Boolean(
+      (hasProcess && process.env.AUTH_EMAIL_FROM?.trim()) ||
+      (env && typeof env.AUTH_EMAIL_FROM === "string" && env.AUTH_EMAIL_FROM.trim()),
+    ),
+    emailAuthenticationConfigured: emailAuthenticationConfigured(),
     databaseAvailable: Boolean(env?.DB),
     documentsAvailable: Boolean(env?.DOCUMENTS),
     dataDirectoryPresent: Boolean(hasProcess && process.env.REVISA_DATA_DIR?.trim()),
