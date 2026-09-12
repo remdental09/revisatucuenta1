@@ -1,5 +1,6 @@
 import { createMagicLinkToken, developmentAuthenticationEnabled, emailAuthenticationConfigured } from "../../../../../lib/server/auth.ts";
 import { sendAccessLink } from "../../../../../lib/server/email.ts";
+import { getCloudflareEnv } from "../../../../../lib/server/runtime-store.ts";
 
 type AttemptState = Map<string, number[]>;
 const runtime = globalThis as typeof globalThis & { __revisaAuthAttempts?: AttemptState };
@@ -25,6 +26,7 @@ function safeReturnTo(value: unknown) {
 }
 
 export async function POST(request: Request) {
+  await getCloudflareEnv();
   const body = await request.json().catch(() => ({})) as { email?: string; displayName?: string; returnTo?: string };
   const email = body.email?.trim().toLowerCase() || "";
   if (!/^\S+@\S+\.\S+$/.test(email)) return Response.json({ error: "Ingresa un correo electrónico válido" }, { status: 422 });
@@ -37,8 +39,11 @@ export async function POST(request: Request) {
 
   const token = await createMagicLinkToken(email, body.displayName);
   const returnTo = safeReturnTo(body.returnTo);
-  const publicOrigin = typeof process !== "undefined" && process.env.REVISA_PUBLIC_URL?.trim()
-    ? process.env.REVISA_PUBLIC_URL.trim().replace(/\/$/, "")
+  const configuredPublicUrl = typeof process !== "undefined" && process.env.REVISA_PUBLIC_URL?.trim()
+    ? process.env.REVISA_PUBLIC_URL.trim()
+    : ((globalThis as typeof globalThis & { __revisaRuntimeBindings?: Record<string, unknown> }).__revisaRuntimeBindings?.REVISA_PUBLIC_URL as string | undefined)?.trim();
+  const publicOrigin = configuredPublicUrl
+    ? configuredPublicUrl.replace(/\/$/, "")
     : new URL(request.url).origin;
   const verifyUrl = `${publicOrigin}/api/auth/email/verify?token=${encodeURIComponent(token)}&returnTo=${encodeURIComponent(returnTo)}`;
 

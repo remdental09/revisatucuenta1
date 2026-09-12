@@ -1,3 +1,5 @@
+import { getCloudflareEnv } from "./runtime-store.ts";
+
 export type AuthenticatedUser = {
   id: string;
   email: string;
@@ -22,9 +24,13 @@ const SESSION_DURATION_SECONDS = 7 * 24 * 60 * 60;
 const MAGIC_LINK_DURATION_SECONDS = 15 * 60;
 
 function runtimeEnv(name: string): string | undefined {
-  if (typeof process === "undefined") return undefined;
-  const value = process.env[name]?.trim();
-  return value || undefined;
+  if (typeof process !== "undefined") {
+    const value = process.env[name]?.trim();
+    if (value) return value;
+  }
+  const bindings = (globalThis as typeof globalThis & { __revisaRuntimeBindings?: Record<string, unknown> }).__revisaRuntimeBindings;
+  const value = bindings?.[name];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function bytesToBase64Url(bytes: Uint8Array) {
@@ -163,6 +169,7 @@ export async function developmentUser(): Promise<AuthenticatedUser> {
 }
 
 export async function createMagicLinkToken(email: string, displayName?: string) {
+  await getCloudflareEnv();
   const secret = authSessionSecret();
   if (!secret) throw new Error("La autenticación por correo no está configurada");
   const now = Math.floor(Date.now() / 1000);
@@ -176,6 +183,7 @@ export async function createMagicLinkToken(email: string, displayName?: string) 
 }
 
 export async function magicLinkUser(token: string): Promise<AuthenticatedUser | undefined> {
+  await getCloudflareEnv();
   const secret = authSessionSecret();
   if (!secret) return;
   const payload = await verifyAuthToken(token, secret, "magic_link");
@@ -200,6 +208,7 @@ function safeEqual(left: string, right: string) {
 }
 
 export async function createSessionToken(user: AuthenticatedUser) {
+  await getCloudflareEnv();
   const secret = authSessionSecret();
   if (!secret) throw new Error("La sesión no está configurada");
   const now = Math.floor(Date.now() / 1000);
@@ -223,6 +232,9 @@ function cookieValue(request: Request, name: string) {
 }
 
 export async function getAuthenticatedUser(request: Request): Promise<AuthenticatedUser | undefined> {
+  // Prime the server-only Worker binding snapshot before any synchronous
+  // helpers inspect the session secret or developer allowlist.
+  await getCloudflareEnv();
   const chatGptId = request.headers.get("oai-authenticated-user-id")?.trim();
   const chatGptEmail = request.headers.get("oai-authenticated-user-email")?.trim().toLowerCase();
   if (chatGptId && chatGptEmail) {

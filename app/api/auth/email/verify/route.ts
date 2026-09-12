@@ -1,4 +1,5 @@
 import { createSessionToken, magicLinkUser, sessionCookie } from "../../../../../lib/server/auth.ts";
+import { getCloudflareEnv } from "../../../../../lib/server/runtime-store.ts";
 
 // Every click carries a different token.  Keep this handler out of the
 // framework/CDN static-response path: otherwise the first invalid or expired
@@ -17,6 +18,7 @@ function safeReturnTo(value: string | null) {
 }
 
 export async function GET(request: Request) {
+  await getCloudflareEnv();
   const url = new URL(request.url);
   // Some mail clients insert line breaks when copying long links.  Whitespace
   // is not part of our base64url token, so removing it is safe and keeps the

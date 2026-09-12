@@ -1,6 +1,11 @@
 function runtimeEnv(name: string) {
-  if (typeof process === "undefined") return undefined;
-  return process.env[name]?.trim() || undefined;
+  if (typeof process !== "undefined") {
+    const value = process.env[name]?.trim();
+    if (value) return value;
+  }
+  const bindings = (globalThis as typeof globalThis & { __revisaRuntimeBindings?: Record<string, unknown> }).__revisaRuntimeBindings;
+  const value = bindings?.[name];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function escapeHtml(value: string) {

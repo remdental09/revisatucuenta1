@@ -46,7 +46,11 @@ const CLOUDFLARE_WORKERS_MODULE = "cloudflare:" + "workers";
 // Render's volatile demo can evaluate route bundles in more than one global
 // realm. Keep the temporary state on the Node process when available so the
 // case list, case detail and analysis routes see the same in-memory session.
-type VolatileRuntimeHost = { __revisaTuCuentaLocalState?: LocalRuntimeState };
+type VolatileRuntimeHost = {
+  __revisaTuCuentaLocalState?: LocalRuntimeState;
+  /** Server-only snapshot of the active Worker bindings for sync helpers. */
+  __revisaRuntimeBindings?: Record<string, unknown>;
+};
 const runtimeHost = (typeof process !== "undefined"
   ? process
   : globalThis) as unknown as VolatileRuntimeHost;
@@ -80,12 +84,30 @@ export async function getCloudflareEnv(): Promise<any | null> {
       "OPENAI_MODEL_ROUTING",
       "OPENAI_REVIEW_MODEL",
       "OPENAI_EXCEPTION_MODEL",
+      "AUTH_SESSION_SECRET",
+      "RESEND_API_KEY",
+      "AUTH_EMAIL_FROM",
+      "REVISA_PUBLIC_URL",
+      "REVISA_AUTH_DEV_MODE",
+      "REVISA_AUTH_DEV_EMAIL",
+      "REVISA_DEVELOPER_OPEN",
+      "REVISA_DEVELOPER_EMAILS",
+      "REVISATUCUENTA_DEVELOPER_KEYS",
+      "REVISATUCUENTA_ADMIN_USER_IDS",
+      "REVISA_ACCOUNT_FORWARD_TO",
+      "REVISA_NODE_RUNTIME",
+      "REVISA_DATA_DIR",
+      "REVISA_VOLATILE_MODE",
     ].flatMap((name) => {
       const value = process.env[name]?.trim();
       return value ? [[name, value]] : [];
     }))
     : {};
-  if (nodeEnvironment) return { ...nodeEnvironment, ...processBindings };
+  if (nodeEnvironment) {
+    const bindings = { ...nodeEnvironment, ...processBindings };
+    runtimeHost.__revisaRuntimeBindings = bindings;
+    return bindings;
+  }
   // Railway runs the bundled routes in Node.  If the persistent bindings are
   // unavailable, do not fall through to the worker-only `cloudflare:workers`
   // import: that module can remain pending forever in a Node deployment and
@@ -98,7 +120,10 @@ export async function getCloudflareEnv(): Promise<any | null> {
     || Boolean(process.env.RAILWAY_ENVIRONMENT)
     || Boolean(process.env.RAILWAY_ENVIRONMENT_NAME)
   );
-  if (nodeRuntimeRequested) return Object.keys(processBindings).length ? processBindings : null;
+  if (nodeRuntimeRequested) {
+    if (Object.keys(processBindings).length) runtimeHost.__revisaRuntimeBindings = processBindings;
+    return Object.keys(processBindings).length ? processBindings : null;
+  }
   // Render demo mode is intentionally volatile: it must never attach or
   // discover a durable Cloudflare database/bucket while running the analyzer.
   if (typeof process !== "undefined" && process.env.REVISA_VOLATILE_MODE === "true") return null;
@@ -106,9 +131,11 @@ export async function getCloudflareEnv(): Promise<any | null> {
     const module = await import(/* @vite-ignore */ CLOUDFLARE_WORKERS_MODULE);
     // Vinext's local worker can expose .env.local only through the worker
     // bindings, so honor the same explicit volatile switch there as well.
-    const bindings = module.env as { REVISA_VOLATILE_MODE?: string } | undefined;
-    if (bindings?.REVISA_VOLATILE_MODE === "true") return null;
-    return module.env ? { ...module.env, ...processBindings } : (Object.keys(processBindings).length ? processBindings : null);
+    const workerBindings = module.env as { REVISA_VOLATILE_MODE?: string } | undefined;
+    if (workerBindings?.REVISA_VOLATILE_MODE === "true") return null;
+    const mergedBindings = module.env ? { ...module.env, ...processBindings } : (Object.keys(processBindings).length ? processBindings : null);
+    if (mergedBindings) runtimeHost.__revisaRuntimeBindings = mergedBindings;
+    return mergedBindings;
   } catch {
     return null;
   }
